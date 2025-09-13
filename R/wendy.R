@@ -1,0 +1,115 @@
+
+test_params <- list(
+   radius_params = c(2, 4, 8, 16),
+   radius_min_time = 0.1,
+   radius_max_time = 5.0,
+   k_max = 200,
+   max_test_fun_condition_number = 1e12,
+   min_test_fun_info_number = 0.95
+ )
+
+#' Parameter Estimation for ODE Systems via Maximum Likelihood Estimation
+#'
+#' This function estimates parameters of a system of ordinary differential equations (ODEs)
+#' The method leverages symbolic derivatives of the ODE right-hand side and a
+#' trust-region optimization algorithm.
+#'
+#' @param f A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
+#'   where \code{u} is the state vector, \code{p} is the parameter vector,
+#'   and \code{t} is the time variable. Must return symbolic expressions.
+#' @param p0 Numeric vector. Initial guess for the parameters.
+#' @param U Numeric matrix. Rows represent observed states at time points in \code{tt}.
+#'   Columns correspond to state variables.
+#' @param tt Numeric vector. Time points corresponding to the rows of \code{U}.
+#'
+#' @details
+#' The procedure:
+#' \itemize{
+#'   \item Builds symbolic expressions and derivatives of the ODE system (\eqn{f}, Jacobians, Hessians).
+#'   \item Constructs weak negative log-likelihood and functionals based on observed data.
+#'   \item Uses \code{\link[trustOptim]{trust.optim}} with BFGS updates for optimization.
+#' }
+#'
+#'
+#' @export
+solveWendy <- function(f, p0, U, tt){
+
+  test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params)
+
+  V <- test_fun_matrices$V
+  Vp <- test_fun_matrices$V_prime
+
+  sig <- estimate_std(U, k = 6)
+
+  J <- length(p0)
+  D <- ncol(U)
+  mp1 <- nrow(U)
+  K <- nrow(V)
+
+  u <- do.call(c, lapply(1:ncol(U), function(i) S(paste0("u", i))))
+  p <- do.call(c, lapply(1:length(p0), function(i) S(paste0("p", i))))
+  t <- S("t")
+
+  f_expr <- f(u, p, t)
+
+  J_u_sym <- compute_symbolic_jacobian(f_expr, u)
+  J_p_sym <- compute_symbolic_jacobian(f_expr, p)
+
+  J_uu_sym <- compute_symbolic_jacobian(J_u_sym, u)
+  J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
+
+  J_pu_sym <- compute_symbolic_jacobian(J_p_sym, u)
+  J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
+
+  J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p)
+
+  vars <- c(u, p ,t)
+
+  f_ <- build_fn(f_expr, vars)
+
+  J_u <- build_fn(J_u_sym, vars)
+  J_p <- build_fn(J_p_sym, vars)
+
+  J_pp <- build_fn(J_pp_sym, vars)
+  J_uu <- build_fn(J_uu_sym, vars)
+
+
+  J_pu <- build_fn(J_pu_sym, vars)
+  J_up <- build_fn(J_up_sym, vars)
+
+  J_upp <- build_fn(J_upp_sym, vars)
+
+  b <- -1 * as.vector(Vp %*% U)
+
+  F_ <-build_F(U, tt, f_)
+
+  g <- build_g(V, F_)
+
+  Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, sig)
+
+  L <- build_L(U, tt, J_u, K, V, Vp, sig)
+
+  Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
+  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
+
+  S <- build_S(L)
+  Jp_S <- build_J_S(L, Jp_L, J, K ,D)
+
+  wnll <- build_wnll(S, g, b)
+  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J)
+
+  res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0))
+
+  res$wnll <- wnll
+  res$J_wnll <- J_wnll
+
+  return(res)
+
+ }
+
+
+
+
+
+
+
