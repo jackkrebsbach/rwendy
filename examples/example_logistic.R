@@ -1,4 +1,5 @@
 library(deSolve)
+library(wendy)
 
 f <- function(u, p, t) { c(p[1] * u[1] - p[2] * u[1]^2) }
 
@@ -28,7 +29,5 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_hat)
 plot(U, cex = 0.5)
 points(sol[, 2], cex = 0.5, col = "blue")
 points(sol_hat[, 2], cex = 0.5, col = "red")
-
-
 
 

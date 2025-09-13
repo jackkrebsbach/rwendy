@@ -1,5 +1,5 @@
 library(deSolve)
-library(rwendy)
+library(wendy)
 library(plotly)
 
 f <- function(u, p, t) {
