@@ -1,6 +1,12 @@
 library(deSolve)
-library(wendy)
+#library(wendy)
 library(plotly)
+
+source("./R/noise.R")
+source("./R/symbolics.R")
+source("./R/test_functions.R")
+source("./R/weak_residual.R")
+source("./R/wendy.R")
 
 f <- function(u, p, t) {
   du1 <- p[1] * (u[2] - u[1])
@@ -11,7 +17,7 @@ f <- function(u, p, t) {
 
 noise_sd <- 0.15
 p_star <- c(10.0, 28.0, 4.0)
-p0 <- c(12.10, 21, 4.0)
+p0 <- c(12.10, 21, 3.0)
 u0 <- c(2, 1, 1)
 
 npoints <- 256
@@ -33,6 +39,11 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, p0, U, tt)
 
+wnll <- res$wnll
+J_wnll <- res$J_wnll
+
+sol <- optim(p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B")
+
 phat <- res$solution
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
@@ -53,4 +64,7 @@ plot_ly(
     marker = list(color = 'red', size = 3),
     name = "fit"
   )
+
+print(phat)
+
 

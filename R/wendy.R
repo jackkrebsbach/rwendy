@@ -9,7 +9,7 @@ test_params <- list(
  )
 
 #' Parameter Estimation for ODE Systems via Maximum Likelihood Estimation
-#'
+  #'
 #' This function estimates parameters of a system of ordinary differential equations (ODEs)
 #' The method leverages symbolic derivatives of the ODE right-hand side and a
 #' trust-region optimization algorithm.
@@ -72,8 +72,6 @@ solveWendy <- function(f, p0, U, tt){
 
   J_pp <- build_fn(J_pp_sym, vars)
   J_uu <- build_fn(J_uu_sym, vars)
-
-
   J_pu <- build_fn(J_pu_sym, vars)
   J_up <- build_fn(J_up_sym, vars)
 
@@ -82,13 +80,14 @@ solveWendy <- function(f, p0, U, tt){
   b <- -1 * as.vector(Vp %*% U)
 
   F_ <-build_F(U, tt, f_)
-
+  G  <- build_G_matrix(V, U, tt, f, F_, J)
   g <- build_g(V, F_)
 
-  Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, sig)
+  Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V)
+  Ju_r <- build_Ju_r(J_u, K, D, J, mp1, V)
+  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V)
 
   L <- build_L(U, tt, J_u, K, V, Vp, sig)
-
   Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 
@@ -97,11 +96,24 @@ solveWendy <- function(f, p0, U, tt){
 
   wnll <- build_wnll(S, g, b)
   J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J)
+  H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Ju_r, Hp_r, g, b, J)
 
-  res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0))
+  objfun <- function(p) {
+      f <- wnll(p)
+      g <- J_wnll(p)
+      h <- H_wnll(p)
+    list(value = f, gradient = g, hessian = h)
+  }
+
+  res <- trust(objfun, p0, 5, 500, blather = TRUE)
+
+  # res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
 
   res$wnll <- wnll
   res$J_wnll <- J_wnll
+  res$H_wnll <- H_wnll
+  res$g <- g
+  res$b <- b
 
   return(res)
 

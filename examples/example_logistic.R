@@ -1,5 +1,14 @@
 library(deSolve)
-library(wendy)
+library(symengine)
+library(trust)
+library(uGMAR)
+library(trustOptim)
+
+source("./R/noise.R")
+source("./R/symbolics.R")
+source("./R/test_functions.R")
+source("./R/weak_residual.R")
+source("./R/wendy.R")
 
 f <- function(u, p, t) { c(p[1] * u[1] - p[2] * u[1]^2) }
 
@@ -7,7 +16,7 @@ noise_sd <- 0.05;
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 256;
+npoints <- 100;
 t_span <- c(0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -19,15 +28,15 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, p0, U, tt)
 
-wnll <- res$wnll
-J_wnll <- res$J_wnll
-
-p_hat <- res$solution
+p_hat <- res$argument
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_hat)
 
 plot(U, cex = 0.5)
 points(sol[, 2], cex = 0.5, col = "blue")
 points(sol_hat[, 2], cex = 0.5, col = "red")
+
+print(p_hat)
+
 
 
