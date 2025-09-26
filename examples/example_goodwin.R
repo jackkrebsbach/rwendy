@@ -42,7 +42,8 @@ res <- solveWendy(f, p0, U, tt)
 wnll <- res$wnll
 J_wnll <- res$J_wnll
 
-p_hat <- res$solution
+#p_hat <- res$solution
+p_hat <- res$argument
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_hat)
 
