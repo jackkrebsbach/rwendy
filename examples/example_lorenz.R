@@ -1,5 +1,4 @@
 library(deSolve)
-#library(wendy)
 library(plotly)
 
 source("./R/noise.R")
@@ -39,12 +38,8 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, p0, U, tt)
 
-wnll <- res$wnll
-J_wnll <- res$J_wnll
-
-sol <- optim(p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B")
-
-phat <- res$solution
+#phat <- res$solution
+phat <- res$argument
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 
