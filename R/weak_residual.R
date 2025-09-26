@@ -323,7 +323,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Ju_r, Hp_r, g, b, J) {
     S_inv_solve <- function(x) {
       tryCatch({
         cholF <- chol(Sp)
-        return(backsolve(cholF, backsolve(t(cholF), x, transpose = TRUE)))
+        return(solve(cholF, solve(t(cholF), x)))
       }, error = function(e1) {
         tryCatch({
           qrF <- qr(Sp)

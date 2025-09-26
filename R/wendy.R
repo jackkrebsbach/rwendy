@@ -100,13 +100,13 @@ solveWendy <- function(f, p0, U, tt){
 
   objfun <- function(p) {
       f <- wnll(p)
-      g <- calc_gradient(p, wnll)
-      h <- calc_hessian(p, wnll)
+      g <- J_wnll(p)
+      h <- H_wnll(p)
     list(value = f, gradient = g, hessian = h)
   }
 
-  #res <- trust(objfun, p0, 5, 500, blather = TRUE)
-  res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
+  res <- trust(objfun, p0, 5, 500, blather = TRUE)
+  #res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
 
   res$wnll <- wnll
   res$J_wnll <- J_wnll
