@@ -87,12 +87,17 @@ build_L <-function(U, tt, J_u, K, V, Vp, sig){
   }
 }
 
-build_S <- function(L){
-  function(p){
+build_S <- function(L, REG = 1e-9) {
+  function(p) {
     Lp <- L(p)
-    S <- tcrossprod(Lp)
+    S_ <- tcrossprod(Lp)
+    WEIGHT <- 1.0 - REG
+    eye <- REG * diag(nrow(S_))
+    S <- WEIGHT * S_ + eye
+    return(S)
   }
 }
+
 
 build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   mp1 <- length(tt)

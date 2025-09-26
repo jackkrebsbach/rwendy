@@ -1,7 +1,6 @@
 library(deSolve)
 library(symengine)
 library(trustOptim)
-#library(wendy)
 
 source("./R/noise.R")
 source("./R/symbolics.R")
@@ -19,7 +18,7 @@ f <- function(u, p, t) {
 noise_sd <- 0.05
 npoints <- 200
 p_star <- c(72, 1, 2, 1, 1)
-p0 <- c(70, 1.56, 2.5, 1.75, 0.6)
+p0 <- c(71, 1.56, 2.45, 1.75, 0.6)
 u0 <- c(7, -10)
 t_span <- c(0, 60)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
@@ -39,15 +38,12 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, p0, U, tt)
 
-wnll <- res$wnll
-J_wnll <- res$J_wnll
-
-#p_hat <- res$solution
-p_hat <- res$argument
+p_hat <- res$solution
+#p_hat <- res$argument
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_hat)
 
 plot(U[, c(1, 2)], cex = 0.5)
 points(sol_hat[, c(1, 2)], cex = 0.5, col = "red")
 
-print(res$solution)
+print(p_hat)

@@ -38,8 +38,8 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, p0, U, tt)
 
-#phat <- res$solution
-phat <- res$argument
+phat <- res$solution
+#phat <- res$argument
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 

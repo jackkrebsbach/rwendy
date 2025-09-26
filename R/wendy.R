@@ -105,8 +105,8 @@ solveWendy <- function(f, p0, U, tt){
     list(value = f, gradient = g, hessian = h)
   }
 
-  res <- trust(objfun, p0, 5, 500, blather = TRUE)
-  #res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
+  #res <- trust(objfun, p0, 5, 500, blather = TRUE)
+  res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
 
   res$wnll <- wnll
   res$J_wnll <- J_wnll
