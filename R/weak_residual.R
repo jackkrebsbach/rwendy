@@ -1,4 +1,4 @@
-# RHS of ODE system at different data points
+
 build_F <- function(U, tt, f) {
   n_rows <- nrow(U)
   n_f    <- ncol(U)
@@ -14,7 +14,7 @@ build_F <- function(U, tt, f) {
     return(out)
   }
 }
-#  <V,F(p)> = VGp when f is Linear in Parameters
+
 build_G_matrix <- function(V, U, tt, f, F_, J){
   K <- nrow(V)
   mp1 <- nrow(U)
@@ -25,162 +25,17 @@ build_G_matrix <- function(V, U, tt, f, F_, J){
     e_j <- rep(0, J)
     e_j[j] <- 1
     F_j <- F_(e_j)
-    g_j <- as.vector(V %*% F_j)
+    g_j <- array(V %*% F_j)
     G[,j] <- g_j
   }
   return(G)
 }
 
-#  <V,F(p)> =  f(p) is nonlinear in parameters
 build_g <- function(V, F_) {
   function(p) {
-       as.vector(V %*% F_(p))
+       array(V %*% F_(p))
   }
 }
-
-
-build_L0 <- function(K, D, mp1, Vp, sig) {
-  L0_ <- array(0, dim = c(K, D, D, mp1))
-
-  for (k in 1:K) {
-    for (d in 1:D) {
-      for (m in 1:mp1) {
-          L0_[k, d, d, m] <- Vp[k,m] * sig[d]
-       }
-    }
-  }
-
-  L0 <- aperm(L0_, c(1, 2, 4, 3))
-  dim(L0) <- c(K * D, mp1 * D)
-  return(L0)
-}
-
-build_L <-function(U, tt, J_u, K, V, Vp, sig){
-  D <- ncol(U)
-  mp1 <- length(tt)
-  L0 <- build_L0(K, D, mp1, Vp, sig)
-
-  function(p){
-    J_F <- array(0, dim = c(mp1, D, D))
-    for (i in 1:mp1) {
-      u <- U[i, ]
-      t <- tt[i]
-      val <- J_u(c(p, u, t))
-      J_F[i, ,] <- val
-    }
-
-    L1 <- array(0, dim = c(K, D, mp1, D))
-    for (k in 1:K) {
-      for (d1 in 1:D) {
-        for (m in 1:mp1) {
-          for (d2 in 1:D) {
-            L1[k, d1, m, d2] <- J_F[m, d1, d2] * V[k, m] * sig[d1]
-          }
-        }
-      }
-    }
-
-    dim(L1) <- c(K * D, mp1 * D)
-    L <- L1 + L0
-    matrix(L, nrow = K * D, ncol = D * mp1)
-
-  }
-}
-
-build_S <- function(L, REG = 1e-9) {
-  function(p) {
-    Lp <- L(p)
-    S_ <- tcrossprod(Lp)
-    WEIGHT <- 1.0 - REG
-    eye <- REG * diag(nrow(S_))
-    S <- WEIGHT * S_ + eye
-    return(S)
-  }
-}
-
-
-build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
-  mp1 <- length(tt)
-  function(p){
-    H_F <- array(0, dim = c(mp1, D, D, J))
-
-    for (i in 1:mp1) {
-      t <- tt[i]
-      u <- U[i, ]
-      val <- J_up(c(p, u, t))
-      H_F[i, , ,] <- val
-    }
-
-    J_ <- array(0, dim = c(K, D, mp1, D, J))
-
-    for (k in 1:K) {
-      for (d1 in 1:D) {
-        for (m in 1:mp1) {
-          for (d2 in 1:D) {
-            for (j in 1:J) {
-              J_[k, d1, m, d2, j] <- H_F[m, d1, d2, j] * V[k, m] * sig[d1]
-            }
-          }
-        }
-      }
-    }
-
-    dim(J_) <- c(K * D, mp1 * D, J)
-    return(J_)
-  }
-}
-
-build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
-  D <- ncol(U)
-  mp1 <- length(tt)
-
-  function(p){
-    T_F <- array(0, dim = c(mp1, D, D, J, J))
-
-    for (i in 1:mp1) {
-      t <- tt[i]
-      u <- U[i, ]
-      val <- J_upp(c(p, u, t))
-      T_F[i, , , ,] <- val
-    }
-
-    H_ <- array(0, dim = c(K, D, mp1, D, J, J))
-
-    for (k in 1:K) {
-      for (d1 in 1:D) {
-        for (m in 1:mp1) {
-          for (d2 in 1:D) {
-            for (j1 in 1:J) {
-             for (j2 in 1:J) {
-                  H_[k, d1, m, d2, j1, j2] <- T_F[m, d1, d2, j1, j2] * V[k, m] * sig[d1]
-               }
-             }
-          }
-        }
-      }
-    }
-
-    dim(H_) <- c(K * D, mp1 * D, J, J)
-    return(H_)
-  }
-}
-
-
-build_J_S <- function(L, Jp_L, J, K, D){
-  function(p){
-    Lp <- L(p)
-    Jp_Lp <- Jp_L(p)
-
-    Jp_S <- array(0, dim = c(K*D, K*D, J))
-    for(j in 1:J){
-      Jp_L_j <-  Jp_Lp[,,j]
-      prt <- Jp_L_j %*% t(Lp)
-      Jp_S[,,j] <- prt + t(prt)
-    }
-    return(Jp_S)
-  }
-}
-
 
 build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
   function(p){
@@ -198,42 +53,14 @@ build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
       for (m in 1:mp1) {
         for (d1 in 1:D) {
           for (j1 in 1:J) {
-           Jp_r[k, m, d1, j1] <- Jp_F[m, d1, j1] * V[k, m]
+           Jp_r[k, m, d1, j1] <- V[k, m] * Jp_F[m, d1, j1]
           }
         }
       }
     }
     Jp_r <- apply(Jp_r, c(1, 3, 4), sum)
-    dim(Jp_r) <- c(K * D, J)
+    Jp_r <- array(Jp_r, dim = c(K * D, J))
     return(Jp_r)
-  }
-}
-
-# ∇ᵤr(p) ∈ ℝ^(K*D x J x J)
-build_Ju_r <- function(J_u, K, D, J, mp1, V, U, tt){
-  function(p){
-    Ju_F <- array(0, dim = c(mp1, D, D))
-
-    for (i in 1:mp1) {
-      t <- tt[i]
-      u <- U[i, ]
-      val <- J_u(c(p, u, t))
-      Ju_F[i, ,] <- val
-    }
-
-    Ju_r <- array(0, dim = c(K, mp1, D, D))
-    for (k in 1:K) {
-      for (m in 1:mp1) {
-        for (d1 in 1:D) {
-          for (d2 in 1:D) {
-            Ju_r[k, m, d1, d2] <- Ju_F[m, d1, d2] * V[k,m]
-          }
-        }
-      }
-    }
-
-    dim(Ju_r) <- c(K * D, mp1 * D)
-    return(Ju_r)
   }
 }
 
@@ -262,19 +89,164 @@ build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
       }
     }
     Hp_r <- apply(Hp_r, c(1, 3, 4, 5), sum)
-    dim(Hp_r) <- c(K * D, J, J)
+    Hp_r <- array(Hp_r, dim = c(K * D, J, J))
+
     return(Hp_r)
   }
 }
+
+
+build_L0 <- function(K, D, mp1, Vp, sig) {
+  L0_ <- array(0, dim = c(K, D, mp1, D))
+
+  for (k in 1:K) {
+    for (d in 1:D) {
+      for (m in 1:mp1) {
+          L0_[k, d, m, d] <- Vp[k,m] * sig[d]
+       }
+    }
+  }
+
+  L0 <- array(L0_, dim = c(K * D, mp1 * D))
+  return(L0)
+}
+
+build_L <-function(U, tt, J_u, K, V, Vp, sig){
+  D <- ncol(U)
+  mp1 <- length(tt)
+  L0 <- build_L0(K, D, mp1, Vp, sig)
+
+  function(p){
+    J_F <- array(0, dim = c(mp1, D, D))
+    for (i in 1:mp1) {
+      u <- U[i, ]
+      t <- tt[i]
+      val <- J_u(c(p, u, t))
+      J_F[i, ,] <- val
+    }
+
+    L1 <- array(0, dim = c(K, D, mp1, D))
+    for (k in 1:K) {
+      for (d1 in 1:D) {
+        for (m in 1:mp1) {
+          for (d2 in 1:D) {
+            L1[k, d1, m, d2] <- V[k, m] * J_F[m, d1, d2] * sig[d2]
+          }
+        }
+      }
+    }
+
+    L1 <- array(L1, dim = c(K * D, mp1 * D))
+    L <- L1 + L0
+    return(L)
+  }
+}
+
+
+build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
+  mp1 <- length(tt)
+  function(p){
+    H_F <- array(0, dim = c(mp1, D, D, J))
+
+    for (i in 1:mp1) {
+      t <- tt[i]
+      u <- U[i, ]
+      val <- J_up(c(p, u, t))
+      H_F[i, , ,] <- val
+    }
+
+    J_ <- array(0, dim = c(K, D, mp1, D, J))
+
+    for (k in 1:K) {
+      for (d1 in 1:D) {
+        for (m in 1:mp1) {
+          for (d2 in 1:D) {
+            for (j in 1:J) {
+              J_[k, d1, m, d2, j] <- H_F[m, d1, d2, j] * V[k, m] * sig[d2]
+            }
+          }
+        }
+      }
+    }
+    Jp_L <- array(J_, dim = c(K * D, mp1 * D, J))
+    return(Jp_L)
+  }
+}
+
+# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
+build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
+  D <- ncol(U)
+  mp1 <- length(tt)
+
+  function(p){
+    T_F <- array(0, dim = c(mp1, D, D, J, J))
+
+    for (i in 1:mp1) {
+      t <- tt[i]
+      u <- U[i, ]
+      val <- J_upp(c(p, u, t))
+      T_F[i, , , ,] <- val
+    }
+
+    H_ <- array(0, dim = c(K, D, mp1, D, J, J))
+
+    for (k in 1:K) {
+      for (d1 in 1:D) {
+        for (m in 1:mp1) {
+          for (d2 in 1:D) {
+            for (j1 in 1:J) {
+              for (j2 in 1:J) {
+                  H_[k, d1, m, d2, j1, j2] <- T_F[m, d1, d2, j1, j2] * V[k, m] * sig[d2]
+               }
+             }
+          }
+        }
+      }
+    }
+
+    Hp_L <- array(H_, dim = c(K * D, mp1 * D, J, J))
+    return(Hp_L)
+  }
+}
+
+build_S <- function(L, REG = 1e-10) {
+  function(p) {
+    Lp <- L(p)
+    S_ <- tcrossprod(Lp)
+    WEIGHT <- 1.0 - REG
+    eye <- REG * diag(nrow(S_))
+    S <- WEIGHT * S_ + eye
+    return(S)
+  }
+}
+
+build_J_S <- function(L, Jp_L, J, K, D){
+  function(p){
+    Lp <- L(p)
+    Jp_Lp <- Jp_L(p)
+
+    Jp_S <- array(0, dim = c(K*D, K*D, J))
+    for(j in 1:J){
+      Jp_L_j <-  Jp_Lp[,,j]
+      prt <- Jp_L_j %*% t(Lp)
+      Jp_S[,,j] <- prt + t(prt)
+    }
+    return(Jp_S)
+  }
+}
+
 
 build_wnll <- function(S, g, b, K, D){
   constant_term <- 0.5 * K * D * log(2 * pi)
   function(p){
     Sp <- S(p)
     r <- g(p) - b
+
     cholF <- chol(Sp)
     log_det <- 2 * sum(log(diag(cholF)))
+
     S_invr <- solve(cholF, solve(t(cholF), r))
+
     mdist <- (r %*% S_invr)[1,1]
     return(0.5 * (mdist + log_det) + constant_term)
   }
@@ -311,19 +283,20 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   }
 }
 
-build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Ju_r, Hp_r, g, b, J) {
+build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
-    Sp <- S(p)
-    Jp_Sp <- Jp_S(p)
+
+    r <- g(p) - b
+
     Jp_rp <- Jp_r(p)
-    Ju_rp <- Ju_r(p)  # ∇ᵤr(p) ∈ ℝ^(K*D x D*mp1)
     Hp_rp <- Hp_r(p)
 
     Lp <- L(p)        # L(p)
     Jp_Lp <- Jp_L(p)  # ∇ₚL(p)
     Hp_Lp <- Hp_L(p)  # ∇ₚ∇ₚL(p)
 
-    r <- g(p) - b
+    Sp <- S(p)
+    Jp_Sp <- Jp_S(p)
 
     S_inv_solve <- function(x) {
       tryCatch({

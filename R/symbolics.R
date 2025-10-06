@@ -23,23 +23,21 @@ compute_symbolic_jacobian <- function(f_expr, vars) {
 
 build_fn <- function(expr_array, vars) {
   dims <- dim(expr_array)
-
   if (is.null(dims)) {
     expr_vec <- symengine::Vector(expr_array)
   } else {
-    expr_flat <- unlist(expr_array, recursive = TRUE)
+    expr_flat <- as.vector(expr_array)  # ← Change to as.vector()
     expr_vec <- symengine::Vector(expr_flat)
   }
-
   visitor <- DoubleVisitor(expr_vec,
                            args = vars,
                            perform_cse = TRUE,
                            llvm_opt_level = if (symengine_have_component("llvm")) 3L else -1L)
-
   function(input) {
     vals <- visitor_call(visitor, input, do_transpose = FALSE)
     if (is.null(dims)) return(vals)
     array(vals, dim = dims)
   }
 }
+
 

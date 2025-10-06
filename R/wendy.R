@@ -1,3 +1,8 @@
+library(deSolve)
+library(symengine)
+library(trust)
+library(uGMAR)
+library(trustOptim)
 
 test_params <- list(
    radius_params = c(2, 4, 8, 16),
@@ -32,9 +37,9 @@ test_params <- list(
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt){
+solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
 
-  test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params)
+  test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
 
   V <- test_fun_matrices$V
   Vp <- test_fun_matrices$V_prime
@@ -53,14 +58,11 @@ solveWendy <- function(f, p0, U, tt){
   f_expr <- f(u, p, t)
 
   J_u_sym <- compute_symbolic_jacobian(f_expr, u)
-  J_p_sym <- compute_symbolic_jacobian(f_expr, p)
-
-  J_uu_sym <- compute_symbolic_jacobian(J_u_sym, u)
-  J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
-
-  J_pu_sym <- compute_symbolic_jacobian(J_p_sym, u)
   J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
 
+  J_p_sym <- compute_symbolic_jacobian(f_expr, p)
+
+  J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
   J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p)
 
   vars <- c(p, u ,t)
@@ -68,23 +70,19 @@ solveWendy <- function(f, p0, U, tt){
   f_ <- build_fn(f_expr, vars)
 
   J_u <- build_fn(J_u_sym, vars)
-  J_p <- build_fn(J_p_sym, vars)
-
-  J_pp <- build_fn(J_pp_sym, vars)
-  J_uu <- build_fn(J_uu_sym, vars)
-  J_pu <- build_fn(J_pu_sym, vars)
   J_up <- build_fn(J_up_sym, vars)
 
+  J_p <- build_fn(J_p_sym, vars)
+  J_pp <- build_fn(J_pp_sym, vars)
   J_upp <- build_fn(J_upp_sym, vars)
 
-  b <- -1 * as.vector(Vp %*% U)
+  b <- -1 * array(Vp %*% U)
 
   F_ <-build_F(U, tt, f_)
   G  <- build_G_matrix(V, U, tt, f, F_, J)
   g <- build_g(V, F_)
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
-  Ju_r <- build_Ju_r(J_u, K, D, J, mp1, V, U, tt)
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
 
   L <- build_L(U, tt, J_u, K, V, Vp, sig)
@@ -96,7 +94,7 @@ solveWendy <- function(f, p0, U, tt){
 
   wnll <- build_wnll(S, g, b, K, D)
   J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J)
-  H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Ju_r, Hp_r, g, b, J)
+  H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J)
 
   objfun <- function(p) {
       f <- wnll(p)
@@ -105,14 +103,23 @@ solveWendy <- function(f, p0, U, tt){
     list(value = f, gradient = g, hessian = h)
   }
 
-  #res <- trust(objfun, p0, 5, 500, blather = TRUE)
-  res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
+  res <- list()
 
   res$wnll <- wnll
   res$J_wnll <- J_wnll
   res$H_wnll <- H_wnll
   res$g <- g
   res$b <- b
+  res$J_p <- J_p
+  res$sig <- sig
+  res$V <- V
+  res$V_prime <- Vp
+
+  if(!optimize) return(res)
+
+  result <- trust(objfun, p0, 5, 500, blather = TRUE)
+  res$phat <- result$argument
+  #res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
 
   return(res)
 
