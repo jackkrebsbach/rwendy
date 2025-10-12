@@ -12,12 +12,18 @@ convolve1d_inner <- function(signal, kernel) {
   result <- numeric(output_len)
 
   for (i in 1:output_len) {
-    result[i] <- sum(signal[i:(i + kernel_len - 1)] * kernel)
+     sum <- 0
+     for(j in 1:kernel_len){
+       sum <- sum +  signal[i + j - 1] * kernel[j];
+     }
+    result[i] <- sum
   }
 
   return(result)
 }
 
+
+# https://faculty.washington.edu/rjl/fdmbook/matlab/fdcoeffF.m
 fdcoeffF <- function(k, xbar, x) {
   n <- length(x)
 
@@ -27,37 +33,32 @@ fdcoeffF <- function(k, xbar, x) {
 
   m <- k  # change to m=n-1 if you want coefficients for all derivatives
 
-  c1 <- 1.0
+  c1 <- 1
   c4 <- x[1] - xbar
   C <- matrix(0, nrow = n, ncol = m + 1)
-
   C[1, 1] <- 1
-
-  for (i in 2:n) {
-    mn <- min(i - 1, m)
-    c2 <- 1.0
+  for (i in 1:(n-1)) {
+    i1 <- i+1
+    mn <- min(i, m)
+    c2 <- 1
     c5 <- c4
-    c4 <- x[i] - xbar
-
-    for (j in 1:(i-1)) {
-      c3 <- x[i] - x[j]
+    c4 <- x[i1] - xbar
+    for (j in 0:(i-1)) {
+      j1 <- j+1
+      c3 <- x[i1] - x[j1]
       c2 <- c2 * c3
-
       if (j == (i - 1)) {
-        if (mn >= 1) {
-          for (s in (mn + 1):2) {
-            C[i, s] <- c1 * ((s-1) * C[i - 1, s - 1] - c5 * C[i - 1, s]) / c2
+          for (s in seq(mn, 1, by = -1)) {
+            s1 <- s + 1
+            C[i1, s1] <- c1 * (s * C[i1 - 1, s1 - 1] - c5 * C[i1 - 1, s1]) / c2
           }
-        }
-        C[i, 1] <- -c1 * c5 * C[i - 1, 1] / c2
+        C[i1, 1] <- -c1 * c5 * C[i1 - 1, 1] / c2
       }
-
-      if (mn >= 1) {
-        for (s in (mn + 1):2) {
-          C[j, s] <- (c4 * C[j, s] - (s-1) * C[j, s - 1]) / c3
-        }
+      for (s in seq(mn, 1, by = -1)) {
+          s1 <- s + 1
+          C[j1, s1] <- (c4 * C[j1, s1] - s * C[j1, s1 - 1]) / c3
       }
-      C[j, 1] <- c4 * C[j, 1] / c3
+      C[j1, 1] <- c4 * C[j1, 1] / c3
     }
     c1 <- c2
   }

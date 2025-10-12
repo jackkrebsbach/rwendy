@@ -1,132 +1,43 @@
 
-find_last <- function(arr, pred) {
-  n <- length(arr)
-  for (i in n:1) {  # Search from end to beginning
-    if (pred(arr[i])) {
-      return(i)
-    }
-  }
-  return(-1)
-}
-
-get_corner_index <- function(y, xx_in = NULL) {
-  N <- length(y)
-  M <- N - 1
-
-  if (M <= 0) {
-    return(1)  # R is 1-indexed
-  }
-
-  E <- numeric(N)
-
-  # Create x values if not provided
-  if (is.null(xx_in)) {
-    x <- 1:N
-  } else {
-    x <- xx_in
-  }
-
-  # Calculate error for each potential corner point
-  for (k in 2:(M)) {  # R indexing: k from 2 to M (equivalent to 1 to M-1 in C++)
-    x0 <- x[1]
-    xk <- x[k]
-    xM <- x[N]  # x[M+1] in C++ becomes x[N] in R
-
-    y0 <- y[1]
-    yk <- y[k]
-    yM <- y[N]
-
-    # Calculate slopes for two line segments
-    slope1 <- (yk - y0) / (xk - x0)
-    slope2 <- (yM - yk) / (xM - xk)
-
-    # Define line functions
-    L1 <- function(x_val) {
-      slope1 * (x_val - x0) + y0
-    }
-
-    L2 <- function(x_val) {
-      slope2 * (x_val - xk) + yk
-    }
-
-    # Calculate sum of squared relative errors for first segment
-    sum1 <- 0.0
-    for (m in 1:k) {  # m from 1 to k (0 to k in C++)
-      err <- (L1(x[m]) - y[m]) / y[m]
-      sum1 <- sum1 + err^2
-    }
-
-    # Calculate sum of squared relative errors for second segment
-    sum2 <- 0.0
-    for (m in k:N) {  # m from k to N (k to M in C++)
-      err <- (L2(x[m]) - y[m]) / y[m]
-      sum2 <- sum2 + err^2
-    }
-
-    E[k] <- sqrt(sum1 + sum2)
-  }
-
-  # Set boundary values to high number to avoid selection
-  INF_APPROX <- 1e300
-  E[1] <- INF_APPROX
-  E[N] <- INF_APPROX
-
-  # Return index of minimum error
-  return(which.min(E))
-}
-
-phi <- function(t, eta) {
+phi <- function(t, eta = 9) {
   exp(-eta / (1 - t^2))
 }
 
-dphi_dt <- function(t, eta) {
-  denom <- 1 - t^2
-  phi_val <- exp(-eta / denom)
-  phi_val * (-eta * 2 * t) / (denom^2)
-}
-
-phi_vec <- function(t_vec, eta) {
-  sapply(t_vec, function(t) exp(-eta / (1 - t^2)))
-}
-
 test_function_derivative <- function(radius, dt, order) {
+  # Chain rule to account for (t/a)^2 we get factors of (1/a), a=dt*radius
   scale_factor <- (radius * dt)^(-order)
+  t <- symengine::S("t")
+  phi_sym <- phi(t)
 
-  function(t) {
-    if (order == 0) {
-      return(phi(t, 9))
-    } else {
-      return(dphi_dt(t, 9) * (dt * radius)^(-1))
-    }
+  phi_deriv_sym <- phi_sym
+  for (i in seq_len(order)) {
+    phi_deriv_sym <- symengine::D(phi_deriv_sym, "t")
   }
+
+  symengine::lambdify(scale_factor * phi_deriv_sym, t)
 }
 
 get_test_function_support_indices <- function(radius, len_tt) {
   diameter <- 2 * radius + 1
   len_interior <- len_tt - 2
 
-  n <- len_interior - diameter + 1  # number of test functions
+  n <- len_interior - diameter + 2 # Number of test functions to build dense sweep
 
   if (diameter > len_interior) {
     stop("diameter must be less than len_interior")
   }
 
-  indices_list <- vector("list", n)
-
-  for (i in 1:n) {
-    start <- i
-    end <- start + diameter - 1
-    indices_list[[i]] <- start:end
-  }
-
-  return(indices_list)
+  indices <- lapply(2:n, function(i) {
+    end <- i + diameter - 1
+    i:end
+  })
+  return(indices)
 }
 
 build_test_function_matrix <- function(tt, radius, order = 0) {
   len_tt <- length(tt)
   dt <- mean(diff(tt))
 
-  # Diameter cannot be larger than the interior of the domain
   diameter <- 2 * radius + 1
 
   if (len_tt < diameter) {
@@ -135,19 +46,16 @@ build_test_function_matrix <- function(tt, radius, order = 0) {
     diameter <- 2 * radius + 1
   }
 
+  # For one radius get the support indices for all phi_k (different centers)
   indices <- get_test_function_support_indices(radius, len_tt)
 
+  # Don't include the endpoints (outside of support)
   lin <- seq(-1, 1, length.out = diameter)
   xx <- lin[2:(diameter-1)]
 
-  if (order == 0) {
-    f_vals <- phi_vec(xx, 9)
-  } else {
-    f_vals <- sapply(xx, function(t) dphi_dt(t, 9) * (dt * radius)^(-1))
-  }
-
-  norm_vals <- phi_vec(xx, 9)
-  norm_factor <- sqrt(sum(norm_vals^2))
+  ph <- test_function_derivative(radius, dt, order)
+  f_vals <- ph(xx)
+  norm_factor <- sqrt(sum(phi(xx)^2))
   v_row <- f_vals / norm_factor
 
   v_row_padded <- c(0, v_row, 0)
@@ -176,8 +84,8 @@ build_full_test_function_matrix <- function(tt, radii, order = 0) {
 }
 
 find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, sub_sample_rate) {
-  Mp1 <- nrow(U)  # Number of data points
-  D <- ncol(U)    # Dimension of the system
+  Mp1 <- nrow(U)
+  D <- ncol(U)
 
   step <- max(1, ceiling((radius_max - radius_min) / num_radii))
   radii <- seq(radius_min, radius_max - 1, by = step)
@@ -189,10 +97,8 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   for (i in seq_along(radii)) {
     radius <- radii[i]
     V_r <- build_test_function_matrix(tt, radius)
-    K <- nrow(V_r)  # Number of test functions for a given radius
+    K <- nrow(V_r)
 
-    # Create G tensor (K, Mp1, D)
-    # Element wise for each dimension phi(t_i) and u(t_i) for all phi_k
     G <- array(0, dim = c(K, Mp1, D))
     for (k in 1:K) {
       for (d in 1:D) {
@@ -207,12 +113,12 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
     f_hat_G <- apply(GT_reshaped, 1, fft)
 
     if (is.matrix(f_hat_G)) {
-      f_hat_G_imag <- Im(f_hat_G[IX + 1, ])  # R is 1-indexed
+      f_hat_G_imag <- Im(f_hat_G[IX + 1,])
     } else {
       f_hat_G_imag <- Im(f_hat_G[[IX + 1]])
     }
 
-    errors[i] <- sqrt(sum(f_hat_G_imag^2))  # L2 norm
+    errors[i] <- sqrt(sum(f_hat_G_imag^2))
   }
 
   log_errors <- log(errors)
@@ -222,8 +128,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 }
 
 build_full_test_function_matrices <- function(U, tt, test_function_params, compute_svd = TRUE) {
-  # cat("<< Building test matrices >>\n")
-
+  cat("<< Building test matrices >>\n")
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
@@ -249,12 +154,12 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
     radius_min_max <- min_radius * 10
   }
 
-  #cat(sprintf("  Min radius: %d\n", min_radius))
-  #cat(sprintf("  Max radius: %d\n", max_radius))
-  #cat(sprintf("  Minmax radius: %d\n", radius_min_max))
+  cat(sprintf("  Min radius: %d\n", min_radius))
+  cat(sprintf("  Max radius: %d\n", max_radius))
+  cat(sprintf("  Minmax radius: %d\n", radius_min_max))
 
   result <- find_min_radius_int_error(U, tt, min_radius, radius_min_max,
-                                      num_radii = 10, sub_sample_rate = 1)
+                                      num_radii = 100, sub_sample_rate = 1)
   ix <- result$index
   errors <- result$errors
   radii_sweep <- result$radii
@@ -266,7 +171,7 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
   min_radius_ix <- ix
   min_radius <- min_radius_int_error
 
-  #cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
+  cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
 
   radii <- test_function_params$radius_params * min_radius_int_error
 
@@ -276,7 +181,7 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
     radii_filtered <- max_radius
   }
 
-  #cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
+  cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
 
   V_ <- build_full_test_function_matrix(tt, radii_filtered, order = 0)
   V_prime_ <- build_full_test_function_matrix(tt, radii_filtered, order = 1)
@@ -294,7 +199,7 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
   }
 
   k_full <- nrow(V_)
-  #cat(sprintf("  K Full: %d\n", k_full))
+   cat(sprintf("  K Full: %d\n", k_full))
 
   SVD <- svd(V_)
   U_svd <- SVD$u
@@ -308,7 +213,6 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
   for (i in 2:k_max) {
     info_numbers[i] <- sum(singular_values[1:(i-1)]) / sum_singular_values
   }
-
   condition_numbers <- singular_values[1] / singular_values
 
   k1 <- find_last(condition_numbers, function(x) {
@@ -323,13 +227,13 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
 
   K <- min(k1, k2, k_max)
 
-  #cat(sprintf("  Condition Number is now: %.4f\n", condition_numbers[K]))
-  #cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
-  #cat(sprintf("  K is: %d\n", K))
+  cat(sprintf("  Condition Number is now: %.4f\n", condition_numbers[K]))
+  cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
+  cat(sprintf("  K is: %d\n", K))
 
   V_final <- Vt[1:K, , drop = FALSE]
 
-  #cat("  Calculating Vprime\n")
+  cat("  Calculating Vprime\n")
 
   U_T <- t(U_svd)[1:K, , drop = FALSE]
   UV <- U_T %*% V_prime_
@@ -351,4 +255,69 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
   ))
 }
 
+find_last <- function(arr, pred) {
+  n <- length(arr)
+  for (i in n:1) {
+    if (pred(arr[i])) {
+      return(i)
+    }
+  }
+  return(-1)
+}
 
+get_corner_index <- function(y, xx_in = NULL) {
+  N <- length(y)
+  M <- N - 1
+
+  if (M <= 0) { return(1) }
+
+  E <- numeric(N)
+
+  if (is.null(xx_in)) {
+    x <- 1:N
+  } else {
+    x <- xx_in
+  }
+
+  for (k in 2:(M)) {
+    x0 <- x[1]
+    xk <- x[k]
+    xM <- x[N]
+
+    y0 <- y[1]
+    yk <- y[k]
+    yM <- y[N]
+
+    slope1 <- (yk - y0) / (xk - x0)
+    slope2 <- (yM - yk) / (xM - xk)
+
+    L1 <- function(x_val) {
+      slope1 * (x_val - x0) + y0
+    }
+
+    L2 <- function(x_val) {
+      slope2 * (x_val - xk) + yk
+    }
+
+    sum1 <- 0.0
+    for (m in 1:k) {
+      err <- (L1(x[m]) - y[m]) / y[m]
+      sum1 <- sum1 + err^2
+    }
+
+    sum2 <- 0.0
+    for (m in k:N) {
+      err <- (L2(x[m]) - y[m]) / y[m]
+      sum2 <- sum2 + err^2
+    }
+
+    E[k] <- sqrt(sum1 + sum2)
+  }
+
+  # Don't want to choose the first or last index
+  INF_APPROX <- 1e300
+  E[1] <- INF_APPROX
+  E[N] <- INF_APPROX
+
+  return(which.min(E))
+}

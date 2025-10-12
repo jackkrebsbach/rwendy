@@ -5,13 +5,13 @@ library(uGMAR)
 library(trustOptim)
 
 test_params <- list(
-   radius_params = c(2, 4, 8, 16),
-   radius_min_time = 0.1,
-   radius_max_time = 5.0,
-   k_max = 200,
-   max_test_fun_condition_number = 1e12,
-   min_test_fun_info_number = 0.95
- )
+  radius_params = 2^(0:3),
+  radius_min_time = 0.1,
+  radius_max_time = 8.0,
+  k_max = 200,
+  max_test_fun_condition_number = 1e4,
+  min_test_fun_info_number = 0.95
+)
 
 #' Parameter Estimation for ODE Systems via Maximum Likelihood Estimation
   #'
@@ -39,12 +39,14 @@ test_params <- list(
 #' @export
 solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
 
+  sig <- estimate_std(U, k = 6)
+
   test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
 
   V <- test_fun_matrices$V
   Vp <- test_fun_matrices$V_prime
 
-  sig <- estimate_std(U, k = 6)
+  min_radius <- test_fun_matrices$min_radius
 
   J <- length(p0)
   D <- ncol(U)
@@ -59,9 +61,7 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
 
   J_u_sym <- compute_symbolic_jacobian(f_expr, u)
   J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
-
   J_p_sym <- compute_symbolic_jacobian(f_expr, p)
-
   J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
   J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p)
 
@@ -71,7 +71,6 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
 
   J_u <- build_fn(J_u_sym, vars)
   J_up <- build_fn(J_up_sym, vars)
-
   J_p <- build_fn(J_p_sym, vars)
   J_pp <- build_fn(J_pp_sym, vars)
   J_upp <- build_fn(J_upp_sym, vars)
@@ -114,6 +113,7 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
   res$sig <- sig
   res$V <- V
   res$V_prime <- Vp
+  res$min_radius <- min_radius
 
   if(!optimize) return(res)
 

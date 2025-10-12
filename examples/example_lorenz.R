@@ -35,20 +35,15 @@ noise <- matrix(
   nrow = nrow(sol)
 )
 
-U <- sol[, -1] + noise
+  U <- sol[, -1] + noise
 
-tt <- matrix(sol[, 1], ncol = 1)
+  tt <- matrix(sol[, 1], ncol = 1)
 
 }
 
-res <- solveWendy(f, p0, U, tt)
+res <- solveWendy(f, p0, U, tt, optimize = F)
+
 phat <- res$phat
-
-calc_hessian(p0, res$wnll)
-res$H_wnll(p0)
-
-calc_gradient(p0, res$wnll)
-res$J_wnll(p0)
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 
@@ -68,10 +63,3 @@ plot_ly(
     marker = list(color = 'red', size = 3),
     name = "fit"
   )
-
-# calc_hessian(p0, res$wnll)
-# res$H_wnll(p0)
-#
-# calc_gradient(p0, res$wnll)
-# res$J_wnll(p0)
-
