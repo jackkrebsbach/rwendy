@@ -16,7 +16,8 @@ compute_symbolic_jacobian <- function(f_expr, vars) {
   deriv_flat <- unlist(deriv_list, recursive = FALSE)
 
   out_dims <- c(dims, n_vars)
-  J <- array(deriv_flat, dim = out_dims)
+
+  J <- array(deriv_flat, dim = rev(out_dims))
 
   return(J)
 }
@@ -26,7 +27,7 @@ build_fn <- function(expr_array, vars) {
   if (is.null(dims)) {
     expr_vec <- symengine::Vector(expr_array)
   } else {
-    expr_flat <- as.vector(expr_array)  # ← Change to as.vector()
+    expr_flat <- array(expr_array)
     expr_vec <- symengine::Vector(expr_flat)
   }
   visitor <- DoubleVisitor(expr_vec,
@@ -36,7 +37,8 @@ build_fn <- function(expr_array, vars) {
   function(input) {
     vals <- visitor_call(visitor, input, do_transpose = FALSE)
     if (is.null(dims)) return(vals)
-    array(vals, dim = dims)
+    fn <- array(vals, dim = rev(dims))
+    fn <- aperm(fn, length(dims):1)
   }
 }
 

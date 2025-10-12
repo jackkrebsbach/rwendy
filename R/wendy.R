@@ -75,10 +75,10 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
   J_pp <- build_fn(J_pp_sym, vars)
   J_upp <- build_fn(J_upp_sym, vars)
 
-  b <- -1 * array(Vp %*% U)
+  b <- -1 * as.vector(Vp %*% U)
 
   F_ <-build_F(U, tt, f_)
-  G  <- build_G_matrix(V, U, tt, f, F_, J)
+  # G  <- build_G_matrix(V, U, tt, f, F_, J)
   g <- build_g(V, F_)
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
@@ -114,6 +114,8 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
   res$V <- V
   res$V_prime <- Vp
   res$min_radius <- min_radius
+  res$J_p <- J_p
+  res$Jp_r <- Jp_r
 
   if(!optimize) return(res)
 

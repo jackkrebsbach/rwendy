@@ -35,6 +35,7 @@
 
 # Lorenz Example
 {
+  set.seed(8675309)
   library(deSolve)
   library(symengine)
   library(trust)
@@ -82,12 +83,45 @@
   U <- sol[, -1] + noise
 
   tt <- matrix(sol[, 1], ncol = 1)
+
+J <- length(p0)
+D <- ncol(U)
+mp1 <- nrow(U)
+K <- nrow(V)
+
+u <- do.call(c, lapply(1:ncol(U), function(i) S(paste0("u", i))))
+p <- do.call(c, lapply(1:length(p0), function(i) S(paste0("p", i))))
+t <- S("t")
+
+f_expr <- f(u, p, t)
+
+J_u_sym <- compute_symbolic_jacobian(f_expr, u)
+J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
+J_p_sym <- compute_symbolic_jacobian(f_expr, p)
+J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
+J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p)
+
+vars <- c(p, u ,t)
+
+f_ <- build_fn(f_expr, vars)
+
+J_u <- build_fn(J_u_sym, vars)
+J_up <- build_fn(J_up_sym, vars)
+J_p <- build_fn(J_p_sym, vars)
+
+res <- solveWendy(f, p0, U, tt, optimize = F, compute_svd = T)
+
 }
 
-res <- solveWendy(f, p0, U, tt, optimize = T)
-test_funs <- WendySolver(lorenz, U, p0, tt, log_level = "info", compute_svd_ = TRUE, optimize_ = FALSE)
+res$J_wnll(p0)
+calc_gradient(p0, res$wnll)
 
-V_r <- res$V_prime
+res$H_wnll(p0)
+calc_hessian(p0, res$wnll)
+
+test_funs <- WendySolver(lorenz, U, p0, tt, log_level = "info", compute_svd_ = F, optimize_ = FALSE)
+V_r <- res$V
+
 V <- test_funs$V_prime
 
 

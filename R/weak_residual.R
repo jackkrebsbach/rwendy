@@ -1,10 +1,10 @@
 
 build_F <- function(U, tt, f) {
-  n_rows <- nrow(U)
-  n_f    <- ncol(U)
+  mp1 <- nrow(U)
+  D   <- ncol(U)
   function(p) {
-    out <- matrix(0, nrow = n_rows, ncol = n_f)
-    for (i in 1:n_rows) {
+    out <- matrix(0, nrow = mp1, ncol = D)
+    for (i in 1:mp1) {
       u <- U[i, ]
       t <- tt[i]
       input_vec <- c(p, u, t)
@@ -82,7 +82,7 @@ build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
         for (d1 in 1:D) {
           for (j1 in 1:J) {
             for (j2 in 1:J) {
-              Hp_r[k, m, d1, j1, j2] <- Hp_F[m, d1, j1, j2] * V[k, m]
+              Hp_r[k, m, d1, j1, j2] <- V[k, m] * Hp_F[m, d1, j1, j2]
           }
          }
         }
@@ -97,16 +97,16 @@ build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
 
 
 build_L0 <- function(K, D, mp1, Vp, sig) {
-  L0_ <- array(0, dim = c(K, D, mp1, D))
+  L0_ <- array(0, dim = c(K, D, D, mp1))
 
   for (k in 1:K) {
     for (d in 1:D) {
       for (m in 1:mp1) {
-          L0_[k, d, m, d] <- Vp[k,m] * sig[d]
+          L0_[k, d, d, m] <- Vp[k,m] * sig[d]
        }
     }
   }
-
+  L0_ <- aperm(L0_, c(1,2,4,3))
   L0 <- array(L0_, dim = c(K * D, mp1 * D))
   return(L0)
 }
@@ -130,7 +130,7 @@ build_L <-function(U, tt, J_u, K, V, Vp, sig){
       for (d1 in 1:D) {
         for (m in 1:mp1) {
           for (d2 in 1:D) {
-            L1[k, d1, m, d2] <- V[k, m] * J_F[m, d1, d2] * sig[d2]
+            L1[k, d1, m, d2] <- V[k, m] * J_F[m, d1, d2] * sig[d1]
           }
         }
       }
@@ -162,7 +162,7 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
         for (m in 1:mp1) {
           for (d2 in 1:D) {
             for (j in 1:J) {
-              J_[k, d1, m, d2, j] <- H_F[m, d1, d2, j] * V[k, m] * sig[d2]
+              J_[k, d1, m, d2, j] <- H_F[m, d1, d2, j] * V[k, m] * sig[d1]
             }
           }
         }
@@ -196,7 +196,8 @@ build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
           for (d2 in 1:D) {
             for (j1 in 1:J) {
               for (j2 in 1:J) {
-                  H_[k, d1, m, d2, j1, j2] <- T_F[m, d1, d2, j1, j2] * V[k, m] * sig[d2]
+                  H_[k, d1, m, d2, j1, j2] <- T_F[m, d1, d2, j1, j2] * V[k, m] * sig[d1]
+
                }
              }
           }
@@ -235,7 +236,6 @@ build_J_S <- function(L, Jp_L, J, K, D){
   }
 }
 
-
 build_wnll <- function(S, g, b, K, D){
   constant_term <- 0.5 * K * D * log(2 * pi)
   function(p){
@@ -259,8 +259,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     J_rp <- Jp_r(p)
     r <- g(p) - b
 
-    cholF <- chol(Sp)
-    S_inv_r <- solve(cholF, solve(t(cholF), r))
+    S_inv_rp <- solve(Sp, r)
 
     gradient <- numeric(J)
 
@@ -268,12 +267,12 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
       J_S_j <- J_Sp[, , j]
       J_r_j <- J_rp[, j]
 
-      tmp <- J_S_j %*% S_inv_r
+      tmp <- J_S_j %*% S_inv_rp
 
-      prt0 <- 2.0 * (J_r_j %*% S_inv_r)[1,1]
-      prt1 <- -1.0 * (S_inv_r %*% tmp)[1,1]
+      prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
+      prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
 
-      fact <- solve(cholF, solve(t(cholF), J_S_j))
+      fact <- solve(Sp, J_S_j)
       logDetPart <- sum(diag(fact))
 
       gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
