@@ -15,17 +15,17 @@ build_F <- function(U, tt, f) {
   }
 }
 
-build_G_matrix <- function(V, U, tt, f, F_, J){
+build_G_matrix <- function(V, U, tt, F_, J){
   K <- nrow(V)
   mp1 <- nrow(U)
   D <- ncol(U)
   G <- matrix(0, nrow = K*D, ncol = J)
-
+  b0 <- F_(rep(0,J))
   for(j in seq(1,J)){
     e_j <- rep(0, J)
     e_j[j] <- 1
-    F_j <- F_(e_j)
-    g_j <- array(V %*% F_j)
+    F_e <- F_(e_j) - b0
+    g_j <- as.vector(V %*% F_e)
     G[,j] <- g_j
   }
   return(G)
@@ -33,7 +33,7 @@ build_G_matrix <- function(V, U, tt, f, F_, J){
 
 build_g <- function(V, F_) {
   function(p) {
-       array(V %*% F_(p))
+       as.vector(V %*% F_(p))
   }
 }
 
@@ -259,7 +259,8 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     J_rp <- Jp_r(p)
     r <- g(p) - b
 
-    S_inv_rp <- solve(Sp, r)
+    cholF <- chol(Sp)
+    S_inv_rp <- solve(cholF, solve(t(cholF), r))
 
     gradient <- numeric(J)
 
@@ -272,7 +273,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
       prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
       prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
 
-      fact <- solve(Sp, J_S_j)
+      fact <- solve(cholF, solve(t(cholF), J_S_j))
       logDetPart <- sum(diag(fact))
 
       gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
@@ -362,3 +363,5 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
     return(H_wnn)
   }
 }
+
+

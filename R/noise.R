@@ -89,3 +89,14 @@ estimate_std <- function(U, k = 6) {
   return(std_vec)
 }
 
+# For multiplicative log normal noise we can't have negative data or data at 0
+preprocess_data <- function(U, tt){
+  mp1 <- nrow(U)
+  indices <- logical(mp1)
+  for(i in seq(mp1)){
+    indices[i] <- all(U[i,] > 0)
+  }
+  # drop = FALSE keeps the data as a matrix
+  return(list(U = log(U[indices,  ,drop = FALSE]), tt = tt[indices, drop = FALSE]))
+}
+

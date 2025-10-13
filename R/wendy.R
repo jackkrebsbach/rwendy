@@ -32,12 +32,17 @@ test_params <- list(
 #' \itemize{
 #'   \item Builds symbolic expressions and derivatives of the ODE system (\eqn{f}, Jacobians, Hessians).
 #'   \item Constructs weak negative log-likelihood and functionals based on observed data.
-#'   \item Uses \code{\link[trustOptim]{trust.optim}} with BFGS updates for optimization.
 #' }
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
+solveWendy <- function(f, p0, U, tt, nois_dist = "addgaussian", lip = F, optimize = T, compute_svd = T){
+
+  if(nois_dist == "lognormal"){
+    data <- preprocess_data(U, tt)
+    U <- data$U
+    tt <- data$tt
+  }
 
   sig <- estimate_std(U, k = 6)
 
@@ -57,7 +62,7 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
   p <- do.call(c, lapply(1:length(p0), function(i) S(paste0("p", i))))
   t <- S("t")
 
-  f_expr <- f(u, p, t)
+  f_expr <- switch(nois_dist, lognormal = lognormal_transform(f(u, p, t)), f(u, p, t))
 
   J_u_sym <- compute_symbolic_jacobian(f_expr, u)
   J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
@@ -78,7 +83,7 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
   b <- -1 * as.vector(Vp %*% U)
 
   F_ <-build_F(U, tt, f_)
-  # G  <- build_G_matrix(V, U, tt, f, F_, J)
+  G <- build_G_matrix(V, U, tt, F_, J)
   g <- build_g(V, F_)
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
@@ -108,20 +113,28 @@ solveWendy <- function(f, p0, U, tt, optimize = TRUE, compute_svd = TRUE){
   res$J_wnll <- J_wnll
   res$H_wnll <- H_wnll
   res$g <- g
+  res$G <- G
   res$b <- b
+  res$f <- f_
   res$J_p <- J_p
+  res$J_p <- J_p
+  res$S <- S
+  res$Jp_r <- Jp_r
+  res$F_ <- F_
+  res$f_sym <- f_expr
+  res$L <- L
   res$sig <- sig
   res$V <- V
   res$V_prime <- Vp
   res$min_radius <- min_radius
-  res$J_p <- J_p
-  res$Jp_r <- Jp_r
 
   if(!optimize) return(res)
 
-  result <- trust(objfun, p0, 5, 500, blather = TRUE)
-  res$phat <- result$argument
-  #res <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
+  #result <- trust(objfun, p0, 5, 500, blather = TRUE)
+  #res$phat <- result$argument
+
+  result <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
+  res$phat <- result$solution
 
   return(res)
 

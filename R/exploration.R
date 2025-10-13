@@ -1,5 +1,8 @@
 # Logistic Example
 {
+  set.seed(8675309)
+  library(RColorBrewer)
+  library(tidyverse)
   library(deSolve)
   library(symengine)
   library(trust)
@@ -19,11 +22,11 @@
     list(p[[1]] * u[[1]] - p[[2]] * u[[1]]^2)
   }
 
-  noise_sd <- 0.05;
+  noise_sd <- 0.1;
   p_star <- c(1, 1);
   u0 <- c(0.01);
   p0 <- c(0.5, 0.5);
-  npoints <- 50;
+  npoints <- 100;
   t_span <- c(0, 10);
   t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -31,6 +34,38 @@
   sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
   U <- matrix(c(sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)), ncol = 1)
   tt <- matrix(sol[, 1], ncol = 1)
+  res <- solveWendy(f, p0, U, tt, optimize = F, compute_svd = T)
+  #test_funs <- WendySolver(logistic, U, p0, tt, log_level = "info", compute_svd_ = T, optimize_ = FALSE)
+
+  g <- res$g
+  G <- res$G
+  b <- res$b
+
+  test <- (G %*% p_hat) - g(p_hat)
+
+  p_hat <- solve(t(G) %*% G, t(G) %*% b)
+  p_hat <- p_star
+
+  r <- (G %*% p_hat) - b
+
+  covR<- res$S(p_hat)
+  cfact <- chol(covR)
+  inv_sqrt <- backsolve(cfact, diag(nrow(cfact)))
+
+  r_w <- (inv_sqrt %*% r)
+
+  r <- r / sd(r)
+  r_w <- r_w / sd(r_w)
+
+  dens_r   <- density(r)
+  dens_rw  <- density(r_w)
+
+  cols <- brewer.pal(4, "Set1")
+
+  plot(dens_r, main="OLS vs IRLS Residuals", xlab="Residual value", ylab="Density", lwd=2, col=cols[1], xlim=c(-5,5), ylim=c(0,1))
+  lines(dens_rw, col=cols[2], lwd=2, lty=4)
+  curve(dnorm(x, mean=0, sd=1), add=TRUE, col=cols[3], lwd=2)
+  legend("topright", legend=c("OLS Residuals", "IRLS Residuals", "Standard Normal"), col=cols[1:3], lwd=2)
 }
 
 # Lorenz Example
@@ -67,7 +102,7 @@
   p_star <- c(10.0, 28.0, 8.0 / 3.0)
   p0 <- c(12.0, 21, 4.0)
   u0 <- c(2, 1, 1)
-  npoints <- 116
+  npoints <-256
   t_span <- c(0, 10)
   t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -84,32 +119,38 @@
 
   tt <- matrix(sol[, 1], ncol = 1)
 
-J <- length(p0)
-D <- ncol(U)
-mp1 <- nrow(U)
-K <- nrow(V)
+  res <- solveWendy(f, p0, U, tt, optimize = F, compute_svd = T)
 
-u <- do.call(c, lapply(1:ncol(U), function(i) S(paste0("u", i))))
-p <- do.call(c, lapply(1:length(p0), function(i) S(paste0("p", i))))
-t <- S("t")
+  g <- res$g
+  G <- res$G
+  b <- res$b
 
-f_expr <- f(u, p, t)
+p_hat <- solve(t(G) %*% G, t(G) %*% b)
 
-J_u_sym <- compute_symbolic_jacobian(f_expr, u)
-J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
-J_p_sym <- compute_symbolic_jacobian(f_expr, p)
-J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
-J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p)
+test <- as.vector(G %*% p_hat) - array(res$V %*% res$F_(p_hat))
 
-vars <- c(p, u ,t)
+#p_hat <- p_star
 
-f_ <- build_fn(f_expr, vars)
+r <- (G %*% p_hat) - b
 
-J_u <- build_fn(J_u_sym, vars)
-J_up <- build_fn(J_up_sym, vars)
-J_p <- build_fn(J_p_sym, vars)
+covR<- res$S(p_hat)
+cfact <- chol(covR)
+inv_sqrt <- backsolve(cfact, diag(nrow(cfact)))
 
-res <- solveWendy(f, p0, U, tt, optimize = F, compute_svd = T)
+r_w <- (inv_sqrt %*% r)
+
+r <- r / sd(r)
+r_w <- r_w / sd(r_w)
+
+dens_r   <- density(r)
+dens_rw  <- density(r_w)
+
+cols <- brewer.pal(4, "Set1")
+
+plot(dens_r, main="OLS vs IRLS Residuals", xlab="Residual value", ylab="Density", lwd=2, col=cols[1], xlim=c(-5,5))
+lines(dens_rw, col=cols[2], lwd=2, lty=4)
+curve(dnorm(x, mean=0, sd=1), add=TRUE, col=cols[3], lwd=2)
+legend("topright", legend=c("OLS Residuals", "IRLS Residuals", "Standard Normal"), col=cols[1:3], lwd=2)
 
 }
 
