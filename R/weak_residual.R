@@ -20,11 +20,11 @@ build_G_matrix <- function(V, U, tt, F_, J){
   mp1 <- nrow(U)
   D <- ncol(U)
   G <- matrix(0, nrow = K*D, ncol = J)
-  b0 <- F_(rep(0,J))
+  g0 <- F_(rep(0,J))
   for(j in seq(1,J)){
     e_j <- rep(0, J)
     e_j[j] <- 1
-    F_e <- F_(e_j) - b0
+    F_e <- F_(e_j) - g0
     g_j <- as.vector(V %*% F_e)
     G[,j] <- g_j
   }

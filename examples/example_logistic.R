@@ -18,7 +18,7 @@ noise_sd <- 0.05;
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 100;
+npoints <- 200;
 t_span <- c(0.005, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -30,11 +30,11 @@ U <- matrix(c(sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)), ncol = 1)
 tt <- matrix(sol[, 1], ncol = 1)
 
 # Log Normal Noise
-noisy <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
+# noisy <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 # U <- matrix(noisy, ncol = 1)
 # tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt)
+res <- solveWendy(f, p0, U, tt, method = "IRLS")
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 

@@ -26,6 +26,7 @@ test_params <- list(
 #' @param U Numeric matrix. Rows represent observed states at time points in \code{tt}.
 #'   Columns correspond to state variables.
 #' @param tt Numeric vector. Time points corresponding to the rows of \code{U}.
+#' @param method String "MLE" | "IRLS" \code{U}.
 #'
 #' @details
 #' The procedure:
@@ -36,9 +37,9 @@ test_params <- list(
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, nois_dist = "addgaussian", lip = F, optimize = T, compute_svd = T){
+solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method = "MLE", optimize = T, compute_svd = T){
 
-  if(nois_dist == "lognormal"){
+  if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt)
     U <- data$U
     tt <- data$tt
@@ -62,7 +63,7 @@ solveWendy <- function(f, p0, U, tt, nois_dist = "addgaussian", lip = F, optimiz
   p <- do.call(c, lapply(1:length(p0), function(i) S(paste0("p", i))))
   t <- S("t")
 
-  f_expr <- switch(nois_dist, lognormal = lognormal_transform(f(u, p, t)), f(u, p, t))
+  f_expr <- switch(noise_dist, lognormal = lognormal_transform(f(u, p, t)), f(u, p, t))
 
   J_u_sym <- compute_symbolic_jacobian(f_expr, u)
   J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
@@ -80,11 +81,14 @@ solveWendy <- function(f, p0, U, tt, nois_dist = "addgaussian", lip = F, optimiz
   J_pp <- build_fn(J_pp_sym, vars)
   J_upp <- build_fn(J_upp_sym, vars)
 
-  b <- -1 * as.vector(Vp %*% U)
 
   F_ <-build_F(U, tt, f_)
   G <- build_G_matrix(V, U, tt, F_, J)
   g <- build_g(V, F_)
+
+  b <- -1 * as.vector(Vp %*% U)
+  g0 <- as.vector(V %*% F_(rep(0,J))) # Lip -> Gp + g0 = g(p)
+  b1 <- b - g0
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
@@ -115,6 +119,7 @@ solveWendy <- function(f, p0, U, tt, nois_dist = "addgaussian", lip = F, optimiz
   res$g <- g
   res$G <- G
   res$b <- b
+  res$b1 <- b1
   res$f <- f_
   res$J_p <- J_p
   res$J_p <- J_p
@@ -130,14 +135,11 @@ solveWendy <- function(f, p0, U, tt, nois_dist = "addgaussian", lip = F, optimiz
 
   if(!optimize) return(res)
 
-  #result <- trust(objfun, p0, 5, 500, blather = TRUE)
-  #res$phat <- result$argument
-
-  result <- trust.optim(p0, wnll, J_wnll, method = "BFGS", control = list(report.level = 0, cg.tol = 1e-10))
-  res$phat <- result$solution
-
+  res$phat <- switch(method,
+                     IRLS = irls(G, b1, L)$p, # IRLS original WENDy
+                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = TRUE)$argument # Maximum likelihood estimation
+                     )
   return(res)
-
  }
 
 

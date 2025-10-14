@@ -1,5 +1,9 @@
 library(deSolve)
 library(plotly)
+library(trust)
+library(uGMAR)
+library(trustOptim)
+library(symengine)
 
 source("./R/noise.R")
 source("./R/symbolics.R")
@@ -31,12 +35,13 @@ noise <- matrix(
   nrow = nrow(sol)
 )
 
+# Additive Gaussian
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt)
-
+res <- solveWendy(f, p0, U, tt, method = "IRLS")
 phat <- res$phat
+
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 
 plot_ly(
@@ -55,3 +60,5 @@ plot_ly(
     marker = list(color = 'red', size = 3),
     name = "fit"
   )
+
+print(phat)

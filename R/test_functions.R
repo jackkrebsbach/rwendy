@@ -128,7 +128,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 }
 
 build_full_test_function_matrices <- function(U, tt, test_function_params, compute_svd = TRUE) {
-  cat("<< Building test matrices >>\n")
+  #cat("<< Building test matrices >>\n")
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
@@ -154,9 +154,9 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
     radius_min_max <- min_radius * 10
   }
 
-  cat(sprintf("  Min radius: %d\n", min_radius))
-  cat(sprintf("  Max radius: %d\n", max_radius))
-  cat(sprintf("  Minmax radius: %d\n", radius_min_max))
+  # cat(sprintf("  Min radius: %d\n", min_radius))
+  # cat(sprintf("  Max radius: %d\n", max_radius))
+  # cat(sprintf("  Minmax radius: %d\n", radius_min_max))
 
   result <- find_min_radius_int_error(U, tt, min_radius, radius_min_max,
                                       num_radii = 100, sub_sample_rate = 1)
@@ -171,7 +171,7 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
   min_radius_ix <- ix
   min_radius <- min_radius_int_error
 
-  cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
+  #cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
 
   radii <- test_function_params$radius_params * min_radius_int_error
 
@@ -181,7 +181,7 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
     radii_filtered <- max_radius
   }
 
-  cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
+  #cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
 
   V_ <- build_full_test_function_matrix(tt, radii_filtered, order = 0)
   V_prime_ <- build_full_test_function_matrix(tt, radii_filtered, order = 1)
@@ -199,7 +199,7 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
   }
 
   k_full <- nrow(V_)
-   cat(sprintf("  K Full: %d\n", k_full))
+  #cat(sprintf("  K Full: %d\n", k_full))
 
   SVD <- svd(V_)
   U_svd <- SVD$u
@@ -227,13 +227,13 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
 
   K <- min(k1, k2, k_max)
 
-  cat(sprintf("  Condition Number is now: %.4f\n", condition_numbers[K]))
-  cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
-  cat(sprintf("  K is: %d\n", K))
+  # cat(sprintf("  Condition Number is now: %.4f\n", condition_numbers[K]))
+  # cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
+  # cat(sprintf("  K is: %d\n", K))
 
   V_final <- Vt[1:K, , drop = FALSE]
 
-  cat("  Calculating Vprime\n")
+  # cat("  Calculating Vprime\n")
 
   U_T <- t(U_svd)[1:K, , drop = FALSE]
   UV <- U_T %*% V_prime_
