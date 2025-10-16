@@ -7,7 +7,7 @@ library(trustOptim)
 test_params <- list(
   radius_params = 2^(0:3),
   radius_min_time = 0.1,
-  radius_max_time = 8.0,
+  radius_max_time = 5.0,
   k_max = 200,
   max_test_fun_condition_number = 1e4,
   min_test_fun_info_number = 0.95
@@ -88,6 +88,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   b <- -1 * as.vector(Vp %*% U)
   g0 <- as.vector(V %*% F_(rep(0,J))) # Lip -> Gp + g0 = g(p)
+  # (G|g0)p2
   b1 <- b - g0
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
@@ -136,7 +137,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   if(!optimize) return(res)
 
   res$phat <- switch(method,
-                     IRLS = irls(G, b1, L)$p, # IRLS original WENDy
+                     IRLS = irls(G, b1, L)$p, # IRLS WENDy
                      trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = TRUE)$argument # Maximum likelihood estimation
                      )
   return(res)
