@@ -15,23 +15,6 @@ build_F <- function(U, tt, f) {
   }
 }
 
-build_F <- function(U, tt, f) {
-  mp1 <- U$shape[1]
-  D   <- U$shape[2]
-
-  function(p) {
-    out <- torch_zeros(mp1, D)
-    for (i in 1:mp1) {
-      u <- U[i, ]
-      t <- tt[i]
-      input_vec <- as.vector(c(p, u, t))
-      out[i, ] <- f(input_vec)
-    }
-
-    return(out)
-  }
-}
-
 build_G_matrix <- function(V, U, tt, F_, J){
   K <- nrow(V)
   mp1 <- nrow(U)

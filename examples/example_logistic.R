@@ -1,13 +1,6 @@
 library(deSolve)
 library(symengine)
 library(trust)
-library(trustOptim)
-
-source("./R/noise.R")
-source("./R/symbolics.R")
-source("./R/test_functions.R")
-source("./R/weak_residual.R")
-source("./R/wendy.R")
 
 f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
