@@ -1,5 +1,6 @@
 library(deSolve)
 library(symengine)
+library(torch)
 library(trust)
 library(uGMAR)
 library(trustOptim)
@@ -49,8 +50,11 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
 
-  V <- test_fun_matrices$V
-  Vp <- test_fun_matrices$V_prime
+  V <- torch_tensor(test_fun_matrices$V)
+  Vp <- torch_tensor(test_fun_matrices$V_prime)
+
+  U <- torch_tensor(U)
+  tt <- torch_tensor(tt)
 
   min_radius <- test_fun_matrices$min_radius
 
