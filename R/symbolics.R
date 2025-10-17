@@ -1,4 +1,3 @@
-library(symengine)
 
 compute_symbolic_jacobian <- function(f_expr, vars) {
   dims <- dim(f_expr)

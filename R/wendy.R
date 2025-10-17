@@ -1,9 +1,6 @@
 library(deSolve)
 library(symengine)
-library(torch)
 library(trust)
-library(uGMAR)
-library(trustOptim)
 
 test_params <- list(
   radius_params = 2^(0:3),
