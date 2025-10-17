@@ -14,7 +14,6 @@ build_F <- function(U, tt, f) {
     return(out)
   }
 }
-p <- torch_tensor(c(1, 2, 3))
 
 build_F <- function(U, tt, f) {
   mp1 <- U$shape[1]

@@ -47,11 +47,8 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
 
-  V <- torch_tensor(test_fun_matrices$V)
-  Vp <- torch_tensor(test_fun_matrices$V_prime)
-
-  U <- torch_tensor(U)
-  tt <- torch_tensor(tt)
+  V <- test_fun_matrices$V
+  Vp <- test_fun_matrices$V_prime
 
   min_radius <- test_fun_matrices$min_radius
 

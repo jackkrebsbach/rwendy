@@ -7,17 +7,6 @@ format: html
 library(deSolve)
 library(symengine)
 library(trust)
-library(uGMAR)
-library(trustOptim)
-```
-
-```{r}
-setwd("..")
-source("./R/noise.R")
-source("./R/symbolics.R")
-source("./R/test_functions.R")
-source("./R/weak_residual.R")
-source("./R/wendy.R")
 ```
 
 ## Logistic
