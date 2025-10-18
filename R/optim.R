@@ -6,7 +6,6 @@ irls <- function(G, b1, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, 
   n <- 0
   SW <- Inf
 
-  # Track Shapiro-Wilk p-values
   sw_pvalues <- numeric(max_its)
 
   while(n < max_its){

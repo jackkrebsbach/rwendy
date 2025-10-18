@@ -1,6 +1,5 @@
+library(wendy)
 library(deSolve)
-library(symengine)
-library(trust)
 
 f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
