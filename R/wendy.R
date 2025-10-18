@@ -1,5 +1,6 @@
 library(symengine)
 library(trust)
+library(stats)
 
 test_params <- list(
   radius_params = 2^(0:3),
