@@ -1,4 +1,3 @@
-library(deSolve)
 library(symengine)
 library(trust)
 
@@ -134,10 +133,13 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   if(!optimize) return(res)
 
-  res$phat <- switch(method,
-                     IRLS = irls(G, b1, L)$p, # IRLS WENDy
-                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = TRUE)$argument # Maximum likelihood estimation
+  data <- switch(method,
+                     IRLS = irls(G, b1, L), # IRLS WENDy
+                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = TRUE) # Maximum likelihood estimation
                      )
+  res$data <- data
+  res$phat <- switch(method, IRLS = data$p, data$argument)
+
   return(res)
  }
 

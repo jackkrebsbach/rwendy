@@ -27,12 +27,8 @@ tt <- matrix(sol[, 1], ncol = 1)
 # tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, p0, U, tt, method = "IRLS")
-
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
-plot(U, cex = 0.5)
-points(sol[, 2], cex = 0.5, col = "blue")
-points(sol_hat[, 2], cex = 0.5, col = "red")
+#saveRDS(res, "phat.rds")
 
-print(res$phat)
 
