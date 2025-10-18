@@ -108,9 +108,9 @@ run_single <- function(dist, strat, meth, nr, p0_range) {
     strategy = strat,
     method = meth,
     noise_ratio = nr,
-    phat <- res$phat,
+    phat = list(res$phat),
     converged = res$data$converged,
-    iterations = res$iterations,
+    iterations = res$data$iterations,
     final_sw_pvalue = if(!is.null(res$final_sw_pvalue)) res$final_sw_pvalue else NA,
   )
 }
@@ -122,18 +122,4 @@ results <- params %>%
       mutate(replicate = rep)
   })
 
-head(results)
-
-results_summary <- results %>%
-  group_by(distribution, strategy, method, noise_ratio) %>%
-  summarise(
-    mean_sw_pvalue = mean(final_sw_pvalue, na.rm = TRUE),
-    mean_phat = mean(phat),
-    n_replicates = n(),
-    .groups = "drop"
-  )
-
-print(results_summary)
-
-saveRDS(results, "full_results.rds")
-write_csv(results_summary, "results_summary.csv")
+saveRDS(results, "bias_results_logistic.rds")
