@@ -2,13 +2,10 @@ library(wendy)
 library(deSolve)
 library(symengine)
 library(trust)
-library(tidyverse)
-library(dplyr)
-library(purrr)
-library(tibble)
 library(dplyr)
 library(purrr)
 
+library(tidyverse)
 # Method 0 is the coverage and bias, Method 1 is MLE Paper
 addAdditiveGaussian <- function(noise_ratio, U, strategy) {
   state_sd <- apply(U, 2, sd)
