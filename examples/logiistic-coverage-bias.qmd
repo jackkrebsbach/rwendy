@@ -1,0 +1,160 @@
+---
+title: "logistic-coverage-bias"
+format: html
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+data <- readRDS("../data/bias-coverage.rds") |>
+  as_tibble() |>
+  mutate(
+    phat1 = map_dbl(phat, ~ as.numeric(.x)[1] %||% NA_real_),
+    phat2 = map_dbl(phat, ~ as.numeric(.x)[2] %||% NA_real_)
+  ) |>
+  select(-phat)
+```
+
+
+Replications
+
+```{r}
+STRAGETY <- 0
+ilrs_0_gaussian <- data |>
+  filter(distribution == "AdditiveGaussian") |>
+  filter(method == "IRLS") |>
+  filter(converged == T)|>
+  filter(strategy  == STRAGETY) |>
+  filter(noise_ratio < 0.8) |>
+  filter(abs(phat1) < 5) |>
+  filter(abs(phat2) < 5)
+
+mle_0_gaussian <- data |>
+  filter(distribution == "AdditiveGaussian") |>
+  filter(method == "MLE") |>
+  filter(converged == T)|>
+  filter(strategy  == STRAGETY) |>
+  filter(noise_ratio < 0.8)
+```
+
+
+```{r}
+nr <- ilrs_0_gaussian |> 
+  dplyr::filter(abs(noise_ratio - 0.70) < 0.001)
+nr
+```
+
+```{r}
+sum <- ilrs_0_gaussian %>%
+  group_by(noise_ratio) %>%
+   summarise(
+    mean_phat1 = mean(phat1, na.rm = TRUE),
+    mean_phat2 = mean(phat2, na.rm = TRUE)
+  )
+sum
+```
+
+```{r}
+plot(sum$noise_ratio, sum$mean_phat1, type = "l", col = "blue", lwd = 2,
+     xlab = "Noise Ratio", 
+     ylab = expression("Mean " * hat(p)[1] * "," * hat(p)[2]))
+lines(sum$noise_ratio, sum$mean_phat2, col = "red", lwd = 2)
+title("IRLS Additive Gaussian Noise (Synthetic noise from bias-coverage paper)", cex.main = 0.9)
+```
+
+```{r}
+sum <- mle_0_gaussian %>%
+  group_by(noise_ratio) %>%
+   summarise(
+    mean_phat1 = mean(phat1, na.rm = TRUE),
+    mean_phat2 = mean(phat2, na.rm = TRUE)
+  )
+plot(sum$noise_ratio, sum$mean_phat1, type = "l", col = "blue", lwd = 2,
+     xlab = "Noise Ratio", 
+     ylab = expression("Mean " * hat(p)[1] * "," * hat(p)[2]))
+lines(sum$noise_ratio, sum$mean_phat2, col = "red", lwd = 2)
+title("MLE Additive Gaussian Noise (Synthetic noise from bias-coverage paper)", cex.main = 0.9)
+```
+
+
+```{r}
+ggplot(ilrs_0_gaussian, aes(x = factor(noise_ratio), y = phat1)) +
+  geom_violin(fill = "skyblue", alpha = 0.6, adjust = 2, trim = T) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "purple", linewidth = 1) +
+  labs(
+    x = "Noise Level (%)",
+    y = expression(hat(p)[1]),
+    title = "Distribution of phat1 by noise ratio"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "#f0f0f0", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+addAdditiveGaussian <- function(noise_ratio, U, strategy) {
+  state_sd <- apply(U, 2, sd)
+  U_range <- apply(U, 2, function(col) max(col) - min(col))
+  D <- ncol(U)
+  mp1 <- nrow(U)
+  switch(strategy,
+         "0" = {
+            x <- rnorm(mp1 * length(state_sd), mean = 0, sd = rep(U_range * noise_ratio, each = mp1))
+            noise <- matrix(x, nrow = mp1, ncol = D)
+            return(U + noise)
+          },
+          "1" = {
+            noise_sd <- noise_ratio * sqrt(sum(as.vector(U)^2)/mp1)
+            #noise_sd <- noise_ratio * (norm(U, "F")^2 / mp1)
+            noise <- matrix(
+              rnorm(mp1 * D, mean = 0, sd = noise_sd),
+              nrow = mp1
+            )
+            return(U + noise)
+         }
+  )
+}
+```
+
+
+```{r}
+f <- function(u, p, t) {
+  c(p[1] * u[1] - p[2] * u[1]^2)
+}
+# ODE params
+p_star <- c(1, 1)
+u0 <- c(0.01)
+p0_range <- list(c(0, 10), c(0, 10))
+npoints <- 103
+t_span <- c(0.001, 10)
+t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
+
+modelODE <- function(tvec, state, parameters) {
+  list(as.vector(f(state, parameters, tvec)))
+}
+sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
+U <- sol[, 2, drop = F]
+tt <- sol[, 1, drop = F]
+
+plot(tt, U)
+```
+
+
+```{r}
+U_noisy <- addAdditiveGaussian(0.5, U, strategy = "1")
+plot(tt, U_noisy)
+print(sd(U_noisy))
+```
+
+```{r}
+U_noisy <- addAdditiveGaussian(0.7, U, strategy = "0")
+plot(tt, U_noisy)
+print(sd(U_noisy))
+```
+

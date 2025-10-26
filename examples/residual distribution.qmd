@@ -6,7 +6,10 @@ format: html
 ```{r}
 library(deSolve)
 library(symengine)
+library(mvtnorm)
 library(trust)
+library(brew)
+library(RColorBrewer)
 ```
 
 ## Logistic
@@ -57,6 +60,20 @@ plot(dens_r, main="Logistic: OLS vs IRLS Residuals", xlab="Residual value", ylab
 lines(dens_rw, col=cols[2], lwd=2, lty=4)
 curve(dnorm(x, mean=0, sd=1), add=TRUE, col=cols[3], lwd=2)
 legend("topright", legend=c("OLS Residuals", "IRLS Residuals", "Standard Normal"), col=cols[1:3], lwd=2)
+```
+
+```{r}
+n_samples <- 1000
+#sigma <- res$S(p_star)
+mu <- rep(0, dim(sigma)[1])
+# Dense matrix with positive correlate
+# Diagonal matrix 
+# Dense covariance matrix positive correlation
+# Dense covariance with negative correlation
+# Make an SPD matrix
+sigma <- rep(0, dim(sigma)[1])
+samples <- rmvnorm(n_samples, mean = mu, sigma = sigma)
+plot(density(samples), main="Density of Sampled residuals", xlab="Residual value", ylab="Density", lwd=2, col=cols[1], xlim=c(-5,5))
 ```
 
 ## Lorenz

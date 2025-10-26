@@ -37,12 +37,13 @@ addMultiplicativeLogNormal <- function(noise_ratio, U, strategy) {
   switch(strategy,
          "0" = {
            # Not working as of now (produces Nans by taking negative of logs)
-           # col_range <- apply(U, 2, function(col) max(col) - min(col))
-           # gamma <- noise_ratio
-           # sigma <- sqrt((log(col_range * gamma) + 1) / 2)
-           # log_noise <- matrix(rnorm(mp1 * D, mean = 0, sd = rep(sigma, each = mp1)),
-           #                     nrow = mp1, ncol = D)
-           # U * exp(noise)
+           col_range <- apply(U, 2, function(col) max(col) - min(col))
+           col_range <- 1.01
+           gamma <- 0.1
+           sigma_2 <- (log(col_range * gamma) + 1) / 2
+           log_noise <- matrix(rnorm(mp1 * D, mean = 0, sd = rep(sigma, each = mp1)),
+                               nrow = mp1, ncol = D)
+           U * exp(log_noise)
            noise <- rnorm(mp1 * D, mean = 0, sd = noise_ratio)
            U * exp(noise)
          },{
@@ -68,8 +69,9 @@ f <- function(u, p, t) {
 distributions <- c("AdditiveGaussian", "MultiplicativeLogNormal")
 noise_strategies <- c(0, 1)
 methods <- c("IRLS", "MLE")
-noise_ratios <- seq(0, 0.1, by = 0.05)
-nreps <- 2
+#noise_ratios <- seq(0, 0.1, by = 0.05)
+noise_ratios <- c(0.05)
+nreps <- 1
 
 # ODE params
 p_star <- c(1, 1)
@@ -90,16 +92,15 @@ params <- expand.grid(
   distribution = distributions,
   strategy = noise_strategies,
   method = methods,
+  p0_range = list(p0_range),
   noise_ratio = noise_ratios,
   stringsAsFactors = FALSE
 )
 
 run_single <- function(dist, strat, meth, nr, p0_range) {
-  p0 <- mapply(\(r) runif(1, r[1], r[2]), p0_range)
+  p0 <- rapply(p0_range, \(r) runif(1, r[1], r[2]))
   U_noisy <- add_noise(U, noise_ratio = nr, distribution = dist, strategy = strat)
-
   res <- solveWendy(f, p0, U_noisy, tt, method = meth)
-
   tibble(
     distribution = dist,
     strategy = strat,
@@ -112,11 +113,15 @@ run_single <- function(dist, strat, meth, nr, p0_range) {
   )
 }
 
+
 results <- params %>%
   crossing(rep = 1:nreps) %>%
-  pmap_df(\(distribution, strategy, method, noise_ratio, rep) {
-    run_single(distribution, strategy, method, noise_ratio, p0_range) %>%
-      mutate(replicate = rep)
+  pmap_df(\(distribution, strategy, method, noise_ratio, p0_range, rep) {
+    #print(rep)
+    #print(p0_range)
+    print(p0)
+    #run_single(distribution, strategy, method, noise_ratio, p0_range) %>%
+      #mutate(replicate = rep)
   })
 
 saveRDS(results, "bias_results_logistic.rds")
