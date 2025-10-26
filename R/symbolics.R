@@ -21,7 +21,8 @@ compute_symbolic_jacobian <- function(f_expr, vars) {
   return(J)
 }
 
-build_fn <- function(expr_array, vars) {
+# We only use do_transpose for f(p,U,tt) [so far]
+build_fn <- function(expr_array, vars, do_tranpose = FALSE) {
   dims <- dim(expr_array)
   if (is.null(dims)) {
     expr_vec <- symengine::Vector(expr_array)
@@ -34,8 +35,8 @@ build_fn <- function(expr_array, vars) {
                            perform_cse = TRUE,
                            llvm_opt_level = if (symengine_have_component("llvm")) 3L else -1L)
   function(input) {
-    vals <- visitor_call(visitor, input, do_transpose = FALSE)
-    if (is.null(dims)) return(vals)
+    vals <- visitor_call(visitor, input, do_transpose = do_tranpose)
+    if (is.null(dims) || do_tranpose) return(vals)
     fn <- array(vals, dim = rev(dims)) # To match column wise vectorization
     fn <- aperm(fn, length(dims):1)
   }

@@ -1,7 +1,55 @@
+library(wendy)
+library(deSolve)
+library(plotly)
+library(trust)
+library(symengine)
 
-build_F <- function(U, tt, f) {
+
+f <- function(u, p, t) {
+  du1 <- p[1] * (u[2] - u[1])
+  du2 <- u[1] * (p[2] - u[3]) - u[2]
+  du3 <- u[1] * u[2] - p[3] * u[3]
+  c(du1, du2, du3)
+}
+
+noise_sd <- 0.05
+p_star <- c(10.0, 28.0, 8.0 / 3.0)
+p0 <- c(12.0, 21, 4.0)
+u0 <- c(2, 1, 1)
+npoints <- 256
+t_span <- c(0, 10)
+t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
+
+modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
+
+sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
+
+noise <- matrix(
+  rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
+  nrow = nrow(sol)
+)
+
+U <- sol[, -1] + noise
+tt <- matrix(sol[, 1], ncol = 1)
+
+u <- do.call(c, lapply(1:ncol(U), function(i) S(paste0("u", i))))
+p <- do.call(c, lapply(1:length(p0), function(i) S(paste0("p", i))))
+t <- S("t")
+
+f_expr <- f(u, p, t)
+
+J_u_sym <- compute_symbolic_jacobian(f_expr, u)
+J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
+J_p_sym <- compute_symbolic_jacobian(f_expr, p)
+J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
+J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p)
+
+vars <- c(p, u ,t)
+
+build_F <- function(U, tt, f_expr, vars) {
   mp1 <- nrow(U)
   D   <- ncol(U)
+  f <- build_fn(f_expr, vars)
   function(p) {
     out <- matrix(0, nrow = mp1, ncol = D)
     for (i in 1:mp1) {
@@ -14,6 +62,25 @@ build_F <- function(U, tt, f) {
     return(out)
   }
 }
+
+build_F_torch <- function(U, tt, f_expr, vars) {
+  mp1 <- nrow(U)
+  D   <- ncol(U)
+  J <- length(p)
+  f <- build_fn(f_expr, vars, do_tranpose = TRUE)
+  function(p) {
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    torch::torch_tensor(f(input))
+  }
+}
+
+F_ <- build_F(U, tt, f_expr, vars)
+F_torch <- build_F_torch(U, tt, f_expr, vars)
+
+Fp <- F_(p)
+F_torchp <- as.array(F_torch(p))
+all.equal(Fp, F_torchp)
 
 build_G_matrix <- function(V, U, tt, F_, J){
   K <- nrow(V)
@@ -31,9 +98,32 @@ build_G_matrix <- function(V, U, tt, F_, J){
   return(G)
 }
 
+build_G_matrix_torch <- function(V, U, tt, F_, J){
+  K <- nrow(V)
+  mp1 <- nrow(U)
+  D <- ncol(U)
+  G <- matrix(0, nrow = K*D, ncol = J)
+  g0 <- F_(rep(0,J))
+  for(j in seq(1,J)){
+    e_j <- rep(0, J)
+    e_j[j] <- 1
+    F_e <- as.array(F_(e_j)) - g0
+    g_j <- as.vector(V %*% F_e)
+    G[,j] <- g_j
+  }
+  return(torch::torch_tensor(G))
+}
+
+
 build_g <- function(V, F_) {
   function(p) {
        as.vector(V %*% F_(p))
+  }
+}
+
+build_g_torch <- function(V, F_) {
+  function(p) {
+    torch::torch_matmul(V, F_(p))$squeeze()
   }
 }
 
