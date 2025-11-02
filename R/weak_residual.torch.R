@@ -80,6 +80,116 @@ sig_torch <- torch::torch_tensor(sig)
 
 }
 
+# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
+build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
+  D <- ncol(U)
+  mp1 <- length(tt)
+
+  function(p){
+    T_F <- array(0, dim = c(mp1, D, D, J, J))
+
+    for (i in 1:mp1) {
+      t <- tt[i]
+      u <- U[i, ]
+      val <- J_upp(c(p, u, t))
+      T_F[i, , , ,] <- val
+    }
+
+    H_ <- array(0, dim = c(K, D, mp1, D, J, J))
+
+    for (k in 1:K) {
+      for (d1 in 1:D) {
+        for (m in 1:mp1) {
+          for (d2 in 1:D) {
+            for (j1 in 1:J) {
+              for (j2 in 1:J) {
+                H_[k, d1, m, d2, j1, j2] <- T_F[m, d1, d2, j1, j2] * V[k, m] * sig[d1]
+
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Hp_L <- array(H_, dim = c(K * D, mp1 * D, J, J))
+    return(Hp_L)
+  }
+}
+
+# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
+build_Hp_L_torch <-function(U, tt, J_upp, K, J, D, V, sig){
+  mp1 <- length(tt)
+  function(p){
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    T_F <- torch::torch_reshape(torch::torch_tensor(J_upp(input)), c(mp1, D, D, J, J))
+    H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))$permute(c(2,1,4,3,5,6))
+    H_ <- torch::torch_reshape(H_, c(K * D, mp1 * D, J, J))
+    return(H_)
+  }
+}
+
+Hp_L_torch <- build_Hp_L_torch(U, tt, J_upp, K, J, D, V_torch, sig_torch)
+Hp_L <- build_Hp_L(U, tt, J_up, K, J, D, V, sig)
+
+p <- c(12.0, 21, 4.0)
+Hp_L_torchp <- Hp_L_torch(p)
+Hp_Lp <- Hp_L(p)
+
+all.equal(Hp_Lp, as.array(Hp_L_torchp))
+
+
+build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
+  mp1 <- length(tt)
+  function(p){
+    H_F <- array(0, dim = c(mp1, D, D, J))
+
+    for (i in 1:mp1) {
+      t <- tt[i]
+      u <- U[i, ]
+      val <- J_up(c(p, u, t))
+      H_F[i, , ,] <- val
+    }
+
+    J_ <- array(0, dim = c(K, D, mp1, D, J))
+
+    for (k in 1:K) {
+      for (d1 in 1:D) {
+        for (m in 1:mp1) {
+          for (d2 in 1:D) {
+            for (j in 1:J) {
+              J_[k, d1, m, d2, j] <- H_F[m, d1, d2, j] * V[k, m] * sig[d1]
+            }
+          }
+        }
+      }
+    }
+    Jp_L <- array(J_, dim = c(K * D, mp1 * D, J))
+    return(Jp_L)
+  }
+}
+
+build_Jp_L_torch <-function(U, tt, J_up, K, J, D, V, sig){
+  mp1 <- length(tt)
+  function(p){
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    H_F <- torch::torch_reshape(torch::torch_tensor(J_up(input)), c(mp1, D, D, J))
+    J_ <- torch::torch_einsum("mabj,km,a->kambj", list(H_F, V, sig))$permute(c(2,1,4,3,5))
+    J_ <- torch::torch_reshape(J_, c(K * D, mp1 * D, J))
+    return(J_)
+  }
+}
+
+Jp_L_torch <- build_Jp_L_torch(U, tt, J_up, K, J, D, V_torch, sig_torch)
+Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
+
+p <- c(12.0, 21, 4.0)
+Jp_L_torchp <- Jp_L_torch(p)
+Jp_Lp <- Jp_L(p)
+
+all.equal(Jp_Lp, as.array(Jp_L_torchp))
 
 
 build_L0 <- function(K, D, mp1, Vp, sig) {
@@ -99,7 +209,7 @@ build_L0 <- function(K, D, mp1, Vp, sig) {
 
 build_L0_torch <- function(K, D, mp1, Vp, sig) {
   sig_diag <- torch::torch_diag(sig)
-  L0_ <- torch::torch_einsum('km,ab->kabm', list(Vp, sig_diag))$permute(c(2,1,3,4))
+  L0_ <- torch::torch_einsum('km,a->kabm', list(Vp, sig_diag))$permute(c(2,1,3,4))
   L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
   return(L0)
 }
