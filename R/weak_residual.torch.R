@@ -4,6 +4,8 @@ library(plotly)
 library(trust)
 library(symengine)
 source("./R/symbolics.R")
+source("./R/test_functions.R")
+source("./R/noise.R")
 
 test_params <- list(
   radius_params = 2^(0:3),
@@ -45,6 +47,7 @@ test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, TRUE)
 
 V <- test_fun_matrices$V
 V_torch <- torch::torch_tensor(V)
+
 Vp <- test_fun_matrices$V_prime
 Vp_torch <- torch::torch_tensor(Vp)
 
@@ -78,7 +81,116 @@ p <- c(12.0, 21, 4.0)
 sig <- estimate_std(U, k = 6)
 sig_torch <- torch::torch_tensor(sig)
 
+b <- -1 * as.vector(Vp %*% U)
+b_torch <- torch::torch_tensor(b)
 }
+
+build_wnll <- function(S, g, b, K, D){
+  constant_term <- 0.5 * K * D * log(2 * pi)
+  function(p){
+    Sp <- S(p)
+    r <- g(p) - b
+
+    cholF <- chol(Sp)
+    log_det <- 2 * sum(log(diag(cholF)))
+
+    S_invr <- solve(cholF, solve(t(cholF), r))
+
+    mdist <- (r %*% S_invr)[1,1]
+    return(0.5 * (mdist + log_det) + constant_term)
+  }
+}
+
+build_wnll_torch <- function(S, g, b, K, D){
+  constant_term <- 0.5 * K * D * log(2 * pi)
+  function(p){
+    Sp <- S(p)
+    r <- g(p) - b
+    cholF <- torch::torch_cholesky(Sp)
+
+    log_det <- 2 * torch::torch_sum(torch::torch_log(torch::torch_diag(cholF)))
+    S_invr <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)$squeeze(2)
+    mdist <- torch::torch_matmul(r$unsqueeze(1), S_invr)$squeeze()
+
+    result <- 0.5 * (mdist + log_det) + constant_term
+    return(result)
+  }
+}
+
+wnll <- build_wnll(S, g, b, K, D)
+wnll_torch <- build_wnll_torch(S_torch, g_torch, b_torch, K, D)
+
+wnllp <- wnll(p)
+wnll_torchp <- wnll_torch(p)
+
+all.equal(wnllp, as.array(wnll_torchp))
+
+
+build_J_S <- function(L, Jp_L, J, K, D){
+  function(p){
+    Lp <- L(p)
+    Jp_Lp <- Jp_L(p)
+
+    Jp_S <- array(0, dim = c(K*D, K*D, J))
+    for(j in 1:J){
+      Jp_L_j <-  Jp_Lp[,,j]
+      prt <- Jp_L_j %*% t(Lp)
+      Jp_S[,,j] <- prt + t(prt)
+    }
+    return(Jp_S)
+  }
+}
+
+build_J_S_torch <- function(L, Jp_L, J, K, D){
+  function(p){
+    Lp <- L(p)
+    Jp_Lp <- Jp_L(p)
+    Lp_t <- Lp$t()
+    prt <- torch::torch_einsum("ijk,jl->ilk", list(Jp_Lp, Lp_t))
+    Jp_S <- prt + prt$transpose(1, 2)
+    return(Jp_S)
+  }
+}
+
+J_S <- build_J_S(L, Jp_L, J, K, D)
+J_S_torch <- build_J_S_torch(L_torch, Jp_L_torch, J, K, D)
+
+p <- c(12.0, 21, 4.0)
+J_Sp <- J_S(p)
+J_Sp_torch <- J_S_torch(p)
+
+all.equal(J_Sp, as.array(J_Sp_torch))
+
+build_S <- function(L, REG = 1e-10) {
+  function(p) {
+    Lp <- L(p)
+    S_ <- tcrossprod(Lp)
+    WEIGHT <- 1.0 - REG
+    eye <- REG * diag(nrow(S_))
+    S <- WEIGHT * S_ + eye
+    return(S)
+  }
+}
+
+build_S_torch <- function(L, REG = 1e-10) {
+  function(p) {
+    Lp <- L(p)
+    Lpt <- torch::torch_transpose(Lp, 1, 2)
+    S_ <- torch::torch_matmul(Lp, Lpt)
+    WEIGHT <- 1.0 - REG
+    eye <- REG * diag(nrow(S_))
+    S <- WEIGHT * S_ + eye
+    return(S)
+  }
+}
+
+S <- build_S(L)
+S_torch <- build_S_torch(L_torch)
+
+Sp <- S(p)
+Sp_torch <- S_torch(p)
+
+all.equal(Sp, as.array(Sp_torch))
 
 # ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
 build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
@@ -130,12 +242,13 @@ build_Hp_L_torch <-function(U, tt, J_upp, K, J, D, V, sig){
   }
 }
 
-Hp_L_torch <- build_Hp_L_torch(U, tt, J_upp, K, J, D, V_torch, sig_torch)
-Hp_L <- build_Hp_L(U, tt, J_up, K, J, D, V, sig)
-
 p <- c(12.0, 21, 4.0)
-Hp_L_torchp <- Hp_L_torch(p)
+
+Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
+Hp_L_torch <- build_Hp_L_torch(U, tt, J_upp, K, J, D, V_torch, sig_torch)
+
 Hp_Lp <- Hp_L(p)
+Hp_L_torchp <- Hp_L_torch(p)
 
 all.equal(Hp_Lp, as.array(Hp_L_torchp))
 
@@ -209,7 +322,7 @@ build_L0 <- function(K, D, mp1, Vp, sig) {
 
 build_L0_torch <- function(K, D, mp1, Vp, sig) {
   sig_diag <- torch::torch_diag(sig)
-  L0_ <- torch::torch_einsum('km,a->kabm', list(Vp, sig_diag))$permute(c(2,1,3,4))
+  L0_ <- torch::torch_einsum('km,ab->kabm', list(Vp, sig_diag))$permute(c(2,1,3,4))
   L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
   return(L0)
 }
