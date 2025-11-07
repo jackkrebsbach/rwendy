@@ -85,9 +85,33 @@ b <- -1 * as.vector(Vp %*% U)
 b_torch <- torch::torch_tensor(b)
 }
 
+build_inv_solver <- function(Sp) {
+  cholF <- tryCatch(chol(Sp), error = function(e) NULL)
+
+  if (!is.null(cholF)) {
+    return(function(x) {
+      solve(cholF, solve(t(cholF), x))
+    })
+  }
+
+  qrF <- tryCatch(qr(Sp), error = function(e) NULL)
+
+  if (!is.null(qrF) && qrF$rank == ncol(Sp)) {
+    return(function(x) {
+      solve(qrF, x)
+    })
+  }
+
+  diag_reg <- 1e-12 * diag(nrow(Sp))
+  Sp_reg <- Sp + diag_reg
+
+  return(function(x) {
+    solve(Sp_reg, x)
+  })
+}
+
 build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
-
     r <- g(p) - b
 
     Jp_rp <- Jp_r(p)
@@ -100,20 +124,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
     Sp <- S(p)
     Jp_Sp <- Jp_S(p)
 
-    S_inv_solve <- function(x) {
-      tryCatch({
-        cholF <- chol(Sp)
-        return(solve(cholF, solve(t(cholF), x)))
-      }, error = function(e1) {
-        tryCatch({
-          qrF <- qr(Sp)
-          return(solve(qrF, x))
-        }, error = function(e2) {
-          diag_reg <- 1e-12 * diag(nrow(Sp))
-          return(solve(Sp + diag_reg, x))
-        })
-      })
-    }
+    S_inv_solve <- build_inv_solver(Sp)
 
     S_inv_rp <- S_inv_solve(r)
     H_wnn <- matrix(0, nrow = J, ncol = J)
@@ -166,90 +177,61 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   }
 }
 
-# Not working quite yet
 build_H_wnll_torch <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
+    # Keep everything as torch tensors
     r <- g(p) - b
-
     Jp_rp <- Jp_r(p)
     Hp_rp <- Hp_r(p)
-
     Lp <- L(p)
     Jp_Lp <- Jp_L(p)
     Hp_Lp <- Hp_L(p)
-
     Sp <- S(p)
     Jp_Sp <- Jp_S(p)
 
-    cholF <- torch::torch_cholesky(Sp)
+    # Build solver using torch operations
+    S_inv_solve <- build_inv_solver_torch(Sp)
+    S_inv_rp <- S_inv_solve(r)
 
-    S_inv_rp <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)
-
-    S_inv_Jp_Sp <- torch::torch_cholesky_solve(Jp_Sp, cholF)
-
-    H_wnn <- torch::torch_zeros(c(J, J), dtype = Sp$dtype, device = Sp$device)
+    # Preallocate result tensor
+    H_wnn <- torch_zeros(c(J, J), dtype = Sp$dtype, device = Sp$device)
 
     for (j in seq_len(J)) {
-      Jp_rp_j_vec <- Jp_rp[, j]
+      Jp_rp_j <- Jp_rp[, j]
       Jp_Sp_j <- Jp_Sp[, , j]
-      S_inv_Jp_Sp_j <- S_inv_Jp_Sp[, , j]
       Jp_Lp_j <- Jp_Lp[, , j]
-
-      Jp_rp_j_col <- Jp_rp[, j]$reshape(c(-1, 1))
-      S_inv_Jp_rp_j_vec <- torch::torch_cholesky_solve(Jp_rp_j_col, cholF)$squeeze(2)
+      shar_ <- S_inv_solve(Jp_Sp_j)
 
       for (i in j:J) {
-        S_inv_Jp_Sp_i <- S_inv_Jp_Sp[, , i]
         Jp_Sp_i <- Jp_Sp[, , i]
         Jp_Lp_i <- Jp_Lp[, , i]
+        Jp_rp_i <- Jp_rp[, i]
 
-        Jp_rp_i_vec <- Jp_rp[, i]
+        term <- torch::torch_mm(Jp_Sp_i, shar_)
 
-        Jp_rp_i_col <- Jp_rp[, i]$reshape(c(-1, 1))
-        S_inv_Jp_rp_i_vec <- torch::torch_cholesky_solve(Jp_rp_i_col, cholF)$squeeze(2)
+        Hp_Lp_ji <- Hp_Lp[, , j, i]
+        p1 <- torch::torch_mm(Jp_Lp_j, Jp_Lp_i$t())
+        p2 <- torch::torch_mm(Hp_Lp_ji, Lp$t())
+        Hp_Sp_ji <- p1 + p1$t() + p2 + p2$t()
 
         Hp_rp_ji <- Hp_rp[, j, i]
 
-        term <- torch::torch_matmul(Jp_Sp_i, S_inv_Jp_Sp_j)
+        # Use torch::torch operations for all calculations
+        prt0 <- torch::torch_dot(Hp_rp_ji, S_inv_rp)$item()
+        prt1 <- -1.0 * torch::torch_dot(S_inv_solve(Jp_rp_j), torch::torch_mv(Jp_Sp_i, S_inv_rp))$item()
 
-        Hp_Lp_ji <- Hp_Lp[, , j, i]
-        p1 <- torch::torch_matmul(Jp_Lp_j, Jp_Lp_i$t())
-        p2 <- torch::torch_matmul(Hp_Lp_ji, Lp$t())
-        Hp_Sp_ji <- p1 + p1$t() + p2 + p2$t()
+        inv_factor <- S_inv_solve(Jp_rp_i)
+        prt2 <- torch::torch_dot(Jp_rp_j, inv_factor)$item()
+        prt3 <- -2.0 * torch::torch_dot(inv_factor, torch::torch_mv(Jp_Sp_j, S_inv_rp))$item()
+        prt4 <- -1.0 * torch::torch_dot(S_inv_rp, torch::torch_mv(Hp_Sp_ji, S_inv_rp))$item()
+        prt5 <- 2.0 * torch::torch_dot(S_inv_rp, torch::torch_mv(term, S_inv_rp))$item()
 
-        S_inv_Hp_Sp_ji <- torch::torch_cholesky_solve(Hp_Sp_ji, cholF)
-        S_inv_term <- torch::torch_cholesky_solve(term, cholF)
+        logDetTerm <- -1.0 * torch::torch_trace(S_inv_solve(term))$item() +
+          torch::torch_trace(S_inv_solve(Hp_Sp_ji))$item()
 
-        prt0 <- torch::torch_dot(Hp_rp_ji, S_inv_rp$squeeze(2))
-
-        prt1 <- -1.0 * torch::torch_dot(
-          S_inv_Jp_rp_j_vec,
-          torch::torch_matmul(Jp_Sp_i, S_inv_rp)$squeeze(2)
-        )
-
-        prt2 <- torch::torch_dot(Jp_rp_j_vec, S_inv_Jp_rp_i_vec)
-
-        prt3 <- -2.0 * torch::torch_dot(
-          S_inv_Jp_rp_i_vec,
-          torch::torch_matmul(Jp_Sp_j, S_inv_rp)$squeeze(2)
-        )
-
-        prt4 <- -1.0 * torch::torch_dot(
-          S_inv_rp$squeeze(2),
-          torch::torch_matmul(Hp_Sp_ji, S_inv_rp)$squeeze(2)
-        )
-
-        prt5 <- 2.0 * torch::torch_dot(
-          S_inv_rp$squeeze(2),
-          torch::torch_matmul(term, S_inv_rp)$squeeze(2)
-        )
-
-        logDetTerm <- -1.0 * torch::torch_trace(S_inv_term) + torch::torch_trace(S_inv_Hp_Sp_ji)
-
-        Hij <- 0.5 * (2.0 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
+        Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
         H_wnn[j, i] <- Hij
-
         if (i != j) {
           H_wnn[i, j] <- Hij
         }
@@ -261,6 +243,105 @@ build_H_wnll_torch <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
 }
 
 
+build_inv_solver_torch <- function(Sp) {
+  cholF <- tryCatch(torch::torch_cholesky(Sp), error = function(e) NULL)
+  if (!is.null(cholF)) {
+    return(function(x) {
+      is_vector <- length(x$shape) == 1
+      if (is_vector) {
+        result <- torch::torch_cholesky_solve(x$unsqueeze(2), cholF)$squeeze(2)
+      } else {
+        result <- torch::torch_cholesky_solve(x$unsqueeze(-1), cholF)$squeeze(-1)
+      }
+      return(result)
+    })
+  }
+  tryCatch({
+    test_solve <- torch_solve(torch_eye(nrow(Sp), device = Sp$device), Sp)
+    return(function(x) {
+      is_vector <- length(x$shape) == 1
+      if (is_vector) {
+        result <- torch::torch_solve(x$unsqueeze(2), Sp)[[1]]$squeeze(2)
+      } else {
+        result <- torch::torch_solve(x$unsqueeze(-1), Sp)[[1]]$squeeze(-1)
+      }
+      return(result)
+    })
+  }, error = function(e) {
+    diag_reg <- 1e-12 * torch::torch_eye(Sp$shape[1], device = Sp$device)
+    Sp_reg <- Sp + diag_reg
+    return(function(x) {
+      is_vector <- length(x$shape) == 1
+      if (is_vector) {
+        result <- torch::torch_solve(x$unsqueeze(2), Sp_reg)[[1]]$squeeze(2)
+      } else {
+        result <- torch::torch_solve(x$unsqueeze(-1), Sp_reg)[[1]]$squeeze(-1)
+      }
+      return(result)
+    })
+  })
+}
+
+build_H_wnll_torch <- function(S, J_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
+  function(p) {
+    r <- g(p) - b
+    Jp_rp <- Jp_r(p)
+    Hp_rp <- Hp_r(p)
+    Lp <- L(p)
+    Jp_Lp <- Jp_L(p)
+    Hp_Lp <- Hp_L(p)
+    Sp <- S(p)
+    Jp_Sp <- J_S(p)
+
+    S_inv_solve <- build_inv_solver_torch(Sp)
+    S_inv_rp <- S_inv_solve(r)
+
+    H_wnn <- torch::torch_zeros(c(J, J), dtype = Sp$dtype, device = Sp$device)
+
+    for (j in seq_len(J)) {
+      Jp_rp_j <- Jp_rp[, j]
+      Jp_Sp_j <- Jp_Sp[, , j]
+      Jp_Lp_j <- Jp_Lp[, , j]
+      shar_ <- S_inv_solve(Jp_Sp_j)
+
+      for (i in j:J) {
+        Jp_Sp_i <- Jp_Sp[, , i]
+        Jp_Lp_i <- Jp_Lp[, , i]
+        Jp_rp_i <- Jp_rp[, i]
+
+        term <- torch::torch_mm(Jp_Sp_i, shar_)
+
+        Hp_Lp_ji <- Hp_Lp[, , j, i]
+        p1 <- torch::torch_mm(Jp_Lp_j, Jp_Lp_i$t())
+        p2 <- torch::torch_mm(Hp_Lp_ji, Lp$t())
+        Hp_Sp_ji <- p1 + p1$t() + p2 + p2$t()
+
+        Hp_rp_ji <- Hp_rp[, j, i]
+
+        prt0 <- torch::torch_dot(Hp_rp_ji, S_inv_rp)$item()
+        prt1 <- -1.0 * torch::torch_dot(S_inv_solve(Jp_rp_j), torch_mv(Jp_Sp_i, S_inv_rp))$item()
+
+        inv_factor <- S_inv_solve(Jp_rp_i)
+        prt2 <- torch::torch_dot(Jp_rp_j, inv_factor)$item()
+        prt3 <- -2.0 * torch::torch_dot(inv_factor, torch_mv(Jp_Sp_j, S_inv_rp))$item()
+        prt4 <- -1.0 * torch::torch_dot(S_inv_rp, torch_mv(Hp_Sp_ji, S_inv_rp))$item()
+        prt5 <- 2.0 * torch::torch_dot(S_inv_rp, torch_mv(term, S_inv_rp))$item()
+
+        logDetTerm <- -1.0 * torch::torch_trace(S_inv_solve(term))$item() +
+                       torch::torch_trace(S_inv_solve(Hp_Sp_ji))$item()
+
+        Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
+
+        H_wnn[j, i] <- Hij
+        if (i != j) {
+          H_wnn[i, j] <- Hij
+        }
+      }
+    }
+
+    return(H_wnn)
+  }
+}
 
 H_wnll <- build_H_wnll(S, J_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J)
 H_wnll_torch <- build_H_wnll_torch(S_torch, J_S_torch, L_torch, Jp_L_torch, Hp_L_torch, Jp_r_torch, Hp_r_torch, g_torch, b_torch, J)
@@ -269,7 +350,6 @@ H_wnllp <- H_wnll(p)
 H_wnll_torchp <- H_wnll_torch(p)
 
 all.equal(H_wnllp, as.array(H_wnll_torchp))
-
 
 build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   function(p){
@@ -311,7 +391,7 @@ build_J_wnll_torch <- function(S, Jp_S, Jp_r, g, b, J){
     r <- g(p) - b
     cholF <- torch::torch_cholesky(Sp)
 
-    # Batched across all parameters J
+    # Batched across all J parameters. prt0, prt1, logDetPart are vectors
     S_inv_rp <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)
     tmp <- torch::torch_einsum("ijk,j->ik", list(J_Sp, S_inv_rp$squeeze(2)))$unsqueeze(2)
     prt0 <- 2 * torch::torch_matmul(J_rp_t, S_inv_rp)$squeeze(2)
@@ -672,7 +752,7 @@ build_Hp_r_torch <- function(H_p, K, D, J, mp1, V, U, tt){
     Hp_F <- torch::torch_reshape(torch::torch_tensor(H_p(input)), c(mp1, D, J, J))
     Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
 
-    Hp_r <- Hp_r$permute(c(3,2,1,4))
+    Hp_r <- Hp_r$permute(c(2,1,3,4))
     Hp_r <- torch::torch_reshape(Hp_r, c(K * D, J, J))
 
     return(Hp_r)
@@ -832,10 +912,6 @@ gp <- g(p)
 g_torchp <- as.array(g_torch(p))
 
 all.equal(gp, g_torchp)
-
-
-
-
 
 
 
