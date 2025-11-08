@@ -1,18 +1,20 @@
 
-build_F <- function(U, tt, f_expr, vars) {
+build_F <- function(U, tt, f, J) {
   mp1 <- nrow(U)
   D   <- ncol(U)
-  f <- build_fn(f_expr, vars)
   function(p) {
-    out <- matrix(0, nrow = mp1, ncol = D)
-    for (i in 1:mp1) {
-      u <- U[i, ]
-      t <- tt[i]
-      input_vec <- c(p, u, t)
-      udot <- f(input_vec)
-      out[i,] <- udot
-    }
-    return(out)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    Fp <- f(input)
+    return(torch::torch_tensor(Fp))
+  }
+}
+
+build_g <- function(V, F_) {
+  function(p) {
+    result <- torch::torch_matmul(V, F_(p))
+    result <- torch::torch_transpose(result, dim0 = 1, dim1 = 2)
+    torch::torch_reshape(result, c(-1))
   }
 }
 
@@ -26,218 +28,63 @@ build_G_matrix <- function(V, U, tt, F_, J){
     e_j <- rep(0, J)
     e_j[j] <- 1
     F_e <- F_(e_j) - g0
-    g_j <- as.vector(V %*% F_e)
-    G[,j] <- g_j
-  }
-  return(G)
-}
-
-build_G_matrix_torch <- function(V, U, tt, F_, J){
-  K <- nrow(V)
-  mp1 <- nrow(U)
-  D <- ncol(U)
-  G <- matrix(0, nrow = K*D, ncol = J)
-  g0 <- F_(rep(0,J))
-  for(j in seq(1,J)){
-    e_j <- rep(0, J)
-    e_j[j] <- 1
-    F_e <- as.array(F_(e_j)) - g0
-    g_j <- as.vector(V %*% F_e)
+    g_j <- as.vector(torch::as_array(torch::torch_matmul(V, F_e)))
     G[,j] <- g_j
   }
   return(torch::torch_tensor(G))
 }
 
-
-build_g <- function(V, F_) {
-  function(p) {
-       as.vector(V %*% F_(p))
-  }
-}
-
-build_g_torch <- function(V, F_) {
-  function(p) {
-    torch::torch_matmul(V, F_(p))$squeeze()
-  }
-}
-
-build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
-  function(p){
-    Jp_F <- array(0, dim = c(mp1, D, J))
-
-    for (i in 1:mp1) {
-      t <- tt[i]
-      u <- U[i, ]
-      val <- J_p(c(p, u, t))
-      Jp_F[i, ,] <- val
-    }
-
-   Jp_r <- array(0, dim = c(K, mp1, D, J))
-    for (k in 1:K) {
-      for (m in 1:mp1) {
-        for (d1 in 1:D) {
-          for (j1 in 1:J) {
-           Jp_r[k, m, d1, j1] <- V[k, m] * Jp_F[m, d1, j1]
-          }
-        }
-      }
-    }
-    Jp_r <- apply(Jp_r, c(1, 3, 4), sum)
-    Jp_r <- array(Jp_r, dim = c(K * D, J))
-    return(Jp_r)
-  }
-}
-
-build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
-  function(p){
-    Hp_F <- array(0, dim = c(mp1, D, J, J))
-
-    for (i in 1:mp1) {
-      t <- tt[i]
-      u <- U[i, ]
-      input_vec <- c(p, u, t)
-      val <- H_p(input_vec)
-      Hp_F[i, , ,] <- val
-    }
-
-    Hp_r <- array(0, dim = c(K, mp1, D, J, J))
-    for (k in 1:K) {
-      for (m in 1:mp1) {
-        for (d1 in 1:D) {
-          for (j1 in 1:J) {
-            for (j2 in 1:J) {
-              Hp_r[k, m, d1, j1, j2] <- V[k, m] * Hp_F[m, d1, j1, j2]
-          }
-         }
-        }
-      }
-    }
-    Hp_r <- apply(Hp_r, c(1, 3, 4, 5), sum)
-    Hp_r <- array(Hp_r, dim = c(K * D, J, J))
-
-    return(Hp_r)
-  }
-}
-
-
-build_L0 <- function(K, D, mp1, Vp, sig) {
-  L0_ <- array(0, dim = c(K, D, D, mp1))
-
-  for (k in 1:K) {
-    for (d in 1:D) {
-      for (m in 1:mp1) {
-          L0_[k, d, d, m] <- Vp[k,m] * sig[d]
-       }
-    }
-  }
-  L0_ <- aperm(L0_, c(1,2,4,3))
-  L0 <- array(L0_, dim = c(K * D, mp1 * D))
-  return(L0)
-}
-
-build_L <-function(U, tt, J_u, K, V, Vp, sig){
-  D <- ncol(U)
+# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
+build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
   mp1 <- length(tt)
-  L0 <- build_L0(K, D, mp1, Vp, sig)
-
   function(p){
-    J_F <- array(0, dim = c(mp1, D, D))
-    for (i in 1:mp1) {
-      u <- U[i, ]
-      t <- tt[i]
-      val <- J_u(c(p, u, t))
-      J_F[i, ,] <- val
-    }
-
-    L1 <- array(0, dim = c(K, D, mp1, D))
-    for (k in 1:K) {
-      for (d1 in 1:D) {
-        for (m in 1:mp1) {
-          for (d2 in 1:D) {
-            L1[k, d1, m, d2] <- V[k, m] * J_F[m, d1, d2] * sig[d1]
-          }
-        }
-      }
-    }
-
-    L1 <- array(L1, dim = c(K * D, mp1 * D))
-    L <- L1 + L0
-    return(L)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    T_F <- torch::torch_reshape(torch::torch_tensor(J_upp(input)), c(mp1, D, D, J, J))
+    H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))$permute(c(2,1,4,3,5,6))
+    H_ <- torch::torch_reshape(H_, c(K * D, mp1 * D, J, J))
+    return(H_)
   }
 }
-
 
 build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   mp1 <- length(tt)
   function(p){
-    H_F <- array(0, dim = c(mp1, D, D, J))
-
-    for (i in 1:mp1) {
-      t <- tt[i]
-      u <- U[i, ]
-      val <- J_up(c(p, u, t))
-      H_F[i, , ,] <- val
-    }
-
-    J_ <- array(0, dim = c(K, D, mp1, D, J))
-
-    for (k in 1:K) {
-      for (d1 in 1:D) {
-        for (m in 1:mp1) {
-          for (d2 in 1:D) {
-            for (j in 1:J) {
-              J_[k, d1, m, d2, j] <- H_F[m, d1, d2, j] * V[k, m] * sig[d1]
-            }
-          }
-        }
-      }
-    }
-    Jp_L <- array(J_, dim = c(K * D, mp1 * D, J))
-    return(Jp_L)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    H_F <- torch::torch_reshape(torch::torch_tensor(J_up(input)), c(mp1, D, D, J))
+    J_ <- torch::torch_einsum("mabj,km,a->kambj", list(H_F, V, sig))$permute(c(2,1,4,3,5))
+    J_ <- torch::torch_reshape(J_, c(K * D, mp1 * D, J))
+    return(J_)
   }
 }
 
-# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
-build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
+build_L0 <- function(K, D, mp1, Vp, sig) {
+  sig_diag <- torch::torch_diag(sig)
+  L0_ <- torch::torch_einsum('km,ab->kabm', list(Vp, sig_diag))$permute(c(2,1,3,4))
+  L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
+  return(L0)
+}
+
+build_L <-function(U, tt, J_u, K, V, L0, sig, J){
   D <- ncol(U)
   mp1 <- length(tt)
-
   function(p){
-    T_F <- array(0, dim = c(mp1, D, D, J, J))
-
-    for (i in 1:mp1) {
-      t <- tt[i]
-      u <- U[i, ]
-      val <- J_upp(c(p, u, t))
-      T_F[i, , , ,] <- val
-    }
-
-    H_ <- array(0, dim = c(K, D, mp1, D, J, J))
-
-    for (k in 1:K) {
-      for (d1 in 1:D) {
-        for (m in 1:mp1) {
-          for (d2 in 1:D) {
-            for (j1 in 1:J) {
-              for (j2 in 1:J) {
-                  H_[k, d1, m, d2, j1, j2] <- T_F[m, d1, d2, j1, j2] * V[k, m] * sig[d1]
-
-               }
-             }
-          }
-        }
-      }
-    }
-
-    Hp_L <- array(H_, dim = c(K * D, mp1 * D, J, J))
-    return(Hp_L)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    J_F <- torch::torch_reshape(torch::torch_tensor(J_u(input)), c(mp1, D, D))
+    L1 <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))$permute(c(2,1,4,3))
+    L1 <- torch::torch_reshape(L1, c(K * D, mp1 * D))
+    L <- L1 + L0
+    return(L)
   }
 }
 
 build_S <- function(L, REG = 1e-10) {
   function(p) {
     Lp <- L(p)
-    S_ <- tcrossprod(Lp)
+    Lpt <- torch::torch_transpose(Lp, 1, 2)
+    S_ <- torch::torch_matmul(Lp, Lpt)
     WEIGHT <- 1.0 - REG
     eye <- REG * diag(nrow(S_))
     S <- WEIGHT * S_ + eye
@@ -249,14 +96,38 @@ build_J_S <- function(L, Jp_L, J, K, D){
   function(p){
     Lp <- L(p)
     Jp_Lp <- Jp_L(p)
-
-    Jp_S <- array(0, dim = c(K*D, K*D, J))
-    for(j in 1:J){
-      Jp_L_j <-  Jp_Lp[,,j]
-      prt <- Jp_L_j %*% t(Lp)
-      Jp_S[,,j] <- prt + t(prt)
-    }
+    Lp_t <- Lp$t()
+    prt <- torch::torch_einsum("ijk,jl->ilk", list(Jp_Lp, Lp_t))
+    Jp_S <- prt + prt$transpose(1, 2)
     return(Jp_S)
+  }
+}
+
+build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
+  function(p){
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+
+    Jp_F <- torch::torch_reshape(torch::torch_tensor(J_p(input)), c(mp1, D, J))
+    Jp_r <- torch::torch_einsum("km,mdj->kdj", list(V, Jp_F))
+
+    Jp_r <- Jp_r$permute(c(2,1,3))
+    Jp_r <- torch::torch_reshape(Jp_r, c(K * D, J))
+  }
+}
+
+build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
+  function(p){
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+
+    Hp_F <- torch::torch_reshape(torch::torch_tensor(H_p(input)), c(mp1, D, J, J))
+    Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
+
+    Hp_r <- Hp_r$permute(c(2,1,3,4))
+    Hp_r <- torch::torch_reshape(Hp_r, c(K * D, J, J))
+
+    return(Hp_r)
   }
 }
 
@@ -265,14 +136,14 @@ build_wnll <- function(S, g, b, K, D){
   function(p){
     Sp <- S(p)
     r <- g(p) - b
+    cholF <- torch::torch_cholesky(Sp)
 
-    cholF <- chol(Sp)
-    log_det <- 2 * sum(log(diag(cholF)))
+    log_det <- 2 * torch::torch_sum(torch::torch_log(torch::torch_diag(cholF)))
+    S_invr <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)$squeeze(2)
+    mdist <- torch::torch_matmul(r$unsqueeze(1), S_invr)$squeeze()
 
-    S_invr <- solve(cholF, solve(t(cholF), r))
-
-    mdist <- (r %*% S_invr)[1,1]
-    return(0.5 * (mdist + log_det) + constant_term)
+    result <- 0.5 * (mdist + log_det) + constant_term
+    return(result)
   }
 }
 
@@ -281,111 +152,120 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     Sp <- S(p)
     J_Sp <- Jp_S(p)
     J_rp <- Jp_r(p)
+    J_rp_t <- J_rp$t()
     r <- g(p) - b
+    cholF <- torch::torch_cholesky(Sp)
 
-    cholF <- chol(Sp)
-    S_inv_rp <- solve(cholF, solve(t(cholF), r))
+    # Batched across all J parameters. prt0, prt1, logDetPart are vectors
+    S_inv_rp <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)
+    tmp <- torch::torch_einsum("ijk,j->ik", list(J_Sp, S_inv_rp$squeeze(2)))$unsqueeze(2)
+    prt0 <- 2 * torch::torch_matmul(J_rp_t, S_inv_rp)$squeeze(2)
+    prt1 <- -1.0 * torch::torch_einsum("ij,ijk -> k", list(S_inv_rp, tmp))
+    fact <- torch::torch_cholesky_solve(J_Sp, cholF)
+    diags <- torch::torch_diagonal(fact, dim1=1, dim2=2)
+    logDetPart <- torch::torch_sum(diags, dim=2)
 
-    gradient <- numeric(J)
-
-    for(j in seq(J)){
-      J_S_j <- J_Sp[, , j]
-      J_r_j <- J_rp[, j]
-
-      tmp <- J_S_j %*% S_inv_rp
-
-      prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
-      prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
-
-      fact <- solve(cholF, solve(t(cholF), J_S_j))
-      logDetPart <- sum(diag(fact))
-
-      gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
-    }
-
+    gradient <- 0.5 * (prt0 + prt1 + logDetPart)
     return(gradient)
   }
 }
 
-build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
+build_H_wnll <- function(S, J_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
-
     r <- g(p) - b
-
     Jp_rp <- Jp_r(p)
     Hp_rp <- Hp_r(p)
-
-    Lp <- L(p)        # L(p)
-    Jp_Lp <- Jp_L(p)  # ∇ₚL(p)
-    Hp_Lp <- Hp_L(p)  # ∇ₚ∇ₚL(p)
-
+    Lp <- L(p)
+    Jp_Lp <- Jp_L(p)
+    Hp_Lp <- Hp_L(p)
     Sp <- S(p)
-    Jp_Sp <- Jp_S(p)
+    Jp_Sp <- J_S(p)
 
-    S_inv_solve <- function(x) {
-      tryCatch({
-        cholF <- chol(Sp)
-        return(solve(cholF, solve(t(cholF), x)))
-      }, error = function(e1) {
-        tryCatch({
-          qrF <- qr(Sp)
-          return(solve(qrF, x))
-        }, error = function(e2) {
-          diag_reg <- 1e-12 * diag(nrow(Sp))
-          return(solve(Sp + diag_reg, x))
-        })
-      })
-    }
-
+    S_inv_solve <- build_inv_solver(Sp)
     S_inv_rp <- S_inv_solve(r)
-    H_wnn <- matrix(0, nrow = J, ncol = J)
+
+    H_wnn <- torch::torch_zeros(c(J, J), dtype = Sp$dtype, device = Sp$device)
 
     for (j in seq_len(J)) {
       Jp_rp_j <- Jp_rp[, j]
       Jp_Sp_j <- Jp_Sp[, , j]
       Jp_Lp_j <- Jp_Lp[, , j]
-
-      shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
+      shar_ <- S_inv_solve(Jp_Sp_j)
 
       for (i in j:J) {
-        # ∂ᵢS(p) (Jacobian information)
         Jp_Sp_i <- Jp_Sp[, , i]
-        Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
-        Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
+        Jp_Lp_i <- Jp_Lp[, , i]
+        Jp_rp_i <- Jp_rp[, i]
 
-        term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
+        term <- torch::torch_mm(Jp_Sp_i, shar_)
 
-        # ∂ᵢ∂ⱼS(p)
         Hp_Lp_ji <- Hp_Lp[, , j, i]
-        p1 <- Jp_Lp_j %*% t(Jp_Lp_i)
-        p2 <- Hp_Lp_ji %*% t(Lp)
-        Hp_Sp_ji <- p1 + t(p1) + p2 + t(p2)  # ∂ᵢ∂ⱼS(p)
+        p1 <- torch::torch_mm(Jp_Lp_j, Jp_Lp_i$t())
+        p2 <- torch::torch_mm(Hp_Lp_ji, Lp$t())
+        Hp_Sp_ji <- p1 + p1$t() + p2 + p2$t()
 
-        Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
+        Hp_rp_ji <- Hp_rp[, j, i]
 
-        prt0 <- as.numeric(t(Hp_rp_ji) %*% S_inv_rp)
-        prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
+        prt0 <- torch::torch_dot(Hp_rp_ji, S_inv_rp)$item()
+        prt1 <- -1.0 * torch::torch_dot(S_inv_solve(Jp_rp_j), torch::torch_mv(Jp_Sp_i, S_inv_rp))$item()
 
         inv_factor <- S_inv_solve(Jp_rp_i)
-        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
+        prt2 <- torch::torch_dot(Jp_rp_j, inv_factor)$item()
+        prt3 <- -2.0 * torch::torch_dot(inv_factor, torch::torch_mv(Jp_Sp_j, S_inv_rp))$item()
+        prt4 <- -1.0 * torch::torch_dot(S_inv_rp, torch::torch_mv(Hp_Sp_ji, S_inv_rp))$item()
+        prt5 <- 2.0 * torch::torch_dot(S_inv_rp, torch::torch_mv(term, S_inv_rp))$item()
 
-        prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
-        prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
-        prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
-
-        logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
+        logDetTerm <- -1.0 * torch::torch_trace(S_inv_solve(term))$item() +
+          torch::torch_trace(S_inv_solve(Hp_Sp_ji))$item()
 
         Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
         H_wnn[j, i] <- Hij
-
         if (i != j) {
           H_wnn[i, j] <- Hij
         }
       }
     }
+
     return(H_wnn)
   }
 }
 
-
+build_inv_solver <- function(Sp) {
+  cholF <- tryCatch(torch::torch_cholesky(Sp), error = function(e) NULL)
+  if (!is.null(cholF)) {
+    return(function(x) {
+      is_vector <- length(x$shape) == 1
+      if (is_vector) {
+        result <- torch::torch_cholesky_solve(x$unsqueeze(2), cholF)$squeeze(2)
+      } else {
+        result <- torch::torch_cholesky_solve(x$unsqueeze(-1), cholF)$squeeze(-1)
+      }
+      return(result)
+    })
+  }
+  tryCatch({
+    test_solve <- torch_solve(torch_eye(nrow(Sp), device = Sp$device), Sp)
+    return(function(x) {
+      is_vector <- length(x$shape) == 1
+      if (is_vector) {
+        result <- torch::torch_solve(x$unsqueeze(2), Sp)[[1]]$squeeze(2)
+      } else {
+        result <- torch::torch_solve(x$unsqueeze(-1), Sp)[[1]]$squeeze(-1)
+      }
+      return(result)
+    })
+  }, error = function(e) {
+    diag_reg <- 1e-12 * torch::torch_eye(Sp$shape[1], device = Sp$device)
+    Sp_reg <- Sp + diag_reg
+    return(function(x) {
+      is_vector <- length(x$shape) == 1
+      if (is_vector) {
+        result <- torch::torch_solve(x$unsqueeze(2), Sp_reg)[[1]]$squeeze(2)
+      } else {
+        result <- torch::torch_solve(x$unsqueeze(-1), Sp_reg)[[1]]$squeeze(-1)
+      }
+      return(result)
+    })
+  })
+}

@@ -43,12 +43,17 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
     tt <- data$tt
   }
 
-  sig <- estimate_std(U, k = 6)
+  noise_dist <- "addgaussian"
+  method <- "MLE"
+  compute_svd <- T
+  optimize <- T
+
+  sig <-torch::torch_tensor(estimate_std(U, k = 6))
 
   test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
 
-  V <- test_fun_matrices$V
-  Vp <- test_fun_matrices$V_prime
+  V <- torch::torch_tensor(test_fun_matrices$V)
+  Vp <- torch::torch_tensor(test_fun_matrices$V_prime)
 
   min_radius <- test_fun_matrices$min_radius
 
@@ -57,9 +62,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   mp1 <- nrow(U)
   K <- nrow(V)
 
-  u <- do.call(c, lapply(1:ncol(U), function(i) S(paste0("u", i))))
-  p <- do.call(c, lapply(1:length(p0), function(i) S(paste0("p", i))))
-  t <- S("t")
+  u <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
+  p <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
+  t <- symengine::S("t")
 
   f_expr <- switch(noise_dist, lognormal = lognormal_transform(f(u, p, t)), f(u, p, t))
 
@@ -79,20 +84,22 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   J_pp <- build_fn(J_pp_sym, vars)
   J_upp <- build_fn(J_upp_sym, vars)
 
-
-  F_ <-build_F(U, tt, f_)
+  F_ <-build_F(U, tt, f_, J)
   G <- build_G_matrix(V, U, tt, F_, J)
   g <- build_g(V, F_)
 
-  b <- -1 * as.vector(Vp %*% U)
-  g0 <- as.vector(V %*% F_(rep(0,J))) # Lip -> Gp + g0 = g(p)
+  b <- -1 * as.vector(as.matrix(Vp)%*% U)
+  b <- torch::torch_tensor(b)
+
+  g0 <- torch::torch_mm(V,F_(rep(0,J)))$reshape(-1) # Lip -> Gp + g0 = g(p)
   # (G|g0)p2
   b1 <- b - g0
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
 
-  L <- build_L(U, tt, J_u, K, V, Vp, sig)
+  L0 <- build_L0(K, D, mp1, Vp, sig)
+  L <- build_L(U, tt, J_u, K, V, L0, sig, J)
   Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 
@@ -104,9 +111,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J)
 
   objfun <- function(p) {
-      f <- wnll(p)
-      g <- J_wnll(p)
-      h <- H_wnll(p)
+      f <- as.array(wnll(p))
+      g <- as.array(J_wnll(p))
+      h <- as.array(H_wnll(p))
     list(value = f, gradient = g, hessian = h)
   }
 
