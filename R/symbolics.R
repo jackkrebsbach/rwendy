@@ -1,4 +1,3 @@
-
 compute_symbolic_jacobian <- function(f_expr, vars) {
   dims <- dim(f_expr)
 
@@ -9,7 +8,7 @@ compute_symbolic_jacobian <- function(f_expr, vars) {
   f_flat <- as.vector(f_expr)
 
   deriv_list <- lapply(f_flat, function(f_i) {
-    lapply(vars, function(v) D(f_i, v))
+    lapply(vars, function(v) symengine::D(f_i, v))
   })
 
   deriv_flat <- unlist(deriv_list, recursive = FALSE)
@@ -21,6 +20,7 @@ compute_symbolic_jacobian <- function(f_expr, vars) {
   return(J)
 }
 
+
 build_fn <- function(expr_array, vars) {
   dims <- dim(expr_array)
   if (is.null(dims)) {
@@ -29,7 +29,7 @@ build_fn <- function(expr_array, vars) {
     expr_flat <- array(expr_array)
     expr_vec <- symengine::Vector(expr_flat)
   }
-  visitor <- DoubleVisitor(expr_vec,
+  visitor <- symengine::DoubleVisitor(expr_vec,
                            args = vars,
                            perform_cse = TRUE,
                            llvm_opt_level = if (symengine_have_component("llvm")) 3L else -1L)
@@ -47,19 +47,14 @@ build_fn <- function(expr_array, vars) {
 }
 
 lognormal_transform <- function(f_sym){
-  # Dimension of system
   D <- length(f_sym)
-
-  # Get symbolic variables
   u <- do.call(c, lapply(1:D, \(i) S(paste0("u", i))))
-
-  # Build substitution arguments: u1, exp(u1), u2, exp(u2), ...
   sub_args <- unlist(Map(list, u, lapply(u, exp)))
 
-  # Perform: f_sym[i] / uᵢ, substitute uᵢ ↦ exp(uᵢ)
   logu <- do.call(c, lapply(1:D, \(i) {
     fud <- f_sym[i] / u[i]
-    do.call(symengine::subs, c(list(fud), sub_args)) # subs is a symengine command
+    # subs is a symengine command
+    do.call(symengine::subs, c(list(fud), sub_args))
   }))
 }
 

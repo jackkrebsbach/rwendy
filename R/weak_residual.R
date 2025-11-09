@@ -1,20 +1,18 @@
 
-build_F <- function(U, tt, f, J) {
+build_F <- function(U, tt, f_, J) {
   mp1 <- nrow(U)
   D   <- ncol(U)
   function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    Fp <- f(input)
-    return(torch::torch_tensor(Fp))
+    Fp <- f_(input)
+    return(torch::torch_tensor(Fp, dtype = torch::torch_float64()))
   }
 }
 
 build_g <- function(V, F_) {
   function(p) {
-    result <- torch::torch_matmul(V, F_(p))
-    result <- torch::torch_transpose(result, dim0 = 1, dim1 = 2)
-    torch::torch_reshape(result, c(-1))
+    torch::torch_matmul(V, F_(p))$t()$reshape(-1)
   }
 }
 
@@ -28,8 +26,9 @@ build_G_matrix <- function(V, U, tt, F_, J){
     e_j <- rep(0, J)
     e_j[j] <- 1
     F_e <- F_(e_j) - g0
-    g_j <- as.vector(torch::as_array(torch::torch_matmul(V, F_e)))
-    G[,j] <- g_j
+    result <- torch::torch_matmul(V, F_e)
+    g_j <- torch::torch_reshape(result, c(-1))
+    G[,j] <- as.numeric(g_j)
   }
   return(torch::torch_tensor(G))
 }
@@ -40,20 +39,23 @@ build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    T_F <- torch::torch_reshape(torch::torch_tensor(J_upp(input)), c(mp1, D, D, J, J))
-    H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))$permute(c(2,1,4,3,5,6))
+    T_F <- torch::torch_tensor(J_upp(input), dtype = torch::torch_float64())
+    T_F <- torch::torch_reshape(T_F, c(mp1, D, D, J, J))
+    H_ <- torch::torch_einsum("mabcd,km,a->akbmcd", list(T_F, V, sig))
     H_ <- torch::torch_reshape(H_, c(K * D, mp1 * D, J, J))
     return(H_)
   }
 }
 
+# ∇ₚL(p) Jacobian of the Covariance factor
 build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   mp1 <- length(tt)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    H_F <- torch::torch_reshape(torch::torch_tensor(J_up(input)), c(mp1, D, D, J))
-    J_ <- torch::torch_einsum("mabj,km,a->kambj", list(H_F, V, sig))$permute(c(2,1,4,3,5))
+    H_F <- torch::torch_tensor(J_up(input), dtype = torch::torch_float64())
+    H_F <- torch::torch_reshape(H_F, c(mp1, D, D, J))
+    J_ <- torch::torch_einsum("mabj,km,a->akbmj", list(H_F, V, sig))
     J_ <- torch::torch_reshape(J_, c(K * D, mp1 * D, J))
     return(J_)
   }
@@ -61,7 +63,7 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
 
 build_L0 <- function(K, D, mp1, Vp, sig) {
   sig_diag <- torch::torch_diag(sig)
-  L0_ <- torch::torch_einsum('km,ab->kabm', list(Vp, sig_diag))$permute(c(2,1,3,4))
+  L0_ <- torch::torch_einsum('km,ab->akbm', list(Vp, sig_diag))
   L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
   return(L0)
 }
@@ -72,8 +74,9 @@ build_L <-function(U, tt, J_u, K, V, L0, sig, J){
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    J_F <- torch::torch_reshape(torch::torch_tensor(J_u(input)), c(mp1, D, D))
-    L1 <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))$permute(c(2,1,4,3))
+    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64())
+    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
+    L1 <- torch::torch_einsum('mab,km,a->akbm', list(J_F, V, sig))
     L1 <- torch::torch_reshape(L1, c(K * D, mp1 * D))
     L <- L1 + L0
     return(L)
@@ -103,30 +106,27 @@ build_J_S <- function(L, Jp_L, J, K, D){
   }
 }
 
+# Jₚr(p) ∈ ℝ^(K*D x J)
 build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-
-    Jp_F <- torch::torch_reshape(torch::torch_tensor(J_p(input)), c(mp1, D, J))
-    Jp_r <- torch::torch_einsum("km,mdj->kdj", list(V, Jp_F))
-
-    Jp_r <- Jp_r$permute(c(2,1,3))
+    J_p_eval <- torch::torch_tensor(J_p(input),dtype = torch::torch_float64())
+    Jp_F <- torch::torch_reshape(J_p_eval, c(mp1, D, J))
+    Jp_r <- torch::torch_einsum("km,mdj->dkj", list(V, Jp_F))
     Jp_r <- torch::torch_reshape(Jp_r, c(K * D, J))
   }
 }
 
+# Hₚr(p) ∈ ℝ^(K*D x J x J)
 build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-
-    Hp_F <- torch::torch_reshape(torch::torch_tensor(H_p(input)), c(mp1, D, J, J))
-    Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
-
-    Hp_r <- Hp_r$permute(c(2,1,3,4))
+    H_p_eval <- torch::torch_tensor(H_p(input), dtype = torch::torch_float64())
+    Hp_F <- torch::torch_reshape(H_p_eval, c(mp1, D, J, J))
+    Hp_r <- torch::torch_einsum("km,mdab->dkab", list(V, Hp_F))
     Hp_r <- torch::torch_reshape(Hp_r, c(K * D, J, J))
-
     return(Hp_r)
   }
 }
@@ -143,7 +143,7 @@ build_wnll <- function(S, g, b, K, D){
     mdist <- torch::torch_matmul(r$unsqueeze(1), S_invr)$squeeze()
 
     result <- 0.5 * (mdist + log_det) + constant_term
-    return(result)
+    return(as.numeric(result))
   }
 }
 
@@ -166,7 +166,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     logDetPart <- torch::torch_sum(diags, dim=2)
 
     gradient <- 0.5 * (prt0 + prt1 + logDetPart)
-    return(gradient)
+    return(as.numeric(gradient))
   }
 }
 
@@ -227,7 +227,7 @@ build_H_wnll <- function(S, J_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
       }
     }
 
-    return(H_wnn)
+    return(as.matrix(H_wnn))
   }
 }
 

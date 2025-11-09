@@ -45,15 +45,17 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   noise_dist <- "addgaussian"
   method <- "MLE"
+  optimize <- F
   compute_svd <- T
-  optimize <- T
+
+  torch::torch_set_default_dtype(torch::torch_float64())
 
   sig <-torch::torch_tensor(estimate_std(U, k = 6))
 
   test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
 
-  V <- torch::torch_tensor(test_fun_matrices$V)
-  Vp <- torch::torch_tensor(test_fun_matrices$V_prime)
+  V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64())
+  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64())
 
   min_radius <- test_fun_matrices$min_radius
 
@@ -62,22 +64,22 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   mp1 <- nrow(U)
   K <- nrow(V)
 
-  u <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
-  p <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
-  t <- symengine::S("t")
+  u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
+  p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
+  t_expr <- symengine::S("t")
 
-  f_expr <- switch(noise_dist, lognormal = lognormal_transform(f(u, p, t)), f(u, p, t))
+  f_expr <- switch(noise_dist, lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
+                   f(u_expr, p_expr, t_expr))
 
-  J_u_sym <- compute_symbolic_jacobian(f_expr, u)
-  J_up_sym <- compute_symbolic_jacobian(J_u_sym, p)
-  J_p_sym <- compute_symbolic_jacobian(f_expr, p)
-  J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p)
-  J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p)
+  J_u_sym <- compute_symbolic_jacobian(f_expr, u_expr)
+  J_up_sym <- compute_symbolic_jacobian(J_u_sym, p_expr)
+  J_p_sym <- compute_symbolic_jacobian(f_expr, p_expr)
+  J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p_expr)
+  J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p_expr)
 
-  vars <- c(p, u ,t)
+  vars <- c(p_expr, u_expr ,t_expr)
 
   f_ <- build_fn(f_expr, vars)
-
   J_u <- build_fn(J_u_sym, vars)
   J_up <- build_fn(J_up_sym, vars)
   J_p <- build_fn(J_p_sym, vars)
@@ -88,10 +90,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   G <- build_G_matrix(V, U, tt, F_, J)
   g <- build_g(V, F_)
 
-  b <- -1 * as.vector(as.matrix(Vp)%*% U)
-  b <- torch::torch_tensor(b)
+  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$t()$reshape(-1)
 
-  g0 <- torch::torch_mm(V,F_(rep(0,J)))$reshape(-1) # Lip -> Gp + g0 = g(p)
+  g0 <- torch::torch_mm(V, F_(rep(0,J)))$t()$reshape(-1)# Lip -> Gp + g0 = g(p)
   # (G|g0)p2
   b1 <- b - g0
 
@@ -111,9 +112,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J)
 
   objfun <- function(p) {
-      f <- as.array(wnll(p))
-      g <- as.array(J_wnll(p))
-      h <- as.array(H_wnll(p))
+      f <- wnll(p)
+      g <- J_wnll(p)
+      h <- H_wnll(p)
     list(value = f, gradient = g, hessian = h)
   }
 
@@ -128,7 +129,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   res$b1 <- b1
   res$f <- f_
   res$J_p <- J_p
-  res$J_p <- J_p
+  res$J_upp <- J_upp
   res$S <- S
   res$Jp_r <- Jp_r
   res$F_ <- F_
@@ -143,15 +144,12 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   data <- switch(method,
                      IRLS = irls(G, b1, L), # IRLS WENDy
-                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
+                     trust::trust(objfun, p0, rinit = 40, rmax = 300, blather = FALSE) # Maximum likelihood estimation
                      )
   res$data <- data
   res$phat <- switch(method, IRLS = data$p, data$argument)
 
   return(res)
  }
-
-
-
 
 
