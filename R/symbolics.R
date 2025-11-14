@@ -31,18 +31,10 @@ build_fn <- function(expr_array, vars) {
   }
   visitor <- symengine::DoubleVisitor(expr_vec,
                            args = vars,
-                           perform_cse = TRUE,
-                           llvm_opt_level = if (symengine_have_component("llvm")) 3L else -1L)
+                           perform_cse = FALSE,
+                           llvm_opt_level = -1L)
   function(input) {
-    input_dims <- dim(input)
-    if(!is.null(input_dims)){
-      return(visitor_call(visitor, input, do_transpose = TRUE))
-    }
-    vals <- visitor_call(visitor, input, do_transpose = FALSE)
-    if (is.null(dims)) return(vals)
-    fn <- array(vals, dim = rev(dims))
-    fn <- aperm(fn, length(dims):1)
-    return(fn)
+    visitor_call(visitor, input, do_transpose = TRUE)
   }
 }
 

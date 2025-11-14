@@ -2,9 +2,6 @@ library(deSolve)
 library(symengine)
 library(trustOptim)
 
-rm(list = ls())
-gc()
-
 source("./R/symbolics.R")
 source("./R/test_functions.R")
 source("./R/noise.R")
@@ -25,8 +22,8 @@ npoints <- 256
 p_star <- c(72, 1, 2, 1, 1)
 
 # Goodwin is sensitive to the initial guess / trust radius
-#p0 <- c(71, 1.5, 2.4, 1.7, 0.5)
-p0 <- c(70, 1.8, 2.5, 1.7, 0.25)
+p0 <- c(71, 1.5, 2.4, 1.7, 0.5)
+#p0 <- c(70, 1.8, 2.5, 1.7, 0.25)
 
 u0 <- c(7, -10)
 t_span <- c(0, 60)

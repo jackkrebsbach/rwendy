@@ -38,45 +38,66 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt,method = "MLE", optimize = F)
-# phat <- res$phat
-#
-# sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
-#
-# plot_ly(
-#   x = U[, 1],
-#   y = U[, 2],
-#   type = 'scatter',
-#   mode = 'markers',
-#   marker = list(color = 'blue', size = 3),
-#   name = "data"
-# ) |>
-#   add_trace(
-#     x = sol_hat[, 1],
-#     y = sol_hat[, 2],
-#     type = 'scatter',
-#     mode = 'markers',
-#     marker = list(color = 'red', size = 3),
-#     name = "fit"
-#   )
-#
+res <- solveWendy(f, p0, U, tt, method = "MLE", optimize = T)
+phat <- res$phat
 
-{
-  p0 <- p_star
-  h <- 1e-5
-  finite_g <- calc_gradient(p0, res$wnll,h = h)
-  J_p <- res$J_wnll(p0)
+sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 
-  cat("\n")
-  print(finite_g)
-  print(J_p)
+Vp <- as.matrix(res$V_prime)
+svd_result <- svd(Vp)
+k <- ncol(svd_result$v)
+u_k <- svd_result$u[, 1:k]
+d_k <- svd_result$d[1:k]
+v_k <- svd_result$v[, 1:k]
+V_prime_pinv <- v_k %*% diag(1/d_k) %*% t(u_k)
 
- # finite_h <- calc_hessian(p0, res$wnll,h = h)
- # H_p <- res$H_wnll(p0)
- # cat("\n")
- # print(finite_h)
- # print(H_p)
+mp1 <- nrow(U)
+J <- length(p0)
 
+U_state <- U
+for(i in seq(1:1)){
+  p_mat <- matrix(rep(p_star, mp1), ncol = mp1, nrow = J)
+  input <- rbind(p_mat, t(U_state), t(tt))
+  FU_ <- res$f(input)
+  U_state <- -1 * V_prime_pinv %*% (as.matrix(res$V) %*% FU_)
 }
+
+sol_hat <- U_state
+
+plot_ly(
+  x = sol[, 2],
+  y = sol[, 3],
+  type = 'scatter',
+  mode = 'markers',
+  marker = list(color = 'blue', size = 3),
+  name = "data"
+) |>
+  add_trace(
+    x = sol_hat[, 1],
+    y = sol_hat[, 2],
+    type = 'scatter',
+    mode = 'markers',
+    marker = list(color = 'red', size = 3),
+    name = "fit"
+  )
+
+#  {
+#    p0 <- p_star
+#    finite_g <- calc_gradient(p0, res$wnll)
+#    #finite_g <- gradient_4th_order(res$wnll, p0)
+#    J_p <- res$J_wnll(p0)
+#
+#   cat("\n")
+#   print(finite_g)
+#   print(J_p)
+#
+#   finite_h <- calc_hessian(p0, res$wnll)
+#   H_p <- res$H_wnll(p0)
+#
+#   cat("\n")
+#   print(finite_h)
+#   print(H_p)
+#
+# }
 
 

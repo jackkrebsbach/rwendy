@@ -10,9 +10,10 @@ build_F <- function(U, tt, f_, J) {
   }
 }
 
+
 build_g <- function(V, F_) {
   function(p) {
-    torch::torch_matmul(V, F_(p))$t()$reshape(-1)
+    torch::torch_matmul(V, F_(p))$reshape(-1)
   }
 }
 
@@ -41,7 +42,7 @@ build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
     input <- rbind(p_mat, t(U), t(tt))
     T_F <- torch::torch_tensor(J_upp(input), dtype = torch::torch_float64())
     T_F <- torch::torch_reshape(T_F, c(mp1, D, D, J, J))
-    H_ <- torch::torch_einsum("mabcd,km,a->akbmcd", list(T_F, V, sig))
+    H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))
     H_ <- torch::torch_reshape(H_, c(K * D, mp1 * D, J, J))
     return(H_)
   }
@@ -55,7 +56,7 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
     input <- rbind(p_mat, t(U), t(tt))
     H_F <- torch::torch_tensor(J_up(input), dtype = torch::torch_float64())
     H_F <- torch::torch_reshape(H_F, c(mp1, D, D, J))
-    J_ <- torch::torch_einsum("mabj,km,a->akbmj", list(H_F, V, sig))
+    J_ <- torch::torch_einsum("mabj,km,a->kambj", list(H_F, V, sig))
     J_ <- torch::torch_reshape(J_, c(K * D, mp1 * D, J))
     return(J_)
   }
@@ -63,7 +64,7 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
 
 build_L0 <- function(K, D, mp1, Vp, sig) {
   sig_diag <- torch::torch_diag(sig)
-  L0_ <- torch::torch_einsum('km,ab->akbm', list(Vp, sig_diag))
+  L0_ <- torch::torch_einsum('km,ab->kabm', list(Vp, sig_diag))$permute(c(1,2,4,3))
   L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
   return(L0)
 }
@@ -76,14 +77,14 @@ build_L <-function(U, tt, J_u, K, V, L0, sig, J){
     input <- rbind(p_mat, t(U), t(tt))
     J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64())
     J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
-    L1 <- torch::torch_einsum('mab,km,a->akbm', list(J_F, V, sig))
+    L1 <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
     L1 <- torch::torch_reshape(L1, c(K * D, mp1 * D))
     L <- L1 + L0
     return(L)
   }
 }
 
-build_S <- function(L, REG = 1e-10) {
+build_S <- function(L, REG = 1e-9) {
   function(p) {
     Lp <- L(p)
     Lpt <- torch::torch_transpose(Lp, 1, 2)
@@ -113,7 +114,7 @@ build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
     input <- rbind(p_mat, t(U), t(tt))
     J_p_eval <- torch::torch_tensor(J_p(input),dtype = torch::torch_float64())
     Jp_F <- torch::torch_reshape(J_p_eval, c(mp1, D, J))
-    Jp_r <- torch::torch_einsum("km,mdj->dkj", list(V, Jp_F))
+    Jp_r <- torch::torch_einsum("km,mdj->kdj", list(V, Jp_F))
     Jp_r <- torch::torch_reshape(Jp_r, c(K * D, J))
   }
 }
@@ -125,7 +126,7 @@ build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
     input <- rbind(p_mat, t(U), t(tt))
     H_p_eval <- torch::torch_tensor(H_p(input), dtype = torch::torch_float64())
     Hp_F <- torch::torch_reshape(H_p_eval, c(mp1, D, J, J))
-    Hp_r <- torch::torch_einsum("km,mdab->dkab", list(V, Hp_F))
+    Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
     Hp_r <- torch::torch_reshape(Hp_r, c(K * D, J, J))
     return(Hp_r)
   }
@@ -138,7 +139,11 @@ build_wnll <- function(S, g, b, K, D){
     r <- g(p) - b
     cholF <- torch::torch_cholesky(Sp)
 
-    log_det <- 2 * torch::torch_sum(torch::torch_log(torch::torch_diag(cholF)))
+    #log_det <- 2 * torch::torch_sum(torch::torch_log(torch::torch_diag(cholF)))
+    svd_result <- torch::torch_svd(Sp, some = TRUE, compute_uv = FALSE)
+    singular_values <- svd_result[[2]]
+    log_det <- torch::torch_sum(torch::torch_log(singular_values))
+
     S_invr <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)$squeeze(2)
     mdist <- torch::torch_matmul(r$unsqueeze(1), S_invr)$squeeze()
 
@@ -231,41 +236,88 @@ build_H_wnll <- function(S, J_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   }
 }
 
-build_inv_solver <- function(Sp) {
-  cholF <- tryCatch(torch::torch_cholesky(Sp), error = function(e) NULL)
-  if (!is.null(cholF)) {
-    return(function(x) {
-      is_vector <- length(x$shape) == 1
-      if (is_vector) {
-        result <- torch::torch_cholesky_solve(x$unsqueeze(2), cholF)$squeeze(2)
+build_inv_solver <- function(Sp, max_jitter = 1e-3, verbose = FALSE) {
+  device <- Sp$device
+  n <- Sp$shape[1]
+
+  jitter_values <- c(0, 1e-10, 1e-8, 1e-6, 1e-5, 1e-4, max_jitter)
+
+  for (jitter in jitter_values) {
+    cholF <- tryCatch({
+      Sp_work <- if (jitter > 0) {
+        Sp + torch::torch_eye(n, device = device) * jitter
       } else {
-        result <- torch::torch_cholesky_solve(x$unsqueeze(-1), cholF)$squeeze(-1)
+        Sp
       }
-      return(result)
-    })
+      torch::torch_cholesky(Sp_work)
+    }, error = function(e) NULL)
+
+    if (!is.null(cholF)) {
+      if (verbose && jitter > 0) {
+        message(sprintf("Cholesky succeeded with jitter = %.2e", jitter))
+      }
+
+      jitter_used <- jitter
+
+      return(function(x) {
+        is_vector <- length(x$shape) == 1
+        if (is_vector) {
+          result <- torch::torch_cholesky_solve(x$unsqueeze(2), cholF)$squeeze(2)
+        } else {
+          result <- torch::torch_cholesky_solve(x$unsqueeze(-1), cholF)$squeeze(-1)
+        }
+        return(result)
+      })
+    }
   }
-  tryCatch({
-    test_solve <- torch_solve(torch_eye(nrow(Sp), device = Sp$device), Sp)
-    return(function(x) {
-      is_vector <- length(x$shape) == 1
-      if (is_vector) {
-        result <- torch::torch_solve(x$unsqueeze(2), Sp)[[1]]$squeeze(2)
+
+  if (verbose) {
+    message("Cholesky failed, falling back to LU decomposition")
+  }
+
+  for (jitter in c(0, 1e-10, 1e-8, 1e-6, 1e-5, 1e-4, 1e-3)) {
+    tryCatch({
+      Sp_work <- if (jitter > 0) {
+        Sp + torch::torch_eye(n, device = device) * jitter
       } else {
-        result <- torch::torch_solve(x$unsqueeze(-1), Sp)[[1]]$squeeze(-1)
+        Sp
       }
-      return(result)
+
+      test_vec <- torch::torch_randn(n, device = device)
+      test_result <- torch::torch_linalg_solve(Sp_work, test_vec)
+
+      residual <- torch::torch_norm(
+        torch::torch_matmul(Sp_work, test_result) - test_vec
+      )$item()
+
+      if (residual < 1e-3) {  # Solution is acceptable
+        if (verbose && jitter > 0) {
+          message(sprintf("LU solve succeeded with jitter = %.2e", jitter))
+        }
+
+        Sp_stable <- Sp_work
+
+        return(function(x) {
+          torch::torch_linalg_solve(Sp_stable, x)
+        })
+      }
+    }, error = function(e) NULL)
+  }
+
+  if (verbose) {
+    warning("All standard methods failed, using pseudoinverse (may be inaccurate)")
+  }
+
+  lambda <- torch::torch_trace(Sp)$item() / n * 1e-3
+  Sp_reg <- Sp + torch::torch_eye(n, device = device) * lambda
+
+  tryCatch({
+    Sp_inv <- torch::torch_linalg_pinv(Sp_reg, rtol = 1e-6)
+
+    return(function(x) {
+      torch::torch_matmul(Sp_inv, x)
     })
   }, error = function(e) {
-    diag_reg <- 1e-12 * torch::torch_eye(Sp$shape[1], device = Sp$device)
-    Sp_reg <- Sp + diag_reg
-    return(function(x) {
-      is_vector <- length(x$shape) == 1
-      if (is_vector) {
-        result <- torch::torch_solve(x$unsqueeze(2), Sp_reg)[[1]]$squeeze(2)
-      } else {
-        result <- torch::torch_solve(x$unsqueeze(-1), Sp_reg)[[1]]$squeeze(-1)
-      }
-      return(result)
-    })
+    stop("Matrix is too ill-conditioned to invert reliably. Consider reformulating the problem.")
   })
 }

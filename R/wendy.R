@@ -8,7 +8,7 @@ test_params <- list(
   radius_max_time = 5.0,
   k_max = 200,
   max_test_fun_condition_number = 1e4,
-  min_test_fun_info_number = 0.95
+  min_test_fun_info_number = 0.99
 )
 
 #' Parameter Estimation for ODE Systems via Maximum Likelihood Estimation
@@ -43,14 +43,14 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
     tt <- data$tt
   }
 
-  noise_dist <- "addgaussian"
-  method <- "MLE"
-  optimize <- F
-  compute_svd <- T
+  # noise_dist <- "addgaussian"
+  # compute_svd <- TRUE
+  # method <- "MLE"
+  # optimize <- T
 
   torch::torch_set_default_dtype(torch::torch_float64())
 
-  sig <-torch::torch_tensor(estimate_std(U, k = 6))
+  sig <-torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64())
 
   test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
 
@@ -90,9 +90,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   G <- build_G_matrix(V, U, tt, F_, J)
   g <- build_g(V, F_)
 
-  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$t()$reshape(-1)
+  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(-1)
 
-  g0 <- torch::torch_mm(V, F_(rep(0,J)))$t()$reshape(-1)# Lip -> Gp + g0 = g(p)
+  g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(-1)# Lip -> Gp + g0 = g(p)
   # (G|g0)p2
   b1 <- b - g0
 
@@ -144,7 +144,8 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   data <- switch(method,
                      IRLS = irls(G, b1, L), # IRLS WENDy
-                     trust::trust(objfun, p0, rinit = 40, rmax = 300, blather = FALSE) # Maximum likelihood estimation
+                     #trust.optim(p0, wnll, J_wnll, method = "BFGS")
+                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
                      )
   res$data <- data
   res$phat <- switch(method, IRLS = data$p, data$argument)
