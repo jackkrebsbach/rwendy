@@ -5,10 +5,10 @@ library(stats)
 test_params <- list(
   radius_params = 2^(0:3),
   radius_min_time = 0.1,
-  radius_max_time = 5.0,
+  radius_max_time = 25.0,
   k_max = 200,
   max_test_fun_condition_number = 1e4,
-  min_test_fun_info_number = 0.99
+  min_test_fun_info_number = 0.95
 )
 
 #' Parameter Estimation for ODE Systems via Maximum Likelihood Estimation
@@ -35,7 +35,7 @@ test_params <- list(
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method = "MLE", optimize = T, compute_svd = T){
+solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = F, method = "MLE", optimize = T, compute_svd = T){
 
   if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt)
@@ -43,10 +43,10 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
     tt <- data$tt
   }
 
-  # noise_dist <- "addgaussian"
-  # compute_svd <- TRUE
-  # method <- "MLE"
-  # optimize <- T
+  #noise_dist <- "addgaussian"
+  #compute_svd <- TRUE
+  #method <- "MLE"
+  #optimize <- T
 
   torch::torch_set_default_dtype(torch::torch_float64())
 
@@ -131,6 +131,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
   res$J_p <- J_p
   res$J_upp <- J_upp
   res$S <- S
+  res$Jp_S <- Jp_S
   res$Jp_r <- Jp_r
   res$F_ <- F_
   res$f_sym <- f_expr
@@ -144,11 +145,13 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = F, method
 
   data <- switch(method,
                      IRLS = irls(G, b1, L), # IRLS WENDy
-                     #trust.optim(p0, wnll, J_wnll, method = "BFGS")
-                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
+                     trust.optim(p0, wnll, J_wnll, method = "BFGS")
+                     #trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
                      )
   res$data <- data
-  res$phat <- switch(method, IRLS = data$p, data$argument)
+  res$phat <- switch(method, IRLS = data$p, data$solution)
+  #trust.optim -> data$solution
+  #trust::trust -> data$argument
 
   return(res)
  }

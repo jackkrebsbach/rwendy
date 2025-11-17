@@ -135,189 +135,146 @@ build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
 build_wnll <- function(S, g, b, K, D){
   constant_term <- 0.5 * K * D * log(2 * pi)
   function(p){
-    Sp <- S(p)
-    r <- g(p) - b
-    cholF <- torch::torch_cholesky(Sp)
+    Sp <- as.array(S(p))
+    r <- as.array(g(p) - b)
+    cholF <- chol(Sp)
+    #svdF <- svd(Sp)
+    #log_det <- sum(log(svdF$d))
+    log_det <- 2 * sum(log(diag(cholF)))
 
-    #log_det <- 2 * torch::torch_sum(torch::torch_log(torch::torch_diag(cholF)))
-    svd_result <- torch::torch_svd(Sp, some = TRUE, compute_uv = FALSE)
-    singular_values <- svd_result[[2]]
-    log_det <- torch::torch_sum(torch::torch_log(singular_values))
+    S_invr <- solve(cholF, solve(t(cholF), r))
 
-    S_invr <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)$squeeze(2)
-    mdist <- torch::torch_matmul(r$unsqueeze(1), S_invr)$squeeze()
-
-    result <- 0.5 * (mdist + log_det) + constant_term
-    return(as.numeric(result))
+    mdist <- (r %*% S_invr)[1,1]
+    return(0.5 * (mdist + log_det) + constant_term)
   }
 }
 
 build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   function(p){
-    Sp <- S(p)
-    J_Sp <- Jp_S(p)
-    J_rp <- Jp_r(p)
-    J_rp_t <- J_rp$t()
-    r <- g(p) - b
-    cholF <- torch::torch_cholesky(Sp)
+    Sp <- as.array(S(p))
 
-    # Batched across all J parameters. prt0, prt1, logDetPart are vectors
-    S_inv_rp <- torch::torch_cholesky_solve(r$unsqueeze(2), cholF)
-    tmp <- torch::torch_einsum("ijk,j->ik", list(J_Sp, S_inv_rp$squeeze(2)))$unsqueeze(2)
-    prt0 <- 2 * torch::torch_matmul(J_rp_t, S_inv_rp)$squeeze(2)
-    prt1 <- -1.0 * torch::torch_einsum("ij,ijk -> k", list(S_inv_rp, tmp))
-    fact <- torch::torch_cholesky_solve(J_Sp, cholF)
-    diags <- torch::torch_diagonal(fact, dim1=1, dim2=2)
-    logDetPart <- torch::torch_sum(diags, dim=2)
+    J_Sp <- as.array(Jp_S(p)$contiguous())
+    J_rp <- as.array(Jp_r(p)$contiguous())
 
-    gradient <- 0.5 * (prt0 + prt1 + logDetPart)
-    return(as.numeric(gradient))
+    r <- as.array(g(p) - b)
+
+    cholF <- chol(Sp)
+    S_inv_rp <- solve(cholF, solve(t(cholF), r))
+
+    gradient <- numeric(J)
+
+    for(j in seq(J)){
+      J_S_j <- J_Sp[, , j]
+      J_r_j <- J_rp[, j]
+
+      tmp <- J_S_j %*% S_inv_rp
+
+      prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
+      prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
+
+      fact <- solve(cholF, solve(t(cholF), J_S_j))
+      logDetPart <- sum(diag(fact))
+
+      gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
+    }
+
+    return(gradient)
   }
 }
 
-build_H_wnll <- function(S, J_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
+build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
-    r <- g(p) - b
-    Jp_rp <- Jp_r(p)
-    Hp_rp <- Hp_r(p)
-    Lp <- L(p)
-    Jp_Lp <- Jp_L(p)
-    Hp_Lp <- Hp_L(p)
-    Sp <- S(p)
-    Jp_Sp <- J_S(p)
 
-    S_inv_solve <- build_inv_solver(Sp)
+    r <- as.array(g(p) - b)
+
+    Jp_rp <- as.array(Jp_r(p)$contiguous())
+    Hp_rp <- as.array(Hp_r(p)$contiguous())
+
+    Lp <- as.array(L(p))                     # L(p)
+    Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
+    Hp_Lp <- as.array(Hp_L(p)$contiguous())  # ∇ₚ∇ₚL(p)
+
+    Sp <- as.array(S(p))
+    Jp_Sp <- as.array(Jp_S(p)$contiguous())
+
+    S_inv_solve <- make_S_inv_solver(Sp)
+
     S_inv_rp <- S_inv_solve(r)
-
-    H_wnn <- torch::torch_zeros(c(J, J), dtype = Sp$dtype, device = Sp$device)
+    H_wnn <- matrix(0, nrow = J, ncol = J)
 
     for (j in seq_len(J)) {
       Jp_rp_j <- Jp_rp[, j]
       Jp_Sp_j <- Jp_Sp[, , j]
       Jp_Lp_j <- Jp_Lp[, , j]
-      shar_ <- S_inv_solve(Jp_Sp_j)
+
+      shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
 
       for (i in j:J) {
+        # ∂ᵢS(p) (Jacobian information)
         Jp_Sp_i <- Jp_Sp[, , i]
-        Jp_Lp_i <- Jp_Lp[, , i]
-        Jp_rp_i <- Jp_rp[, i]
+        Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
+        Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
 
-        term <- torch::torch_mm(Jp_Sp_i, shar_)
+        term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
 
+        # ∂ᵢ∂ⱼS(p)
         Hp_Lp_ji <- Hp_Lp[, , j, i]
-        p1 <- torch::torch_mm(Jp_Lp_j, Jp_Lp_i$t())
-        p2 <- torch::torch_mm(Hp_Lp_ji, Lp$t())
-        Hp_Sp_ji <- p1 + p1$t() + p2 + p2$t()
+        p1 <- Jp_Lp_j %*% t(Jp_Lp_i)
+        p2 <- Hp_Lp_ji %*% t(Lp)
+        Hp_Sp_ji <- p1 + t(p1) + p2 + t(p2)  # ∂ᵢ∂ⱼS(p)
 
-        Hp_rp_ji <- Hp_rp[, j, i]
+        Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
 
-        prt0 <- torch::torch_dot(Hp_rp_ji, S_inv_rp)$item()
-        prt1 <- -1.0 * torch::torch_dot(S_inv_solve(Jp_rp_j), torch::torch_mv(Jp_Sp_i, S_inv_rp))$item()
+        prt0 <- as.numeric(t(Hp_rp_ji) %*% S_inv_rp)
+        prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
 
         inv_factor <- S_inv_solve(Jp_rp_i)
-        prt2 <- torch::torch_dot(Jp_rp_j, inv_factor)$item()
-        prt3 <- -2.0 * torch::torch_dot(inv_factor, torch::torch_mv(Jp_Sp_j, S_inv_rp))$item()
-        prt4 <- -1.0 * torch::torch_dot(S_inv_rp, torch::torch_mv(Hp_Sp_ji, S_inv_rp))$item()
-        prt5 <- 2.0 * torch::torch_dot(S_inv_rp, torch::torch_mv(term, S_inv_rp))$item()
+        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
 
-        logDetTerm <- -1.0 * torch::torch_trace(S_inv_solve(term))$item() +
-          torch::torch_trace(S_inv_solve(Hp_Sp_ji))$item()
+        prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
+        prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
+        prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
+
+        logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
 
         Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
         H_wnn[j, i] <- Hij
+
         if (i != j) {
           H_wnn[i, j] <- Hij
         }
       }
     }
-
-    return(as.matrix(H_wnn))
+    return(H_wnn)
   }
 }
 
-build_inv_solver <- function(Sp, max_jitter = 1e-3, verbose = FALSE) {
-  device <- Sp$device
-  n <- Sp$shape[1]
 
-  jitter_values <- c(0, 1e-10, 1e-8, 1e-6, 1e-5, 1e-4, max_jitter)
+make_S_inv_solver <- function(Sp) {
+  cholF <- NULL
+  qrF <- NULL
+  use_regularization <- FALSE
+  diag_reg <- NULL
 
-  for (jitter in jitter_values) {
-    cholF <- tryCatch({
-      Sp_work <- if (jitter > 0) {
-        Sp + torch::torch_eye(n, device = device) * jitter
-      } else {
-        Sp
-      }
-      torch::torch_cholesky(Sp_work)
-    }, error = function(e) NULL)
+  cholF <- tryCatch(chol(Sp), error = function(e) NULL)
 
-    if (!is.null(cholF)) {
-      if (verbose && jitter > 0) {
-        message(sprintf("Cholesky succeeded with jitter = %.2e", jitter))
-      }
+  if (is.null(cholF)) {
+    qrF <- tryCatch(qr(Sp), error = function(e) NULL)
 
-      jitter_used <- jitter
-
-      return(function(x) {
-        is_vector <- length(x$shape) == 1
-        if (is_vector) {
-          result <- torch::torch_cholesky_solve(x$unsqueeze(2), cholF)$squeeze(2)
-        } else {
-          result <- torch::torch_cholesky_solve(x$unsqueeze(-1), cholF)$squeeze(-1)
-        }
-        return(result)
-      })
+    if (is.null(qrF)) {
+      use_regularization <- TRUE
+      diag_reg <- 1e-12 * diag(nrow(Sp))
     }
   }
 
-  if (verbose) {
-    message("Cholesky failed, falling back to LU decomposition")
+  function(x) {
+    if (!is.null(cholF)) {
+      return(backsolve(cholF, forwardsolve(t(cholF), x)))
+    } else if (!is.null(qrF)) {
+      return(solve(qrF, x))
+    } else {
+      return(solve(Sp + diag_reg, x))
+    }
   }
-
-  for (jitter in c(0, 1e-10, 1e-8, 1e-6, 1e-5, 1e-4, 1e-3)) {
-    tryCatch({
-      Sp_work <- if (jitter > 0) {
-        Sp + torch::torch_eye(n, device = device) * jitter
-      } else {
-        Sp
-      }
-
-      test_vec <- torch::torch_randn(n, device = device)
-      test_result <- torch::torch_linalg_solve(Sp_work, test_vec)
-
-      residual <- torch::torch_norm(
-        torch::torch_matmul(Sp_work, test_result) - test_vec
-      )$item()
-
-      if (residual < 1e-3) {  # Solution is acceptable
-        if (verbose && jitter > 0) {
-          message(sprintf("LU solve succeeded with jitter = %.2e", jitter))
-        }
-
-        Sp_stable <- Sp_work
-
-        return(function(x) {
-          torch::torch_linalg_solve(Sp_stable, x)
-        })
-      }
-    }, error = function(e) NULL)
-  }
-
-  if (verbose) {
-    warning("All standard methods failed, using pseudoinverse (may be inaccurate)")
-  }
-
-  lambda <- torch::torch_trace(Sp)$item() / n * 1e-3
-  Sp_reg <- Sp + torch::torch_eye(n, device = device) * lambda
-
-  tryCatch({
-    Sp_inv <- torch::torch_linalg_pinv(Sp_reg, rtol = 1e-6)
-
-    return(function(x) {
-      torch::torch_matmul(Sp_inv, x)
-    })
-  }, error = function(e) {
-    stop("Matrix is too ill-conditioned to invert reliably. Consider reformulating the problem.")
-  })
 }

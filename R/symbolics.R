@@ -31,7 +31,7 @@ build_fn <- function(expr_array, vars) {
   }
   visitor <- symengine::DoubleVisitor(expr_vec,
                            args = vars,
-                           perform_cse = FALSE,
+                           perform_cse = TRUE,
                            llvm_opt_level = -1L)
   function(input) {
     visitor_call(visitor, input, do_transpose = TRUE)

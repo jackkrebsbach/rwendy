@@ -43,26 +43,26 @@ phat <- res$phat
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 
-Vp <- as.matrix(res$V_prime)
-svd_result <- svd(Vp)
-k <- ncol(svd_result$v)
-u_k <- svd_result$u[, 1:k]
-d_k <- svd_result$d[1:k]
-v_k <- svd_result$v[, 1:k]
-V_prime_pinv <- v_k %*% diag(1/d_k) %*% t(u_k)
-
-mp1 <- nrow(U)
-J <- length(p0)
-
-U_state <- U
-for(i in seq(1:1)){
-  p_mat <- matrix(rep(p_star, mp1), ncol = mp1, nrow = J)
-  input <- rbind(p_mat, t(U_state), t(tt))
-  FU_ <- res$f(input)
-  U_state <- -1 * V_prime_pinv %*% (as.matrix(res$V) %*% FU_)
-}
-
-sol_hat <- U_state
+# Vp <- as.matrix(res$V_prime)
+# svd_result <- svd(Vp)
+# k <- ncol(svd_result$v)
+# u_k <- svd_result$u[, 1:k]
+# d_k <- svd_result$d[1:k]
+# v_k <- svd_result$v[, 1:k]
+# V_prime_pinv <- v_k %*% diag(1/d_k) %*% t(u_k)
+#
+# mp1 <- nrow(U)
+# J <- length(p0)
+#
+# U_state <- U
+# for(i in seq(1:1)){
+#   p_mat <- matrix(rep(p_star, mp1), ncol = mp1, nrow = J)
+#   input <- rbind(p_mat, t(U_state), t(tt))
+#   FU_ <- res$f(input)
+#   U_state <- -1 * V_prime_pinv %*% (as.matrix(res$V) %*% FU_)
+# }
+#
+# sol_hat <- U_state
 
 plot_ly(
   x = sol[, 2],

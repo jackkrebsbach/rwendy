@@ -12,11 +12,11 @@ f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
 }
 
-noise_sd <- 0.1
+noise_sd <- 0.05
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 256;
+npoints <- 256
 t_span <- c(0.005, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -34,19 +34,23 @@ tt <- matrix(sol[, 1], ncol = 1)
 }
 
 res <- solveWendy(f, p0, U, tt, method = "MLE", optimize = T)
-#sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
+sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
-finite_J <- calc_gradient(p_star, res$wnll)
-analytic_J <- res$J_wnll(p_star)
+plot(U, cex = 0.5)
+points(sol_hat[,2], cex = 0.5, col = "red")
 
-cat(finite_J)
-cat(analytic_J)
 
-finite_H <- calc_hessian(p_star, res$wnll)
-analytic_H <- res$H_wnll(p_star)
-
-cat(finite_H)
-cat(analytic_H)
+# finite_J <- calc_gradient(p_star, res$wnll)
+# analytic_J <- res$J_wnll(p_star)
+#
+# cat(finite_J)
+# cat(analytic_J)
+#
+# finite_H <- calc_hessian(p_star, res$wnll)
+# analytic_H <- res$H_wnll(p_star)
+#
+# cat(finite_H)
+# cat(analytic_H)
 
 # Vp <- as.matrix(res$V_prime)
 # U_state <- U
@@ -67,9 +71,9 @@ cat(analytic_H)
 #   U_state <- -1 * V_prime_pinv %*% (as.matrix(res$V) %*% FU_)
 # }
 #
-# plot(U_state, cex = 0.5, col = "blue", ylim = c(-1,1.5))
-# points(U, cex = 0.5)
-# points(sol[, 2], cex = 0.5, col = "green")
+#plot(tt, U, cex = 0.5, col = "blue")
+#points(U, cex = 0.5)
+#points(sol_hat[, 2], cex = 0.5, col = "green")
 #points(U, cex = 0.5, col = "red")
 
  # {
