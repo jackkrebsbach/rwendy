@@ -9,8 +9,6 @@ source("./R/optim.R")
 source("./R/weak_residual.R")
 source("./R/wendy.R")
 
-{
-
 f <- function(u, p, t) {
   du1 <- p[1] / (36 + p[2] * u[2]) - p[3]
   du2 <- p[4] * u[1] - p[5]
@@ -37,11 +35,10 @@ noise <- matrix(
   nrow = nrow(sol)
   )
 
-U <- sol[, -1] + noise
+U <- sol[, -1] + noise  # Additive Gaussian Noise
 
 tt <- matrix(sol[, 1], ncol = 1)
 
-}
 
 res <- solveWendy(f, p0, U, tt, method = "MLE")
 

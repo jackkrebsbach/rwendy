@@ -67,6 +67,25 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 plot_ly(
   x = sol[, 2],
   y = sol[, 3],
+  z = sol[, 4],  # Add your third dimension
+  type = 'scatter3d',  # Change to scatter3d
+  mode = 'lines',
+  marker = list(color = 'blue', size = 3),
+  name = "data"
+) #|>
+  # add_trace(
+  #   x = sol_hat[, 1],
+  #   y = sol_hat[, 2],
+  #   z = sol_hat[, 3],  # Add your third dimension
+  #   type = 'scatter3d',  # Change to scatter3d
+  #   mode = 'lines',
+  #   marker = list(color = 'red', size = 3),
+  #   name = "fit"
+  # )
+
+plot_ly(
+  x = sol[, 2],
+  y = sol[, 3],
   type = 'scatter',
   mode = 'markers',
   marker = list(color = 'blue', size = 3),

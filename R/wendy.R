@@ -5,7 +5,7 @@ library(stats)
 test_params <- list(
   radius_params = 2^(0:3),
   radius_min_time = 0.1,
-  radius_max_time = 25.0,
+  radius_max_time = 20.0,
   k_max = 200,
   max_test_fun_condition_number = 1e4,
   min_test_fun_info_number = 0.95
