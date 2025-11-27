@@ -36,7 +36,6 @@ noise <- matrix(
   nrow = nrow(sol)
 )
 
-#U <- sol[, -1] * exp(noise)
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 

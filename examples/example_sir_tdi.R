@@ -31,7 +31,6 @@ noise <- matrix(
   nrow = nrow(sol)
 )
 U <- sol[, -1] * exp(noise)  # Log Normal Noise
-#U <- sol[, -1] + noise  # Additive Gaussian Noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 tt <- sol[, 1]

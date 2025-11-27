@@ -37,30 +37,5 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 plot(U, cex = 0.5)
 points(sol_hat[,2], cex = 0.5, col = "red")
 
-# Vp <- as.matrix(res$V_prime)
-# U_state <- U
-# svd_result <- svd(Vp)
-# k <- length(svd_result$d)
-# u_k <- svd_result$u[, 1:k]
-# d_k <- svd_result$d[1:k]
-# v_k <- svd_result$v[, 1:k]
-# V_prime_pinv <- v_k %*% diag(1/d_k) %*% t(u_k)
-#
-# mp1 <- nrow(U)
-# J <- length(p0)
-#
-# for(i in seq(1:1)){
-#   p_mat <- matrix(rep(res$phat, mp1), ncol = mp1, nrow = J)
-#   input <- rbind(p_mat, t(U_state), t(tt))
-#   FU_ <- res$f(input)
-#   U_state <- -1 * V_prime_pinv %*% (as.matrix(res$V) %*% FU_)
-# }
-#
-#plot(tt, U, cex = 0.5, col = "blue")
-#points(U, cex = 0.5)
-#points(sol_hat[, 2], cex = 0.5, col = "green")
-#points(U, cex = 0.5, col = "red")
-
-
 
 
