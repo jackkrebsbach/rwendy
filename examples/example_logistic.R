@@ -1,4 +1,3 @@
-{
 library(deSolve)
 
 source("./R/symbolics.R")
@@ -31,26 +30,12 @@ tt <- matrix(sol[, 1], ncol = 1)
 #noisy <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 #U <- matrix(noisy, ncol = 1)
 #tt <- matrix(sol[, 1], ncol = 1)
-}
 
-res <- solveWendy(f, p0, U, tt, method = "IRLS", optimize = T)
+res <- solveWendy(f, p0, U, tt, method = "MLE", optimize = T)
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(U, cex = 0.5)
 points(sol_hat[,2], cex = 0.5, col = "red")
-
-
-# finite_J <- calc_gradient(p_star, res$wnll)
-# analytic_J <- res$J_wnll(p_star)
-#
-# cat(finite_J)
-# cat(analytic_J)
-#
-# finite_H <- calc_hessian(p_star, res$wnll)
-# analytic_H <- res$H_wnll(p_star)
-#
-# cat(finite_H)
-# cat(analytic_H)
 
 # Vp <- as.matrix(res$V_prime)
 # U_state <- U
@@ -75,26 +60,6 @@ points(sol_hat[,2], cex = 0.5, col = "red")
 #points(U, cex = 0.5)
 #points(sol_hat[, 2], cex = 0.5, col = "green")
 #points(U, cex = 0.5, col = "red")
-
- # {
- # finite_g <- calc_gradient(p_star, res$wnll)
- # #finite_g <- gradient_4th_order(res$wnll, p_star)
- # J_p <- res$J_wnll(p_star)
- #
- # finite_h <- calc_hessian(p_star, res$wnll)
- # H_p <- res$H_wnll(p_star)
- #
- # cat("\n")
- # print(finite_g)
- # print(J_p)
-
-#cat("\n")
-#print(finite_h)
-#print(H_p)
-
-#cat("\n")
-#print(res$phat)
-#}
 
 
 

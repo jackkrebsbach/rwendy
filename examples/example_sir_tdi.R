@@ -9,21 +9,16 @@ source("./R/weak_residual.R")
 source("./R/wendy.R")
 
 f <- function(u, p, t) {
-  du1 <- -p[1] * u[1] +
-          p[3] * u[2] +
-          u[3] * (p[1] * exp(-p[1] * p[2])) / (1 - exp(-p[1] * p[2]))
-  du2 <- p[1] * u[1] -
-         p[3] * u[2] -
-         p[4] * (1 - exp(-p[5] * t^2)) * u[2]
-  du3 <- p[4] * (1 - exp(-p[5] * t^2)) * u[2] -
-        (p[1] * exp(-p[1] * p[2]) / (1 - exp(-p[1] * p[2]))) * u[3]
+  du1 <- -p[1] * u[1] + p[3] * u[2] + u[3] * (p[1] * exp(-p[1] * p[2])) / (1 - exp(-p[1] * p[2]))
+  du2 <- p[1] * u[1] - p[3] * u[2] - p[4] * (1 - exp(-p[5] * t^2)) * u[2]
+  du3 <- p[4] * (1 - exp(-p[5] * t^2)) * u[2] - (p[1] * exp(-p[1] * p[2]) / (1 - exp(-p[1] * p[2]))) * u[3]
   c(du1, du2, du3)
 }
 
-noise_sd <- 0.2
+noise_sd <- 0.1
 npoints <- 256
 p_star = c(0.2, 1.5, 0.074, 0.113, 0.0024)
-p0 <- c(0.2, 1.5, 0.1, 0.1, 0.001)
+p0 <- c(0.1, 2.5, 0.1, 0.1, 0.001)
 u0 <- c(1, 0, 0)
 t_span <- c(0, 50)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
@@ -48,6 +43,7 @@ plot(tt, u1, type = "p", pch = 16, cex = 1,
      col = adjustcolor("black", alpha.f = 0.5),
      xlab = "Time", ylab = "Proportion",
      main = "SIR Compartments", ylim=c(0, 1))
+
 points(tt, u2, pch = 16, cex = 1, col = adjustcolor("red", alpha.f = 0.5))
 points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))
 
