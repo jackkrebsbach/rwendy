@@ -38,17 +38,13 @@ u1 <- U[,1]
 u2 <- U[, 2]
 u3 <- U[, 3]
 
-plot(tt, u1, type = "p", pch = 16, cex = 1,
-     col = adjustcolor("black", alpha.f = 0.5),
-     xlab = "Time", ylab = "Proportion",
-     main = "SIR Compartments", ylim=c(0, 1))
-
+plot(tt, u1, type = "p", pch = 16, cex = 1, col = adjustcolor("black", alpha.f = 0.5), xlab = "Time", ylab = "Proportion", main = "SIR Compartments", ylim=c(0, 1))
 points(tt, u2, pch = 16, cex = 1, col = adjustcolor("red", alpha.f = 0.5))
 points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))
 
 legend("topright", legend = c("Susceptible", "Infected", "Recovered"), col = c("black", "red", "blue"), lwd = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE", noise_dist = "lognormal", optimize = T)
+res <- solveWendy(f, p0, U, tt, method = "MLE", noise_dist = "lognormal")
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = res$phat)
 

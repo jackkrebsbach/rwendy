@@ -16,7 +16,7 @@ f <- function(u, p, t) {
 }
 
 noise_sd <- 0.5
-npoints <- 512
+npoints <- 256
 p_star <- c(72, 1, 2, 1, 1)
 p0 <- c(20, 1.5, 2.4, 1.7, 0.5)
 
@@ -27,24 +27,16 @@ t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-noise <- matrix(
-  rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
-  nrow = nrow(sol)
-  )
-
-U <- sol[, -1] + noise  # Additive Gaussian Noise
+# Additive Gaussian Noise
+noise <- matrix(rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd), nrow = nrow(sol))
+U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, p0, U, tt, method = "MLE")
 
-p_hat <- res$phat
-
-sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_hat)[,-1]
+sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[,-1]
 
 plot(U[, c(1, 2)], cex = 0.5)
 points(sol_hat[, c(1, 2)], cex = 0.5, col = "red")
-
-print(p_star)
-print(p_hat)
 
 

@@ -141,8 +141,6 @@ build_wnll <- function(S, g, b, K, D){
     #svdF <- svd(Sp)
     #log_det <- sum(log(svdF$d))
     log_det <- 2 * sum(log(diag(cholF)))
-
-    #S_invr <- solve(cholF, solve(t(cholF), r))
     S_invr <- backsolve(cholF, forwardsolve(t(cholF), r))
 
     mdist <- (r %*% S_invr)[1,1]
@@ -160,7 +158,6 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     r <- as.array(g(p) - b)
 
     cholF <- chol(Sp)
-    #S_inv_rp <- solve(cholF, solve(t(cholF), r))
     S_inv_rp <- backsolve(cholF, forwardsolve(t(cholF), r))
 
     gradient <- numeric(J)
@@ -174,7 +171,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
       prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
       prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
 
-      fact <- solve(cholF, solve(t(cholF), J_S_j))
+      fact <- backsolve(cholF, forwardsolve(t(cholF), J_S_j))
       logDetPart <- sum(diag(fact))
 
       gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)

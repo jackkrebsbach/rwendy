@@ -16,7 +16,7 @@ f <- function(u, p, t) {
 }
 
 noise_sd <- 0.05
-npoints <- 256
+npoints <- 512
 p_star <- c(3.4884, 0.0969, 1, 10, 0.0969, 0.0581, 0.0969, 0.0775)
 p0 <- c(3, 0.1, 4, 12, 0.1, 0.1, 0.1, 0.1)
 u0 <- c(0.3617, 0.9137, 1.393)
@@ -33,7 +33,6 @@ noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
   nrow = nrow(sol)
 )
-#U <- sol[, -1] * exp(noise)
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 

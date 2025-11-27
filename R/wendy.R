@@ -43,11 +43,6 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
     tt <- data$tt
   }
 
-  noise_dist <- "addgaussian"
-  compute_svd <- TRUE
-  method <- "MLE"
-  optimize <- T
-
   torch::torch_set_default_dtype(torch::torch_float64())
 
   sig <-torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64())
@@ -68,8 +63,10 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
 
-  f_expr <- switch(noise_dist, lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
-                   f(u_expr, p_expr, t_expr))
+  f_expr <- switch(noise_dist,
+                   lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
+                   f(u_expr, p_expr, t_expr)
+                   )
 
   J_u_sym <- compute_symbolic_jacobian(f_expr, u_expr)
   J_up_sym <- compute_symbolic_jacobian(J_u_sym, p_expr)
@@ -86,14 +83,13 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   J_pp <- build_fn(J_pp_sym, vars)
   J_upp <- build_fn(J_upp_sym, vars)
 
-  F_ <-build_F(U, tt, f_, J)
+  F_<- build_F(U, tt, f_, J)
   G <- build_G_matrix(V, U, tt, F_, J)
   g <- build_g(V, F_)
 
   b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(-1)
 
   g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(-1)# Lip -> Gp + g0 = g(p)
-  # (G|g0)p2
   b1 <- b - g0
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
@@ -147,13 +143,13 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
                      IRLS = irls(as.array(G$contiguous()), as.array(b1$contiguous()), L), # IRLS WENDy
                      #trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
                      #optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
-                     trust::trust(objfun, p0, rinit = 5, rmax = 10, blather = FALSE) # Maximum likelihood estimation
+                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
                      )
   res$data <- data
   res$phat <- switch(method, IRLS = data$p, data$argument)
-  #trust.optim -> data$solution
-  #optim -> data$par
-  #trust::trust -> data$argument
+  # trust.optim -> data$solution
+  # optim -> data$par
+  # trust::trust -> data$argument
 
   return(res)
  }
