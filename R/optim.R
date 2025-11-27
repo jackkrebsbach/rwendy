@@ -12,7 +12,7 @@ irls <- function(G, b1, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, 
     pn1 <- p
     n <- n + 1
 
-    Ln <- L(p)
+    Ln <- as.array(L(p)$contiguous())
     Sn <- (1 - reg) * Ln %*% t(Ln) + alphaIdm
     cholSn <- chol(Sn)
     S_invb <- solve(cholSn, solve(t(cholSn), b1))

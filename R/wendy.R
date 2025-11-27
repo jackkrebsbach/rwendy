@@ -144,10 +144,10 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   if(!optimize) return(res)
 
   data <- switch(method,
-                     IRLS = irls(G, b1, L), # IRLS WENDy
+                     IRLS = irls(as.array(G$contiguous()), as.array(b1$contiguous()), L), # IRLS WENDy
                      #trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
                      #optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
-                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
+                     trust::trust(objfun, p0, rinit = 5, rmax = 10, blather = FALSE) # Maximum likelihood estimation
                      )
   res$data <- data
   res$phat <- switch(method, IRLS = data$p, data$argument)

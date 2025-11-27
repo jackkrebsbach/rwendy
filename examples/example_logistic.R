@@ -33,7 +33,7 @@ tt <- matrix(sol[, 1], ncol = 1)
 #tt <- matrix(sol[, 1], ncol = 1)
 }
 
-res <- solveWendy(f, p0, U, tt, method = "MLE", optimize = T)
+res <- solveWendy(f, p0, U, tt, method = "IRLS", optimize = T)
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(U, cex = 0.5)

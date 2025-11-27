@@ -20,7 +20,7 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-noise_sd <- 0.1
+noise_sd <- 0.2
 npoints <- 256
 p_star = c(0.2, 1.5, 0.074, 0.113, 0.0024)
 p0 <- c(0.2, 1.5, 0.1, 0.1, 0.001)
@@ -46,7 +46,7 @@ u3 <- U[, 3]
 
 plot(tt, u1, type = "p", pch = 16, cex = 1,
      col = adjustcolor("black", alpha.f = 0.5),
-     xlab = "Time", ylab = "State",
+     xlab = "Time", ylab = "Proportion",
      main = "SIR Compartments", ylim=c(0, 1))
 points(tt, u2, pch = 16, cex = 1, col = adjustcolor("red", alpha.f = 0.5))
 points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))

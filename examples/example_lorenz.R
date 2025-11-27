@@ -17,12 +17,12 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-noise_sd <- 0.05
+noise_sd <- 0.1
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(2, 1, 1)
-npoints <- 256
-t_span <- c(0, 10)
+npoints <- 1000
+t_span <- c(0, 20)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
@@ -38,10 +38,10 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE", optimize = T)
+res <- solveWendy(f, p0, U, tt, method = "MLE", optimize = F)
 phat <- res$phat
 
-sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
+#sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_star)[, -1]
 
 # Vp <- as.matrix(res$V_prime)
 # svd_result <- svd(Vp)
@@ -64,15 +64,17 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, phat)[, -1]
 #
 # sol_hat <- U_state
 
-plot_ly(
-  x = sol[, 2],
-  y = sol[, 3],
-  z = sol[, 4],  # Add your third dimension
-  type = 'scatter3d',  # Change to scatter3d
-  mode = 'lines',
-  marker = list(color = 'blue', size = 3),
-  name = "data"
-) #|>
+# plot_ly(
+#   x = sol[, 2],
+#   y = sol[, 3],
+#   z = sol[, 4],
+#   type = 'scatter3d',
+#   mode = 'markers',
+#   marker = list(color = 'blue', size = 3),
+#   name = "data"
+# )
+
+#|>
   # add_trace(
   #   x = sol_hat[, 1],
   #   y = sol_hat[, 2],
@@ -83,22 +85,23 @@ plot_ly(
   #   name = "fit"
   # )
 
-plot_ly(
-  x = sol[, 2],
-  y = sol[, 3],
-  type = 'scatter',
-  mode = 'markers',
-  marker = list(color = 'blue', size = 3),
-  name = "data"
-) |>
-  add_trace(
-    x = sol_hat[, 1],
-    y = sol_hat[, 2],
-    type = 'scatter',
-    mode = 'markers',
-    marker = list(color = 'red', size = 3),
-    name = "fit"
-  )
+# plot_ly(
+#   x = sol[, 2],
+#   y = sol[, 3],
+#   type = 'scatter',
+#   mode = 'markers',
+#   marker = list(color = 'blue', size = 3),
+#   name = "data"
+# )
+#|>
+  # add_trace(
+  #   x = sol_hat[, 1],
+  #   y = sol_hat[, 2],
+  #   type = 'scatter',
+  #   mode = 'markers',
+  #   marker = list(color = 'red', size = 3),
+  #   name = "fit"
+  # )
 
 #  {
 #    p0 <- p_star
