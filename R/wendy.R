@@ -43,10 +43,10 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
     tt <- data$tt
   }
 
-  #noise_dist <- "addgaussian"
-  #compute_svd <- TRUE
-  #method <- "MLE"
-  #optimize <- T
+  noise_dist <- "addgaussian"
+  compute_svd <- TRUE
+  method <- "MLE"
+  optimize <- T
 
   torch::torch_set_default_dtype(torch::torch_float64())
 
