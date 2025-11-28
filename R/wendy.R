@@ -2,16 +2,7 @@ library(symengine)
 library(trust)
 library(stats)
 
-test_params <- list(
-  radius_params = 2^(0:3),
-  radius_min_time = 0.1,
-  radius_max_time = 25.0,
-  k_max = 200,
-  max_test_fun_condition_number = 1e4,
-  min_test_fun_info_number = 0.95
-)
-
-#' Parameter Estimation for ODE Systems via Maximum Likelihood Estimation
+#' Parameter Estimation for ODE Systems
   #'
 #' This function estimates parameters of a system of ordinary differential equations (ODEs)
 #' The method leverages symbolic derivatives of the ODE right-hand side and a
@@ -35,7 +26,18 @@ test_params <- list(
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = F, method = "MLE", optimize = T, compute_svd = T){
+solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = F, method = "MLE", control = NULL, optimize = T, compute_svd = T){
+
+  default_control <- list(
+    radius_params = 2^(0:3),
+    radius_min_time = 0.1,
+    radius_max_time = 25.0,
+    k_max = 200,
+    max_test_fun_condition_number = 1e4,
+    min_test_fun_info_number = 0.95
+  )
+
+  control <- modifyList(default_control, if(!is.null(control)) control else list())
 
   if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt)
@@ -47,7 +49,7 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
 
   sig <-torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64())
 
-  test_fun_matrices <- build_full_test_function_matrices(U, tt, test_params, compute_svd)
+  test_fun_matrices <- build_full_test_function_matrices(U, tt, control, compute_svd)
 
   V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64())
   Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64())
@@ -89,7 +91,8 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
 
   b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(-1)
 
-  g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(-1)# Lip -> Gp + g0 = g(p)
+ # If LIP we exchange a function (g(p)) for an affine transformation Gp + g0 = g(p)
+  g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(-1)
   b1 <- b - g0
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
