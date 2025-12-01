@@ -64,7 +64,7 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
 
 build_L0 <- function(K, D, mp1, Vp, sig) {
   sig_diag <- torch::torch_diag(sig)
-  L0_ <- torch::torch_einsum('km,ab->kabm', list(Vp, sig_diag))$permute(c(1,2,4,3))
+  L0_ <- torch::torch_einsum('km,ab->kamb', list(Vp, sig_diag))
   L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
   return(L0)
 }

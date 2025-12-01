@@ -17,12 +17,12 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-noise_sd <- 1
+noise_sd <- 0.05
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(2, 1, 1)
 npoints <- 256
-t_span <- c(0.2, 20)
+t_span <- c(0.1, 20)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
