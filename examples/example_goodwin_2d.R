@@ -15,10 +15,10 @@ f <- function(u, p, t) {
   c(du1, du2)
 }
 
-noise_sd <- 0.5
+noise_ratio <- 0.05
 npoints <- 256
 p_star <- c(72, 1, 2, 1, 1)
-p0 <- c(20, 1.5, 2.4, 1.7, 0.5)
+p0 <- c(50, 1.5, 2.4, 1.7, 0.5)
 
 u0 <- c(7, -10)
 t_span <- c(0, 60)
@@ -28,6 +28,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
+noise_sd <- sqrt(noise_ratio * norm(as.array(sol[,-1]), type = "2") / npoints)
 noise <- matrix(rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd), nrow = nrow(sol))
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)

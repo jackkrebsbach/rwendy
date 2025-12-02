@@ -17,7 +17,7 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-noise_sd <- 0.05
+noise_ratio <- 0.05
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(2, 1, 1)
@@ -29,6 +29,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
+noise_sd <- sqrt(noise_ratio * norm(as.array(sol[,-1]), type = "2") / npoints)
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
   nrow = nrow(sol)
