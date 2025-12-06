@@ -1,3 +1,5 @@
+
+# %%
 library(deSolve)
 library(plotly)
 library(trust)
@@ -59,5 +61,3 @@ plot_ly(
    marker = list(color = 'red', size = 3),
    name = "fit"
  )
-
-
