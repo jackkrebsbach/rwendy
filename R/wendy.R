@@ -36,8 +36,12 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95
   )
-
-  control <- modifyList(default_control, if(!is.null(control)) control else list())
+  
+  if(!is.null(control)) {
+    control <- modifyList(default_control, control)
+  } else {
+    control <- default_control
+  }
 
   if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt)
