@@ -1,4 +1,4 @@
-
+# F(p) in -Φ̇U(p,t) = ΦF(p,u,t)
 build_F <- function(U, tt, f_, J) {
   mp1 <- nrow(U)
   D   <- ncol(U)
@@ -10,13 +10,14 @@ build_F <- function(U, tt, f_, J) {
   }
 }
 
-
+# g(p) = ΦF(p,u,t)
 build_g <- function(V, F_) {
   function(p) {
     torch::torch_matmul(V, F_(p))$reshape(-1)
   }
 }
 
+# G matrix in the linear system Gp = b
 build_G_matrix <- function(V, U, tt, F_, J){
   K <- nrow(V)
   mp1 <- nrow(U)
@@ -62,6 +63,7 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   }
 }
 
+# L₀ where L(p) = L₁(p) + L₀(p)
 build_L0 <- function(K, D, mp1, Vp, sig) {
   sig_diag <- torch::torch_diag(sig)
   L0_ <- torch::torch_einsum('km,ab->kamb', list(Vp, sig_diag))
@@ -69,6 +71,7 @@ build_L0 <- function(K, D, mp1, Vp, sig) {
   return(L0)
 }
 
+# S(p) = L(p)Lᵀ(p) where S is the covariance matrix of the weak residual
 build_L <-function(U, tt, J_u, K, V, L0, sig, J){
   D <- ncol(U)
   mp1 <- length(tt)
@@ -84,6 +87,7 @@ build_L <-function(U, tt, J_u, K, V, L0, sig, J){
   }
 }
 
+# S(p) is the covariance matrix of the weak residual
 build_S <- function(L, REG = 1e-9) {
   function(p) {
     Lp <- L(p)
@@ -96,6 +100,7 @@ build_S <- function(L, REG = 1e-9) {
   }
 }
 
+# ∇ₚS(p) Jacobian of the covariance matrix
 build_J_S <- function(L, Jp_L, J, K, D){
   function(p){
     Lp <- L(p)
@@ -107,7 +112,7 @@ build_J_S <- function(L, Jp_L, J, K, D){
   }
 }
 
-# Jₚr(p) ∈ ℝ^(K*D x J)
+# ∇ₚr(p) ∈ ℝ^(K*D x J) Jacboian of the weak residual
 build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
@@ -119,7 +124,7 @@ build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
   }
 }
 
-# Hₚr(p) ∈ ℝ^(K*D x J x J)
+# ∇ₚ∇ₚr(p) ∈ ℝ^(K*D x J x J) Hessian of the weak residual
 build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
@@ -132,22 +137,21 @@ build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
   }
 }
 
+# Weak negative log likelihood  (Multivariate Gaussian)
 build_wnll <- function(S, g, b, K, D){
   constant_term <- 0.5 * K * D * log(2 * pi)
   function(p){
     Sp <- as.array(S(p))
     r <- as.array(g(p) - b)
     cholF <- chol(Sp)
-    #svdF <- svd(Sp)
-    #log_det <- sum(log(svdF$d))
     log_det <- 2 * sum(log(diag(cholF)))
-    S_invr <- backsolve(cholF, forwardsolve(t(cholF), r))
-
+    S_invr <- backsolve(cholF, forwardsolve(cholF, r, transpose = TRUE))
     mdist <- (r %*% S_invr)[1,1]
     return(0.5 * (mdist + log_det) + constant_term)
   }
 }
 
+# Jacobian of  the weak negative log likelihood 
 build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   function(p){
     Sp <- as.array(S(p))
@@ -158,7 +162,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     r <- as.array(g(p) - b)
 
     cholF <- chol(Sp)
-    S_inv_rp <- backsolve(cholF, forwardsolve(t(cholF), r))
+    S_inv_rp <- backsolve(cholF, forwardsolve(cholF, r, transpose = TRUE))
 
     gradient <- numeric(J)
 
@@ -171,7 +175,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
       prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
       prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
 
-      fact <- backsolve(cholF, forwardsolve(t(cholF), J_S_j))
+      fact <- backsolve(cholF, forwardsolve(cholF, J_S_j, transpose = TRUE))
       logDetPart <- sum(diag(fact))
 
       gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
@@ -181,6 +185,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   }
 }
 
+# Hessian of the weak negative log likelihood 
 build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
 
@@ -193,8 +198,8 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
     Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
     Hp_Lp <- as.array(Hp_L(p)$contiguous())  # ∇ₚ∇ₚL(p)
 
-    Sp <- as.array(S(p))
-    Jp_Sp <- as.array(Jp_S(p)$contiguous())
+    Sp <- as.array(S(p)) # S(p)
+    Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
 
     S_inv_solve <- make_S_inv_solver(Sp)
 
@@ -249,7 +254,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   }
 }
 
-
+# Robust solver for applying the inverse of S(p) to a vector or matrix
 make_S_inv_solver <- function(Sp) {
   cholF <- NULL
   qrF <- NULL
@@ -269,7 +274,7 @@ make_S_inv_solver <- function(Sp) {
 
   function(x) {
     if (!is.null(cholF)) {
-      return(backsolve(cholF, forwardsolve(t(cholF), x)))
+      return(backsolve(cholF, forwardsolve(cholF, x, transpose = TRUE)))
     } else if (!is.null(qrF)) {
       return(solve(qrF, x))
     } else {
