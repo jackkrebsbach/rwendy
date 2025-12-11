@@ -96,7 +96,6 @@ preprocess_data <- function(U, tt){
   for(i in seq(mp1)){
     indices[i] <- all(U[i,] > 0)
   }
-  # drop = FALSE keeps the data as a matrix
   return(list(U = log(U[indices,  ,drop = FALSE]), tt = tt[indices, drop = FALSE]))
 }
 

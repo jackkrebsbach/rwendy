@@ -15,8 +15,8 @@ irls <- function(G, b1, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, 
     Ln <- as.array(L(p)$contiguous())
     Sn <- (1 - reg) * Ln %*% t(Ln) + alphaIdm
     cholSn <- chol(Sn)
-    S_invb <- backsolve(cholSn, forwardsolve(t(cholSn), b1))
-    S_invG <- backsolve(cholSn, forwardsolve(t(cholSn), G))
+    S_invb <- backsolve(cholSn, forwardsolve(cholSn, b1, transpose = TRUE))
+    S_invG <- backsolve(cholSn, forwardsolve(cholSn, G, transpose = TRUE))
     p <- solve(t(G) %*% S_invG, t(G) %*% S_invb)
 
     relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))

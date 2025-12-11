@@ -63,7 +63,7 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   }
 }
 
-# L₀ where L(p) = L₁(p) + L₀(p)
+# L₀ where L(p) = L₁(p) + L₀
 build_L0 <- function(K, D, mp1, Vp, sig) {
   sig_diag <- torch::torch_diag(sig)
   L0_ <- torch::torch_einsum('km,ab->kamb', list(Vp, sig_diag))

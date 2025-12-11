@@ -95,7 +95,7 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
 
   b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(-1)
 
- # If LIP we exchange a function (g(p)) for an affine transformation Gp + g0 = g(p)
+  # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p)
   g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(-1)
   b1 <- b - g0
 
@@ -154,9 +154,9 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
                      )
   res$data <- data
   res$phat <- switch(method, IRLS = data$p, data$argument)
-  # trust.optim -> data$solution
-  # optim -> data$par
-  # trust::trust -> data$argument
+  # trust.optim -> data$solution = phat
+  # optim -> data$par = phat
+  # trust::trust -> data$argument = phat
 
   return(res)
  }
