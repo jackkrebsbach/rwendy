@@ -10,30 +10,35 @@ source("./R/weak_residual.R")
 source("./R/wendy.R")
 
 f <- function(u, p, t) {
-  c(p[1] * u[1] - p[2] * u[1]^2)
+  u1 <- p[1] * u[2]
+  u2 <- p[2] * u[2] + p[3] * u[1] + p[4] * u[1]^3
+  c(u1, u2)
 }
 
-p_star <- c(1, 1);
-u0 <- c(0.01);
-p0 <- c(0.5, 0.5);
+p_star <- c(1, -0.2, -0.05, -1);
+p0 <- c(2, -0.1, -1, -0.25);
+u0 <- c(0,2);
 npoints <- 256
-t_span <- c(0.005, 10);
+t_span <- c(0.005, 20);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.15
+nr <- 0.1
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
-U <- matrix(c(sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)), ncol = 1)
-# Log Normal Noise
-# U <- matrix(c(sol[, 2] * rnorm(npoints, mean = 0, sd = sqrt(noise_ratio))), ncol = 1)
+noise <- matrix(
+  rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
+  nrow = nrow(sol)
+)
+U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE")
+control <- list(radius_max_time = 2)
+res <- solveWendy(f, p0, U, tt, control = control, method = "MLE")
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
-plot(U, cex = 0.5)
-points(sol_hat[,2], cex = 0.5, col = "red")
+plot(U[,1],U[,2], cex = 0.5)
+points(sol_hat[,2], sol_hat[,3], cex = 0.5, col = "red")

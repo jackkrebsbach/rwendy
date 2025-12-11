@@ -1,3 +1,5 @@
+
+# %%
 library(deSolve)
 library(symengine)
 
@@ -24,7 +26,6 @@ t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
-
 
 nr <- 0.025
 noise_sd <- sqrt(nr)
@@ -54,4 +55,3 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = res$phat)
 lines(sol[, "time"], sol[, 2], col = "black", lwd = 2)
 lines(sol[, "time"], sol[, 3], col = "red", lwd = 2)
 lines(sol[, "time"], sol[, 4], col = "blue", lwd = 2)
-
