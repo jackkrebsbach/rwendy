@@ -28,7 +28,7 @@ library(stats)
 #' @export
 solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = FALSE, method = "MLE", control = NULL, optimize = T, compute_svd = T){
   
-  # noist_dist <- "addgaussian"
+  # noise_dist <- "addgaussian"
   # compute_svd <- T
   # method <- "MLE"
   # control <- NULL
@@ -57,7 +57,7 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
 
   torch::torch_set_default_dtype(torch::torch_float64())
 
-  sig <-torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64())
+  sig <- torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64())
 
   test_fun_matrices <- build_full_test_function_matrices(U, tt, control, compute_svd)
 
@@ -96,14 +96,15 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   J_upp <- build_fn(J_upp_sym, vars)
 
   F_<- build_F(U, tt, f_, J)
-  G <- build_G_matrix(V, U, tt, F_, J)
-  g <- build_g(V, F_)
-
-  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(-1)
 
   # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p)
+  # in practice we move g0 to the lhs in the linear system  b - g0 = Gp
+  G <- build_G_matrix(V, U, tt, F_, J)
   g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(-1)
-  b1 <- b - g0
+  g <- ifelse(!lip, build_g(V, F_), build_g_linear(G))
+
+  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(-1)
+  b <- if (!lip) b else b - g0
 
   Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
@@ -136,9 +137,9 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   res$J_wnll <- J_wnll
   res$H_wnll <- H_wnll
   res$g <- g
+  res$g0 <- g0
   res$G <- G
   res$b <- b
-  res$b1 <- b1
   res$f <- f_
   res$J_p <- J_p
   res$J_upp <- J_upp
@@ -156,7 +157,7 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   if(!optimize) return(res)
 
   data <- switch(method,
-                     IRLS = irls(as.array(G$contiguous()), as.array(b1$contiguous()), L), # IRLS WENDy
+                     IRLS = irls(as.array(G$contiguous()), as.array(b$contiguous()), L), # IRLS WENDy
                      #trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
                      #optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
                      trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
@@ -168,6 +169,6 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   # trust::trust -> data$argument = phat
 
   return(res)
- }
+}
 
 

@@ -32,9 +32,16 @@ build_G_matrix <- function(V, U, tt, F_, J){
     g_j <- torch::torch_reshape(result, c(-1))
     G[,j] <- as.numeric(g_j)
   }
-  return(torch::torch_tensor(G))
+  return(torch::torch_tensor(G, dtype = torch::torch_float64()))
 }
 
+# g(p) = Gp in system Gp = b - g0
+build_g_linear <- function(G) {
+  function(p) {
+    p <- torch::torch_tensor(p, dtype = torch::torch_float64())
+    torch::torch_matmul(G, p)$reshape(-1)
+  }
+}
 
 # L₀ where L(p) = L₁(p) + L₀
 build_L0 <- function(K, D, mp1, Vp, sig) {
