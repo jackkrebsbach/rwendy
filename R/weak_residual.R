@@ -220,7 +220,7 @@ build_wnll <- function(S, g, b, K, D){
     r <- as.array(g(p) - b)
     cholF <- chol(Sp)
     log_det <- 2 * sum(log(diag(cholF)))
-    S_invr <- backsolve(cholF, forwardsolve(cholF, r, transpose = TRUE))
+    S_invr <- backsolve(cholF, forwardsolve(t(cholF), r))
     mdist <- (r %*% S_invr)[1,1]
     return(0.5 * (mdist + log_det) + constant_term)
   }
@@ -237,7 +237,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     r <- as.array(g(p) - b)
 
     cholF <- chol(Sp)
-    S_inv_rp <- backsolve(cholF, forwardsolve(cholF, r, transpose = TRUE))
+    S_inv_rp <- backsolve(cholF, forwardsolve(t(cholF), r))
 
     gradient <- numeric(J)
 
@@ -250,7 +250,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
       prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
       prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
 
-      fact <- backsolve(cholF, forwardsolve(cholF, J_S_j, transpose = TRUE))
+      fact <- backsolve(cholF, forwardsolve(t(cholF), J_S_j))
       logDetPart <- sum(diag(fact))
 
       gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
@@ -407,7 +407,7 @@ make_S_inv_solver <- function(Sp) {
 
   function(x) {
     if (!is.null(cholF)) {
-      return(backsolve(cholF, forwardsolve(cholF, x, transpose = TRUE)))
+      return(backsolve(cholF, forwardsolve(t(cholF), x)))
     } else if (!is.null(qrF)) {
       return(solve(qrF, x))
     } else {
