@@ -1,3 +1,5 @@
+torch::torch_set_default_dtype(torch::torch_float64())
+
 # F(p) in -Φ̇U(p,t) = ΦF(p,u,t)
 build_F <- function(U, tt, f_, J) {
   mp1 <- nrow(U)
@@ -13,11 +15,11 @@ build_F <- function(U, tt, f_, J) {
 # g(p) = ΦF(p,u,t)
 build_g <- function(V, F_) {
   function(p) {
-    torch::torch_matmul(V, F_(p))$reshape(-1)
+    torch::torch_matmul(V, F_(p))$reshape(c(-1))
   }
 }
 
-# G matrix in the linear system Gp = b
+# G matrix in the linear system Gp = b: G ∈ ℝ^{K * D x J}
 build_G_matrix <- function(V, U, tt, F_, J){
   K <- nrow(V)
   mp1 <- nrow(U)
@@ -39,7 +41,37 @@ build_G_matrix <- function(V, U, tt, F_, J){
 build_g_linear <- function(G) {
   function(p) {
     p <- torch::torch_tensor(p, dtype = torch::torch_float64())
-    torch::torch_matmul(G, p)$reshape(-1)
+    torch::torch_matmul(G, p)$reshape(c(-1))
+  }
+}
+
+# ∇ₚr(p) ∈ ℝ^(K*D x J) Jacobian of the weak residual
+build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
+  function(p){
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    J_p_eval <- torch::torch_tensor(J_p(input),dtype = torch::torch_float64())
+    Jp_F <- torch::torch_reshape(J_p_eval, c(mp1, D, J))
+    Jp_r <- torch::torch_einsum("km,mdj->kdj", list(V, Jp_F))
+    Jp_r <- torch::torch_reshape(Jp_r, c(K * D, J))
+  }
+}
+
+# ∇ₚr(p) ∈ ℝ^(K*D x J) Jacobian of the weak residual: r(p) = Gp + go - b → ∇ₚr(p) = G 
+build_Jp_r_linear <- function(G){
+  \(p){G}
+}
+
+# ∇ₚ∇ₚr(p) ∈ ℝ^(K*D × J × J) Hessian of the weak residual
+build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
+  function(p){
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    H_p_eval <- torch::torch_tensor(H_p(input), dtype = torch::torch_float64())
+    Hp_F <- torch::torch_reshape(H_p_eval, c(mp1, D, J, J))
+    Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
+    Hp_r <- torch::torch_reshape(Hp_r, c(K * D, J, J))
+    return(Hp_r)
   }
 }
 
@@ -114,7 +146,6 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   }
 }
 
-
 # ∇ₚL(p) Linear Jacobian of the Covariance factor L(p) = L₁p + L_affine + L0 → ∇ₚL(p) = L₁
 build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
   D <- ncol(U)
@@ -178,31 +209,6 @@ build_J_S <- function(L, Jp_L, J, K, D){
     prt <- torch::torch_einsum("ijk,jl->ilk", list(Jp_Lp, Lp_t))
     Jp_S <- prt + prt$transpose(1, 2)
     return(Jp_S)
-  }
-}
-
-# ∇ₚr(p) ∈ ℝ^(K*D x J) Jacboian of the weak residual
-build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
-  function(p){
-    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
-    J_p_eval <- torch::torch_tensor(J_p(input),dtype = torch::torch_float64())
-    Jp_F <- torch::torch_reshape(J_p_eval, c(mp1, D, J))
-    Jp_r <- torch::torch_einsum("km,mdj->kdj", list(V, Jp_F))
-    Jp_r <- torch::torch_reshape(Jp_r, c(K * D, J))
-  }
-}
-
-# ∇ₚ∇ₚr(p) ∈ ℝ^(K*D x J x J) Hessian of the weak residual
-build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
-  function(p){
-    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
-    H_p_eval <- torch::torch_tensor(H_p(input), dtype = torch::torch_float64())
-    Hp_F <- torch::torch_reshape(H_p_eval, c(mp1, D, J, J))
-    Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
-    Hp_r <- torch::torch_reshape(Hp_r, c(K * D, J, J))
-    return(Hp_r)
   }
 }
 
@@ -323,17 +329,14 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
 }
 
 # Hessian of the weak negative log likelihood when linear in parameters
-build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
+build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J) {
   function(p) {
 
     r <- as.array(g(p) - b)
-
     Jp_rp <- as.array(Jp_r(p)$contiguous())
-    Hp_rp <- as.array(Hp_r(p)$contiguous())
 
     Lp <- as.array(L(p))                     # L(p)
     Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
-    Hp_Lp <- as.array(Hp_L(p)$contiguous())  # ∇ₚ∇ₚL(p)
 
     Sp <- as.array(S(p)) # S(p)
     Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
@@ -351,34 +354,27 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
       shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
 
       for (i in j:J) {
-        # ∂ᵢS(p) (partial of the covariance matrix)
-        Jp_Sp_i <- Jp_Sp[, , i]
+
+        Jp_Sp_i <- Jp_Sp[, , i]  # ∂ᵢS(p)
         Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
         Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
 
         term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
 
-        # ∂ᵢ∂ⱼS(p)
-        Hp_Lp_ji <- Hp_Lp[, , j, i]
-        p1 <- Jp_Lp_j %*% t(Jp_Lp_i)
-        p2 <- Hp_Lp_ji %*% t(Lp)
-        Hp_Sp_ji <- p1 + t(p1) + p2 + t(p2)  # ∂ᵢ∂ⱼS(p)
-
-        Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
-
-        prt0 <- as.numeric(t(Hp_rp_ji) %*% S_inv_rp)
-        prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
+        p1 <- Jp_Lp_j %*% t(Jp_Lp_i) # ∂ᵢ∂ⱼS(p)
+        Hp_Sp_ji <- p1 + t(p1)  # ∂ᵢ∂ⱼS(p)
 
         inv_factor <- S_inv_solve(Jp_rp_i)
-        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
 
+        prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
+        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
         prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
         prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
         prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
 
         logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
 
-        Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
+        Hij <- 0.5 * (2 * (prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
         H_wnn[j, i] <- Hij
 

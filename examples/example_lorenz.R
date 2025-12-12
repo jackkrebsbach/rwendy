@@ -23,7 +23,7 @@ p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(2, 1, 1)
 npoints <- 256
-t_span <- c(0.1, 20)
+t_span <- c(0.05, 20)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
@@ -41,7 +41,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", optimize = T)
+res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "MLE")
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 

@@ -76,8 +76,8 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   t_expr <- symengine::S("t")
 
   f_expr <- switch(noise_dist,
-                   lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
-                   f(u_expr, p_expr, t_expr)
+                    lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
+                    f(u_expr, p_expr, t_expr)
                    )
 
   J_u_sym <- compute_symbolic_jacobian(f_expr, u_expr)
@@ -100,13 +100,15 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p)
   # in practice we move g0 to the lhs in the linear system  b - g0 = Gp
   G <- build_G_matrix(V, U, tt, F_, J)
-  g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(-1)
+  g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(c(-1))
   g <- ifelse(!lip, build_g(V, F_), build_g_linear(G))
 
-  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(-1)
+  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(c(-1))
   b <- if (!lip) b else b - g0
 
-  Jp_r <- build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
+  Jp_r <- ifelse(!lip, build_Jp_r(J_p, K, D, J, mp1, V, U, tt),
+                       build_Jp_r_linear(G)
+                      )
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
 
   L0 <- build_L0(K, D, mp1, Vp, sig)
@@ -114,8 +116,9 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
                     build_L_linear(U, tt, J_u, K, V, L0, sig, J)
                   )
   
-  # Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
-  Jp_L <- build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J) 
+  Jp_L <- ifelse(!lip, build_Jp_L(U, tt, J_up, K, J, D, V, sig),
+                       build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J)
+                      )
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 
   S <- build_S(L)
@@ -123,7 +126,10 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
 
   wnll <- build_wnll(S, g, b, K, D)
   J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J)
-  H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J)
+  #H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J)
+  H_wnll <- ifelse(!lip, build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J),
+                         build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J)
+                        )
 
   objfun <- function(p) {
       f <- wnll(p)
