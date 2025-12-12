@@ -27,12 +27,6 @@ library(stats)
 #'
 #' @export
 solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = FALSE, method = "MLE", control = NULL, optimize = T, compute_svd = T){
-  
-  # noise_dist <- "addgaussian"
-  # compute_svd <- T
-  # method <- "MLE"
-  # control <- NULL
-  # lip <- TRUE
 
   default_control <- list(
     radius_params = 2^(0:3),
@@ -97,11 +91,13 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
 
   F_<- build_F(U, tt, f_, J)
 
-  # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p)
-  # in practice we move g0 to the lhs in the linear system  b - g0 = Gp
+  # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p).
+  # In practice we move g0 to the lhs in the linear system  b - g0 = Gp
   G <- build_G_matrix(V, U, tt, F_, J)
   g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(c(-1))
-  g <- ifelse(!lip, build_g(V, F_), build_g_linear(G))
+  g <- ifelse(!lip, build_g(V, F_),
+                   build_g_linear(G)
+                  )
 
   b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(c(-1))
   b <- if (!lip) b else b - g0
@@ -126,7 +122,6 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
 
   wnll <- build_wnll(S, g, b, K, D)
   J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J)
-  #H_wnll <- build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J)
   H_wnll <- ifelse(!lip, build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J),
                          build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J)
                         )
