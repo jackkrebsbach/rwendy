@@ -35,17 +35,61 @@ build_G_matrix <- function(V, U, tt, F_, J){
   return(torch::torch_tensor(G))
 }
 
-# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
-build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
+
+# L₀ where L(p) = L₁(p) + L₀
+build_L0 <- function(K, D, mp1, Vp, sig) {
+  sig_diag <- torch::torch_diag(sig)
+  L0_ <- torch::torch_einsum('km,ab->kamb', list(Vp, sig_diag))
+  L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
+  return(L0)
+}
+
+# L(p) where L(p)Lᵀ(p) = S(p), the covariance matrix of the weak residual
+build_L <-function(U, tt, J_u, K, V, L0, sig, J){
+  D <- ncol(U)
   mp1 <- length(tt)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    T_F <- torch::torch_tensor(J_upp(input), dtype = torch::torch_float64())
-    T_F <- torch::torch_reshape(T_F, c(mp1, D, D, J, J))
-    H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))
-    H_ <- torch::torch_reshape(H_, c(K * D, mp1 * D, J, J))
-    return(H_)
+    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64())
+    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
+    L1 <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
+    L1 <- torch::torch_reshape(L1, c(K * D, mp1 * D))
+    L <- L1 + L0
+    return(L)
+  }
+}
+
+# L for linear in parameters where LpLᵀp = S(p), the covariance matrix of the weak residual
+build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
+  D <- ncol(U)
+  mp1 <- length(tt)
+  L1_ <- torch::torch_zeros(c(K * D, mp1 * D, J), dtype = torch::torch_float64())
+
+  p_mat_affine <- matrix(rep(rep(0,J), mp1), ncol = mp1, nrow = J)
+  input_affine <- rbind(p_mat_affine, t(U), t(tt))
+  J_F_affine <- torch::torch_tensor(J_u(input_affine), dtype = torch::torch_float64())
+  J_F_affine <- torch::torch_reshape(J_F_affine, c(mp1, D, D))
+  J_F_affine <- torch::torch_einsum('mab,km,a->kamb', list(J_F_affine, V, sig))
+  L1_affine <- torch::torch_reshape(J_F_affine, c(K * D, mp1 * D))
+
+  for(j in seq_len(J)){
+    e_j <- rep(0, J)
+    e_j[j] <- 1
+    p_mat <- matrix(rep(e_j, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64())
+    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
+    Jj_F <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
+    Jj_F <- torch::torch_reshape(Jj_F, c(K * D, mp1 * D))
+    L1_[,,j] <- Jj_F - L1_affine
+  }
+  
+  function(p){
+    p <- torch::torch_tensor(p, dtype = torch::torch_float64())
+    L1 <- torch::torch_einsum('abj,j->ab', list(L1_, p))
+    L <- L1 + L1_affine + L0
+    return(L)
   }
 }
 
@@ -63,27 +107,17 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   }
 }
 
-# L₀ where L(p) = L₁(p) + L₀
-build_L0 <- function(K, D, mp1, Vp, sig) {
-  sig_diag <- torch::torch_diag(sig)
-  L0_ <- torch::torch_einsum('km,ab->kamb', list(Vp, sig_diag))
-  L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
-  return(L0)
-}
-
-# S(p) = L(p)Lᵀ(p) where S is the covariance matrix of the weak residual
-build_L <-function(U, tt, J_u, K, V, L0, sig, J){
-  D <- ncol(U)
+# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
+build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
   mp1 <- length(tt)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64())
-    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
-    L1 <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
-    L1 <- torch::torch_reshape(L1, c(K * D, mp1 * D))
-    L <- L1 + L0
-    return(L)
+    T_F <- torch::torch_tensor(J_upp(input), dtype = torch::torch_float64())
+    T_F <- torch::torch_reshape(T_F, c(mp1, D, D, J, J))
+    H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))
+    H_ <- torch::torch_reshape(H_, c(K * D, mp1 * D, J, J))
+    return(H_)
   }
 }
 

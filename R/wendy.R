@@ -26,12 +26,18 @@ library(stats)
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = F, method = "MLE", control = NULL, optimize = T, compute_svd = T){
+solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = FALSE, method = "MLE", control = NULL, optimize = T, compute_svd = T){
+  
+  # noist_dist <- "addgaussian"
+  # compute_svd <- T
+  # method <- "MLE"
+  # control <- NULL
+  # lip <- TRUE
 
   default_control <- list(
     radius_params = 2^(0:3),
     radius_min_time = 0.1,
-    radius_max_time = 25.0,
+    radius_max_time = 5.0,
     k_max = 200,
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95
@@ -103,7 +109,10 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
 
   L0 <- build_L0(K, D, mp1, Vp, sig)
-  L <- build_L(U, tt, J_u, K, V, L0, sig, J)
+  L <- ifelse(!lip, build_L(U, tt, J_u, K, V, L0, sig, J),
+                    build_L_linear(U, tt, J_u, K, V, L0, sig, J)
+                  )
+  
   Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 
