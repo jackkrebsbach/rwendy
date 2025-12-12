@@ -114,7 +114,8 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
                     build_L_linear(U, tt, J_u, K, V, L0, sig, J)
                   )
   
-  Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
+  # Jp_L <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
+  Jp_L <- build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J) 
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 
   S <- build_S(L)

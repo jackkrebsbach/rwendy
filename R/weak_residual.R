@@ -114,6 +114,34 @@ build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   }
 }
 
+
+# ∇ₚL(p) Linear Jacobian of the Covariance factor L(p) = L₁p + L_affine + L0 → ∇ₚL(p) = L₁
+build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
+  D <- ncol(U)
+  mp1 <- length(tt)
+  L1_ <- torch::torch_zeros(c(K * D, mp1 * D, J), dtype = torch::torch_float64())
+
+  p_mat_affine <- matrix(rep(rep(0,J), mp1), ncol = mp1, nrow = J)
+  input_affine <- rbind(p_mat_affine, t(U), t(tt))
+  J_F_affine <- torch::torch_tensor(J_u(input_affine), dtype = torch::torch_float64())
+  J_F_affine <- torch::torch_reshape(J_F_affine, c(mp1, D, D))
+  J_F_affine <- torch::torch_einsum('mab,km,a->kamb', list(J_F_affine, V, sig))
+  L1_affine <- torch::torch_reshape(J_F_affine, c(K * D, mp1 * D))
+
+  for(j in seq_len(J)){
+    e_j <- rep(0, J)
+    e_j[j] <- 1
+    p_mat <- matrix(rep(e_j, mp1), ncol = mp1, nrow = J)
+    input <- rbind(p_mat, t(U), t(tt))
+    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64())
+    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
+    Jj_F <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
+    Jj_F <- torch::torch_reshape(Jj_F, c(K * D, mp1 * D))
+    L1_[,,j] <- Jj_F  - L1_affine
+  }
+  return(\(p){L1_})
+}
+
 # ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
 build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
   mp1 <- length(tt)
@@ -229,6 +257,74 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
 # Hessian of the weak negative log likelihood 
 build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
+    r <- as.array(g(p) - b)
+
+    Jp_rp <- as.array(Jp_r(p)$contiguous())
+    Hp_rp <- as.array(Hp_r(p)$contiguous())
+
+    Lp <- as.array(L(p))                     # L(p)
+    Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
+    Hp_Lp <- as.array(Hp_L(p)$contiguous())  # ∇ₚ∇ₚL(p)
+
+    Sp <- as.array(S(p)) # S(p)
+    Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
+
+    S_inv_solve <- make_S_inv_solver(Sp)
+
+    S_inv_rp <- S_inv_solve(r)
+    H_wnn <- matrix(0, nrow = J, ncol = J)
+
+    for (j in seq_len(J)) {
+      Jp_rp_j <- Jp_rp[, j]
+      Jp_Sp_j <- Jp_Sp[, , j]
+      Jp_Lp_j <- Jp_Lp[, , j]
+
+      shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
+
+      for (i in j:J) {
+        # ∂ᵢS(p) (partials of the covariance matrix)
+        Jp_Sp_i <- Jp_Sp[, , i]
+        Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
+        Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
+
+        term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
+
+        # ∂ᵢ∂ⱼS(p)
+        Hp_Lp_ji <- Hp_Lp[, , j, i]
+        p1 <- Jp_Lp_j %*% t(Jp_Lp_i)
+        p2 <- Hp_Lp_ji %*% t(Lp)
+        Hp_Sp_ji <- p1 + t(p1) + p2 + t(p2)  # ∂ᵢ∂ⱼS(p)
+
+        Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
+
+        prt0 <- as.numeric(t(Hp_rp_ji) %*% S_inv_rp)
+        prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
+
+        inv_factor <- S_inv_solve(Jp_rp_i)
+        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
+
+        prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
+        prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
+        prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
+
+        logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
+
+        Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
+
+        H_wnn[j, i] <- Hij
+
+        if (i != j) {
+          H_wnn[i, j] <- Hij
+        }
+      }
+    }
+    return(H_wnn)
+  }
+}
+
+# Hessian of the weak negative log likelihood when linear in parameters
+build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
+  function(p) {
 
     r <- as.array(g(p) - b)
 
@@ -255,7 +351,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
       shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
 
       for (i in j:J) {
-        # ∂ᵢS(p) (Jacobian information)
+        # ∂ᵢS(p) (partial of the covariance matrix)
         Jp_Sp_i <- Jp_Sp[, , i]
         Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
         Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
