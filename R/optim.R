@@ -12,11 +12,15 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
     pn1 <- p
     n <- n + 1
 
+    # We solve the weighted least squares problem
+    # GᵀS⁻¹G = GᵀS⁻¹b, S can be factored using the Cholesky decomposition of S = RRᵀ
+    # Gᵀ(RRᵀ)⁻¹G = Gᵀ(RRᵀ)⁻¹b which reduces to (GᵀR⁻ᵀ)R⁻¹G =(GᵀR⁻ᵀ)R⁻¹b
+    # Thus we solve the least squares problem R⁻¹G = R⁻¹b where R is lower triangular matrix
     Ln <- as.array(L(p)$contiguous())
     Sn <- (1 - reg) * Ln %*% t(Ln) + alphaIdm
-    cholSn <- chol(Sn)
-    G_ <- forwardsolve(t(cholSn), G)
-    b_ <- forwardsolve(t(cholSn), b)
+    RT <- chol(Sn) # Upper triangular matrix S = RRᵀ
+    G_ <- forwardsolve(t(RT), G)
+    b_ <- forwardsolve(t(RT), b)
     p <- lm.fit(G_, b_)$coefficients
 
     relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
