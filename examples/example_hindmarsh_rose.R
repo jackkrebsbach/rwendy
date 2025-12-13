@@ -1,14 +1,9 @@
-library(deSolve)
-library(symengine)
-library(trustOptim)
-library(trust)
 
-source("./R/symbolics.R")
-source("./R/test_functions.R")
-source("./R/noise.R")
-source("./R/optim.R")
-source("./R/weak_residual.R")
-source("./R/wendy.R")
+# %%
+library(deSolve)
+library(plotly)
+
+invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   du1 <- p[1] * u[2] + p[2] * u[1]^3 + p[3] * u[1]^2 + p[4] * u[3]
@@ -30,7 +25,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 nr <- 0.02
 U_vec <- as.vector(sol[,-1])
-noise_sd <- nr*sqrt(mean(U_vec^2))
+noise_sd <- nr * sqrt(mean(U_vec^2))
 
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),

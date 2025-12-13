@@ -1,12 +1,8 @@
+# %%
 library(deSolve)
 library(plotly)
 
-source("./R/symbolics.R")
-source("./R/test_functions.R")
-source("./R/noise.R")
-source("./R/optim.R")
-source("./R/weak_residual.R")
-source("./R/wendy.R")
+invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   du1 <- p[1] / (2.15 + p[3] * u[3]^p[4]) - p[2] * u[1]
@@ -15,7 +11,6 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-noise_ratio <- 0.05
 npoints <- 512
 p_star <- c(3.4884, 0.0969, 1, 10, 0.0969, 0.0581, 0.0969, 0.0775)
 p0 <- c(3, 0.1, 4, 12, 0.1, 0.1, 0.1, 0.1)
@@ -29,7 +24,9 @@ modelODE <- function(tvec, state, parameters) {
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-noise_sd <- sqrt(noise_ratio * norm(as.array(sol[,-1]), type = "2") / npoints)
+nr <- 0.05
+U_vec <- as.vector(sol[,-1])
+noise_sd <- nr * sqrt(mean(U_vec^2))
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
   nrow = nrow(sol)
@@ -37,7 +34,8 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE")
+control <- list(radius_max_time = 20)
+res <- solveWendy(f, p0, U, tt, method = "MLE", control = control)
 
 p_hat <- res$phat
 

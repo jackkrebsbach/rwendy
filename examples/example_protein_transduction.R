@@ -2,12 +2,7 @@
 # %%
 library(deSolve)
 
-source("./R/symbolics.R")
-source("./R/test_functions.R")
-source("./R/noise.R")
-source("./R/optim.R")
-source("./R/weak_residual.R")
-source("./R/wendy.R")
+invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   u1 <- p[1] * u[1] + p[2] * u[1] * u[3] + p[3] * u[4]
@@ -30,7 +25,8 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
 nr <- 0.005
-noise_sd <- sqrt(nr * norm(as.array(sol[,-1]), type = "2") / npoints)
+U_vec <- as.array(sol[-1])
+noise_sd <- nr * sqrt(mean(U_vec^2))
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
   nrow = nrow(sol)

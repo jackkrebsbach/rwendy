@@ -2,12 +2,7 @@
 # %%
 library(deSolve)
 
-source("./R/symbolics.R")
-source("./R/test_functions.R")
-source("./R/noise.R")
-source("./R/optim.R")
-source("./R/weak_residual.R")
-source("./R/wendy.R")
+invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   u1 <- p[1] * u[2]
@@ -18,7 +13,7 @@ f <- function(u, p, t) {
 p_star <- c(1, -0.2, -0.05, -1);
 p0 <- c(2, -0.1, -1, -0.25);
 u0 <- c(0,2);
-npoints <- 1024
+npoints <- 256 
 t_span <- c(0.005, 20);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 

@@ -1,14 +1,8 @@
 
 # %%
 library(deSolve)
-library(symengine)
 
-source("./R/symbolics.R")
-source("./R/test_functions.R")
-source("./R/noise.R")
-source("./R/optim.R")
-source("./R/weak_residual.R")
-source("./R/wendy.R")
+invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   du1 <- -p[1] * u[1] + p[3] * u[2] + u[3] * (p[1] * exp(-p[1] * p[2])) / (1 - exp(-p[1] * p[2]))
