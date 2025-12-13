@@ -226,7 +226,7 @@ build_wnll <- function(S, g, b, K, D){
   }
 }
 
-# Jacobian of  the weak negative log likelihood 
+# Jacobian of the weak form negative log likelihood 
 build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   function(p){
     Sp <- as.array(S(p))
@@ -260,7 +260,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   }
 }
 
-# Hessian of the weak negative log likelihood 
+# Hessian of the weak form negative log likelihood 
 build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   function(p) {
     r <- as.array(g(p) - b)
@@ -288,15 +288,13 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
       shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
 
       for (i in j:J) {
-        # ∂ᵢS(p) (partials of the covariance matrix)
-        Jp_Sp_i <- Jp_Sp[, , i]
+        Jp_Sp_i <- Jp_Sp[, , i]  # ∂ᵢS(p)
         Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
         Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
 
         term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
 
-        # ∂ᵢ∂ⱼS(p)
-        Hp_Lp_ji <- Hp_Lp[, , j, i]
+        Hp_Lp_ji <- Hp_Lp[, , j, i] # ∂ᵢ∂ⱼS(p)
         p1 <- Jp_Lp_j %*% t(Jp_Lp_i)
         p2 <- Hp_Lp_ji %*% t(Lp)
         Hp_Sp_ji <- p1 + t(p1) + p2 + t(p2)  # ∂ᵢ∂ⱼS(p)
@@ -328,7 +326,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
   }
 }
 
-# Hessian of the weak negative log likelihood when linear in parameters
+# Hessian of the weak form negative log likelihood when linear in parameters
 build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J) {
   function(p) {
 

@@ -2,7 +2,7 @@
 irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- nrow(G)
   alphaIdm <- reg * diag(rep(1, dm))
-  p <- lm(b ~ G + 0)$coefficients
+  p <- lm.fit(G, b)$coefficients
   n <- 0
   SW <- Inf
 
@@ -15,9 +15,9 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
     Ln <- as.array(L(p)$contiguous())
     Sn <- (1 - reg) * Ln %*% t(Ln) + alphaIdm
     cholSn <- chol(Sn)
-    S_invb <- backsolve(cholSn, forwardsolve(t(cholSn), b))
-    S_invG <- backsolve(cholSn, forwardsolve(t(cholSn), G))
-    p <- as.numeric(solve(t(G) %*% S_invG, t(G) %*% S_invb))
+    G_ <- forwardsolve(t(cholSn), G)
+    b_ <- forwardsolve(t(cholSn), b)
+    p <- lm.fit(G_, b_)$coefficients
 
     relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
 
