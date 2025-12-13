@@ -26,9 +26,11 @@ library(stats)
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", lip = FALSE, method = "MLE", control = NULL, optimize = T, compute_svd = T){
+solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, method = "MLE", control = NULL, optimize = T, compute_svd = T){
 
   default_control <- list(
+    diag_reg = 10e-10,
+    max_iterates = 200,
     radius_params = 2^(0:3),
     radius_min_time = 0.1,
     radius_max_time = 5.0,
@@ -117,7 +119,7 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
                       )
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 
-  S <- build_S(L)
+  S <- build_S(L, diag_reg = control$diag_reg)
   Jp_S <- build_J_S(L, Jp_L, J, K ,D)
 
   wnll <- build_wnll(S, g, b, K, D)
@@ -159,7 +161,7 @@ solveWendy <- function(f, p0, U, tt, constraints,  noise_dist = "addgaussian", l
   if(!optimize) return(res)
 
   data <- switch(method,
-                     IRLS = irls(as.array(G$contiguous()), as.array(b$contiguous()), L), # IRLS WENDy
+                     IRLS = irls(as.array(G$contiguous()), as.array(b$contiguous()), L, max_its = control$max_iterates), # IRLS WENDy
                      #trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
                      #optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
                      trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation

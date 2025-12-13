@@ -188,13 +188,13 @@ build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
 }
 
 # S(p) is the covariance matrix of the weak residual
-build_S <- function(L, REG = 1e-9) {
+build_S <- function(L, diag_reg = 1e-9) {
   function(p) {
     Lp <- L(p)
     Lpt <- torch::torch_transpose(Lp, 1, 2)
     S_ <- torch::torch_matmul(Lp, Lpt)
-    WEIGHT <- 1.0 - REG
-    eye <- REG * diag(nrow(S_))
+    WEIGHT <- 1.0 - diag_reg 
+    eye <- diag_reg * diag(nrow(S_))
     S <- WEIGHT * S_ + eye
     return(S)
   }
