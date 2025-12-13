@@ -1,6 +1,6 @@
 torch::torch_set_default_dtype(torch::torch_float64())
 
-# F(p) in -Φ̇U(p,t) = ΦF(p,u,t)
+# F(p) in -𝚽'U = 𝚽F(p,U,t)
 build_F <- function(U, tt, f_, J) {
   mp1 <- nrow(U)
   D   <- ncol(U)
@@ -12,14 +12,14 @@ build_F <- function(U, tt, f_, J) {
   }
 }
 
-# g(p) = ΦF(p,u,t)
+# g(p) = 𝚽F(p,u,t)
 build_g <- function(V, F_) {
   function(p) {
     torch::torch_matmul(V, F_(p))$reshape(c(-1))
   }
 }
 
-# G matrix in the linear system Gp = b: G ∈ ℝ^{K * D x J}
+# G matrix in the linear system Gp = b - g0 : G ∈ ℝ^{K * D x J}
 build_G_matrix <- function(V, U, tt, F_, J){
   K <- nrow(V)
   mp1 <- nrow(U)
@@ -57,7 +57,7 @@ build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
   }
 }
 
-# ∇ₚr(p) ∈ ℝ^(K*D x J) Jacobian of the weak residual: r(p) = Gp + go - b → ∇ₚr(p) = G 
+# ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual: r(p) = Gp + go - b → ∇ₚr(p) = G 
 build_Jp_r_linear <- function(G){
   \(p){G}
 }
@@ -132,7 +132,7 @@ build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
   }
 }
 
-# ∇ₚL(p) Jacobian of the Covariance factor
+# ∇ₚL(p) Jacobian of the covariance factor
 build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig){
   mp1 <- length(tt)
   function(p){
@@ -173,7 +173,7 @@ build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
   return(\(p){L1_})
 }
 
-# ∇ₚ∇ₚL(p) Hessian of the Covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
+# ∇ₚ∇ₚL(p) Hessian of the covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
 build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig){
   mp1 <- length(tt)
   function(p){
@@ -212,7 +212,7 @@ build_J_S <- function(L, Jp_L, J, K, D){
   }
 }
 
-# Weak negative log likelihood  (Multivariate Gaussian)
+# Weak negative log likelihood  (Multivariate Gaussian distribution)
 build_wnll <- function(S, g, b, K, D){
   constant_term <- 0.5 * K * D * log(2 * pi)
   function(p){

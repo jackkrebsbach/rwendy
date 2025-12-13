@@ -11,7 +11,7 @@ library(stats)
 #' @param f A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 #'   where \code{u} is the state vector, \code{p} is the parameter vector,
 #'   and \code{t} is the time variable. Must return symbolic expressions.
-#' @param p0 Numeric vector. Initial guess for the parameters.
+#' @param p0 Numeric vector. Initial guess for the parameters. Used in MLE or nonlinear least squares solvers.
 #' @param U Numeric matrix. Rows represent observed states at time points in \code{tt}.
 #'   Columns correspond to state variables.
 #' @param tt Numeric vector. Time points corresponding to the rows of \code{U}.
@@ -46,7 +46,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
   }
 
   if(noise_dist == "lognormal"){
-    data <- preprocess_data(U, tt)
+    data <- preprocess_data(U, tt) # remove time points with zeros and take log of the data
     U <- data$U
     tt <- data$tt
   }
@@ -57,21 +57,21 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
 
   test_fun_matrices <- build_full_test_function_matrices(U, tt, control, compute_svd)
 
-  V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64())
-  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64())
+  V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64()) # 𝚽
+  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64()) # 𝚽̇'
 
   min_radius <- test_fun_matrices$min_radius
 
-  J <- length(p0)
-  D <- ncol(U)
-  mp1 <- nrow(U)
-  K <- nrow(V)
+  J <- length(p0) # Number of parameters
+  D <- ncol(U)    # Dimension of system
+  mp1 <- nrow(U)  # Number of time points
+  K <- nrow(V)    # Number of test functions
 
   u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
 
-  f_expr <- switch(noise_dist,
+  f_expr <- switch(noise_dist, # Symbolic representation of the r.h.s.
                     lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
                     f(u_expr, p_expr, t_expr)
                    )
@@ -102,13 +102,13 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
                    build_g_linear(G)
                   )
 
-  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(c(-1))
+  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(c(-1)) # b = -𝚽'U 
   b <- if (!lip) b else b - g0
 
-  Jp_r <- ifelse(!lip, build_Jp_r(J_p, K, D, J, mp1, V, U, tt),
+  Jp_r <- ifelse(!lip, build_Jp_r(J_p, K, D, J, mp1, V, U, tt), # ∇ₚr(p) =  ∇ₚ(g(p) - b) =  ∇ₚg(p) Jacobian of the weak residual
                        build_Jp_r_linear(G)
                       )
-  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
+  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt) #  ∇ₚ∇ₚr(p) Hessian of the weak residual
 
   L0 <- build_L0(K, D, mp1, Vp, sig) # L0 in factorization of Covariance matrix S = LLᵀ, L = L₁(p) + L₀ 
   L <- ifelse(!lip, build_L(U, tt, J_u, K, V, L0, sig, J), 
@@ -123,9 +123,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
   S <- build_S(L, diag_reg = control$diag_reg) # Covariance of the weak residual S(p)
   Jp_S <- build_J_S(L, Jp_L, J, K ,D) # Jacobian of Covariance of the weak residual ∇ₚS(p)
 
-  wnll <- build_wnll(S, g, b, K, D) # Negative log likelihood of the weak form residual
-  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of the negative log likelihood of the weak form residual
-  # Hessian of the negative log likelihood of the weak form residual
+  wnll <- build_wnll(S, g, b, K, D) # Negative log likelihood of the weak form residual (wnll)
+  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of wnll 
+  # Hessian of the wnll
   # When linear in parameters there are terms are guaranteed to be zero so we define a new function 
   H_wnll <- ifelse(!lip, build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J), 
                          build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J)
