@@ -75,7 +75,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
                     lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
                     f(u_expr, p_expr, t_expr)
                    )
-
+  # Compute symbolic gradients of the r.h.s. u̇ = f(p,u,t)
   J_u_sym <- compute_symbolic_jacobian(f_expr, u_expr)
   J_up_sym <- compute_symbolic_jacobian(J_u_sym, p_expr)
   J_p_sym <- compute_symbolic_jacobian(f_expr, p_expr)
@@ -110,22 +110,24 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
                       )
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
 
-  L0 <- build_L0(K, D, mp1, Vp, sig)
-  L <- ifelse(!lip, build_L(U, tt, J_u, K, V, L0, sig, J),
+  L0 <- build_L0(K, D, mp1, Vp, sig) # L0 in factorization of Covariance matrix S = LLᵀ, L = L₁(p) + L₀ 
+  L <- ifelse(!lip, build_L(U, tt, J_u, K, V, L0, sig, J), 
                     build_L_linear(U, tt, J_u, K, V, L0, sig, J)
                   )
   
-  Jp_L <- ifelse(!lip, build_Jp_L(U, tt, J_up, K, J, D, V, sig),
-                       build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J)
+  Jp_L <- ifelse(!lip, build_Jp_L(U, tt, J_up, K, J, D, V, sig), # Jacobian of covariance factor ∇ₚL
+                       build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J) 
                       )
-  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
+  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig) # ∇ₚ∇ₚL Hessian of covariance factor
 
-  S <- build_S(L, diag_reg = control$diag_reg)
-  Jp_S <- build_J_S(L, Jp_L, J, K ,D)
+  S <- build_S(L, diag_reg = control$diag_reg) # Covariance of the weak residual S(p)
+  Jp_S <- build_J_S(L, Jp_L, J, K ,D) # Jacobian of Covariance of the weak residual ∇ₚS(p)
 
-  wnll <- build_wnll(S, g, b, K, D)
-  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J)
-  H_wnll <- ifelse(!lip, build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J),
+  wnll <- build_wnll(S, g, b, K, D) # Negative log likelihood of the weak form residual
+  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of the negative log likelihood of the weak form residual
+  # Hessian of the negative log likelihood of the weak form residual
+  # When linear in parameters there are terms are guaranteed to be zero so we define a new function 
+  H_wnll <- ifelse(!lip, build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J), 
                          build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J)
                         )
 
