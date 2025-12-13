@@ -84,17 +84,18 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
 
   vars <- c(p_expr, u_expr ,t_expr)
 
-  f_ <- build_fn(f_expr, vars)
-  J_u <- build_fn(J_u_sym, vars)
-  J_up <- build_fn(J_up_sym, vars)
-  J_p <- build_fn(J_p_sym, vars)
-  J_pp <- build_fn(J_pp_sym, vars)
-  J_upp <- build_fn(J_upp_sym, vars)
+  # Callable functions of p, u, and t
+  f_ <- build_fn(f_expr, vars)        # f(p,u,t) 
+  J_u <- build_fn(J_u_sym, vars)      # ∇ᵤf(p,u,t)      
+  J_up <- build_fn(J_up_sym, vars)    # ∇ₚ∇ᵤf(p,u,t)
+  J_p <- build_fn(J_p_sym, vars)      # ∇ₚf(p,u,t)
+  J_pp <- build_fn(J_pp_sym, vars)    # ∇ₚ∇ₚf(p,u,t)
+  J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
 
-  F_<- build_F(U, tt, f_, J)
+  F_<- build_F(U, tt, f_, J) # F(p,U,t)
 
   # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p).
-  # In practice we move g0 to the lhs in the linear system  b - g0 = Gp
+  # In practice we move g0 to the l.h.s. of the linear system  b - g0 = Gp
   G <- build_G_matrix(V, U, tt, F_, J)
   g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(c(-1))
   g <- ifelse(!lip, build_g(V, F_),
@@ -162,9 +163,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
 
   data <- switch(method,
                      IRLS = irls(as.array(G$contiguous()), as.array(b$contiguous()), L, max_its = control$max_iterates), # IRLS WENDy
-                     #trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
-                     #optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
                      trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
+                     # trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
+                     # optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
                      )
   res$data <- data
   res$phat <- switch(method, IRLS = data$p, data$argument)
