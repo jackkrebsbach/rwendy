@@ -13,6 +13,7 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
     n <- n + 1
 
     # We solve the weighted least squares problem
+    # https://en.wikipedia.org/wiki/Weighted_least_squares
     # GᵀS⁻¹G = GᵀS⁻¹b, S can be factored using the Cholesky decomposition of S = RRᵀ
     # Gᵀ(RRᵀ)⁻¹G = Gᵀ(RRᵀ)⁻¹b which reduces to (GᵀR⁻ᵀ)R⁻¹G =(GᵀR⁻ᵀ)R⁻¹b
     # Thus we solve the least squares problem R⁻¹G = R⁻¹b where R is lower triangular matrix
