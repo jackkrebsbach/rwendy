@@ -321,7 +321,7 @@ get_corner_index <- function(y, xx_in = NULL) {
   return(which.min(E))
 }
 
-endpoint_derivative_finite_difference_approx <- function(f, dt, l, mu = 2){
+endpoint_derivative_finite_difference_approx <- function(f, dt, l){
   # Compute endpoints finite difference approximation of l-th derivative
   # with order mu accurate
   # f data: 1D vector 
@@ -356,7 +356,7 @@ endpoint_derivative_finite_difference_approx <- function(f, dt, l, mu = 2){
     return(DT - D0)
 }
 
-compute_endpoint_derivatives <- function(U, dt, mus = c(1,2,1), S = 0){
+compute_endpoint_derivatives <- function(U, dt, mus = c(1,2,1), S = 1){
   D <- ncol(U)
   
   endpoints <- lapply(1:D, function(d) {
@@ -371,11 +371,66 @@ compute_endpoint_derivatives <- function(U, dt, mus = c(1,2,1), S = 0){
       })
     }
   })
-  
+
   return(endpoints)
 }
 
+buildI <- function(freq, S_, dt, T, endpoint_derivatives_d) {
+  I <- complex(length(freq))
 
-compute_r_c_hat <- function(){
+  for(idx in seq_along(freq)) {
+    n <- freq[idx] 
+    In <- endpoint_derivatives_d[1] +
+      sum(
+        sapply(1:S_, function(S) {
+          inner_sum <- sum(
+            sapply(0:(2*S), function(l) {
+              choose(2*S, l) * ( (2 * pi * n * 1i) / T )^(2 * S - l) * endpoint_derivatives_d[l+1]
+            })
+          )
+          bn <- bernoulli_numbers(2*S)
+          last_bn <- bn[2*S + 1, 1] / bn[2*S + 1, 2]
+          bernoulli_term <- last_bn / factorial(2*S) * dt^(2*S)
+          
+          return(inner_sum * bernoulli_term)
+        })
+      )
+    
+    I[idx] <- In
+  }
+  return(I)
+}
+
+fftfreq <- function(n, d = 1.0) {
+  val <- 1.0 / (n * d)
+  if (n %% 2 == 0) {
+    freq <- c(0:(n/2 - 1), -(n/2):-1)
+  } else {
+    freq <- c(0:((n-1)/2), -((n-1)/2):-1)
+  }
+  return(freq * val)
+}
+
+compute_r_c_hat <- function(U, tt, S){
+  D <- ncol(U)
+  mp1 <- nrow(U)
+  dt <- mean(diff(tt))
+  T <- as.numeric(tail(tt, n =1))
+
+  endpoint_derivatives <- compute_endpoint_derivatives(U, dt)
+  M_tilde <- nrow(U) - 1
+  freq <- fftfreq(M_tilde, d = 1/M_tilde) # Fourier frequencies
+
+  Is <- lapply(seq(D), function(d){
+                 return(buildI(freq, S, dt, T, endpoint_derivatives[[d]]))
+  })
   
+  radii <- seq(2, floor(mp1/2))
+  
+  for(radius in radii){
+    r <- radius * dt
+    centers <- seq(radius + 1, mp1 - radius - 1)
+    K <- length(centers) # Number of test functions in sweep 
+  }
+
 }
