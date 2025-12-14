@@ -113,9 +113,9 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
     f_hat_G <- apply(GT_reshaped, 1, fft)
 
     if (is.matrix(f_hat_G)) {
-      f_hat_G_imag <- Im(f_hat_G[IX + 1,])
+      f_hat_G_imag <- Im(f_hat_G[IX,])
     } else {
-      f_hat_G_imag <- Im(f_hat_G[[IX + 1]])
+      f_hat_G_imag <- Im(f_hat_G[[IX]])
     }
 
     errors[i] <- sqrt(sum(f_hat_G_imag^2))
@@ -315,9 +315,43 @@ get_corner_index <- function(y, xx_in = NULL) {
   }
 
   # Don't want to choose the first or last index
-  INF_APPROX <- 1e300
-  E[1] <- INF_APPROX
-  E[N] <- INF_APPROX
+  E[1] <-  1e300
+  E[N] <-  1e300
 
   return(which.min(E))
+}
+
+endpoint_derivative_finite_difference_approx <- function(f, dt, l, mu = 2){
+  # Compute endpoints finite difference approximation of l-th derivative
+  # with order mu accurate
+  # f data: 1D vector 
+  # dt: timestep
+  # l: derivative order, l = 0, 1, ...
+  # mu: order of accuracy mu = 1, 2, 3... 
+
+  if(l == 0){
+    D0 <- f[1]
+    DT <- tail(f, n=1) 
+
+  } else {
+    # Forward difference weights
+    A <- matrix(0, nrow = mu + l, ncol = mu + l)
+    b <- rep(0, mu + l)
+    
+    for(i in seq(mu + l)){
+      for(m in seq(mu + l)){
+        A[i,m] <- (m-1)^(i-1)
+        if(i-1 == l){
+          b[i] = base::factorial(l)
+        }
+      }
+    }
+    
+    fwd_diff_weights <- solve(A,b)
+    bck_diff_weights <-  if(l %% 2 == 0) fwd_diff_weights else -rev(fwd_diff_weights)
+
+    D0 <- as.numeric(fwd_diff_weights %*% f[1:(mu + l)] / dt^l)
+    DT <- as.numeric(bck_diff_weights %*% tail(f, mu + l) / dt^l)
+  }
+    return(DT - D0)
 }
