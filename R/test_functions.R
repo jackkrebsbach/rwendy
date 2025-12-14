@@ -411,6 +411,7 @@ fftfreq <- function(n, d = 1.0) {
   return(freq * val)
 }
 
+# Change point in the integration error as a function of test function suppport
 compute_r_c_hat <- function(U, tt, S){
   D <- ncol(U)
   mp1 <- nrow(U)
@@ -419,7 +420,7 @@ compute_r_c_hat <- function(U, tt, S){
 
   endpoint_derivatives <- compute_endpoint_derivatives(U, dt)
   M_tilde <- nrow(U) - 1
-  freq <- fftfreq(M_tilde, d = 1/M_tilde) # Fourier frequencies
+  freq <- fftfreq(M_tilde, d = 1 / M_tilde) # Fourier frequencies
 
   Is <- lapply(seq(D), function(d){
                  return(buildI(freq, S, dt, T, endpoint_derivatives[[d]]))
@@ -428,9 +429,7 @@ compute_r_c_hat <- function(U, tt, S){
   radii <- seq(2, floor(mp1/2))
   
   for(radius in radii){
-    r <- radius * dt
-    centers <- seq(radius + 1, mp1 - radius - 1)
-    K <- length(centers) # Number of test functions in sweep 
+    V <- build_test_function_matrix(tt, radius, order = 0) 
+    psi  <- apply(GT_reshaped, 1, fft) # 𝚿̂
   }
-
 }
