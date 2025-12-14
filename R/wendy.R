@@ -31,6 +31,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
   default_control <- list(
     diag_reg = 10e-10,
     max_iterates = 200,
+    S = 1,  # Euler-Maclaurin series order
     radius_params = 2^(0:3),
     radius_min_time = 0.1,
     radius_max_time = 5.0,

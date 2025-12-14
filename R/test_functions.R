@@ -355,3 +355,27 @@ endpoint_derivative_finite_difference_approx <- function(f, dt, l, mu = 2){
   }
     return(DT - D0)
 }
+
+compute_endpoint_derivatives <- function(U, dt, mus = c(1,2,1), S = 0){
+  D <- ncol(U)
+  
+  endpoints <- lapply(1:D, function(d) {
+    Ud <- U[,d]
+    
+    if(S == 0){
+      c(endpoint_derivative_finite_difference_approx(Ud, dt, 0, mus[1]),
+        endpoint_derivative_finite_difference_approx(Ud, dt, 1, mus[2]))
+    } else {
+      sapply(0:(2*S), function(l) {
+        endpoint_derivative_finite_difference_approx(Ud, dt, l, mus[l+1])
+      })
+    }
+  })
+  
+  return(endpoints)
+}
+
+
+compute_r_c_hat <- function(){
+  
+}
