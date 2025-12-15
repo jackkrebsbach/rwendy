@@ -1,13 +1,41 @@
-
+# 𝐂^{∞} Bump test function
+# 𝜱(t; r, n) = exp(1 / [(1 - (t/r)²)]₊)
 phi <- function(t, eta = 9) {
   exp(-eta / (1 - t^2))
 }
 
-test_function_derivative <- function(radius, dt, order) {
-  # Chain rule to account for (t/a)^2 we get factors of (1/a), a=dt*radius
+# Piecewise polynomial test function -
+# Advantageous because we have access to analytic form of Fourier coefficients
+# 𝛹(t; r, p) = [(1- (t/r)²)]₊
+psi <- function(t, p = 16){
+  (1-t^2)^p
+}
+
+# Fourier coefficient of 𝛹(t; r, p)  r = dt * radius
+psi_hat <- function(freqs, radius, dt, T, C, p = 16){
+    psih <- numeric(length(freqs))
+
+    n <- floor(length(freqs) /  2)  
+    r <- dt * radius
+
+    n0 <- 2 * C / sqrt(T) * r^(2 * p + 1) * sum(unlist(sapply(seq(0,p),\(j){combn(p, j) * (-1)^j / (2 * j + 1)})))
+    ng1 <- vapply(seq(1,n), \(n){
+            C / sqrt(T) * sqrt(pi) * (r * T /(n * pi))^(p + 1/2) * gamma(p+1) * besselJ(2 * pi * n * r / T, p + 1/2)
+          }, 1)
+    coeffs <- c(n0, ng1)
+    
+   psih[1:(n+1)] <- coeffs
+   psih[(n+1):length(psih)] <- rev(coeffs)
+   
+  return(psih)
+
+}
+
+test_function_derivative <- function(test_function, radius, dt, order) {
+  # Chain rule to account for (t/a)^2 we get factors of (1/a), a=dt*radius where radius is discrete 
   scale_factor <- (radius * dt)^(-order)
   t <- symengine::S("t")
-  phi_sym <- phi(t)
+  phi_sym <- test_function(t)
 
   phi_deriv_sym <- phi_sym
   for (i in seq_len(order)) {
@@ -34,7 +62,7 @@ get_test_function_support_indices <- function(radius, len_tt) {
   return(indices)
 }
 
-build_test_function_matrix <- function(tt, radius, order = 0) {
+build_test_function_matrix <- function(test_function, tt, radius, order = 0) {
   len_tt <- length(tt)
   dt <- mean(diff(tt))
 
@@ -48,14 +76,14 @@ build_test_function_matrix <- function(tt, radius, order = 0) {
 
   # For one radius get the support indices for all phi_k (different centers)
   indices <- get_test_function_support_indices(radius, len_tt)
-
-  # Don't include the endpoints (outside of support)
+  # Don't include the endpoints (outside of support or zero for both types of test functions) 
   lin <- seq(-1, 1, length.out = diameter)
   xx <- lin[2:(diameter-1)]
 
-  ph <- test_function_derivative(radius, dt, order)
+  ph <- test_function_derivative(test_function, radius, dt, order)
+
   f_vals <- ph(xx)
-  norm_factor <- sqrt(sum(phi(xx)^2))
+  norm_factor <- sqrt(sum(test_function(xx)^2))
   v_row <- f_vals / norm_factor
 
   v_row_padded <- c(0, v_row, 0)
@@ -75,7 +103,7 @@ build_full_test_function_matrix <- function(tt, radii, order = 0) {
   test_matrices <- vector("list", length(radii))
 
   for (i in seq_along(radii)) {
-    test_matrices[[i]] <- build_test_function_matrix(tt, radii[i], order)
+    test_matrices[[i]] <- build_test_function_matrix(phi, tt, radii[i], order)
   }
 
   V_full <- do.call(rbind, test_matrices)
@@ -96,7 +124,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 
   for (i in seq_along(radii)) {
     radius <- radii[i]
-    V_r <- build_test_function_matrix(tt, radius)
+    V_r <- build_test_function_matrix(phi, tt, radius)
     K <- nrow(V_r)
 
     G <- array(0, dim = c(K, Mp1, D))
@@ -321,7 +349,7 @@ get_corner_index <- function(y, xx_in = NULL) {
   return(which.min(E))
 }
 
-endpoint_derivative_finite_difference_approx <- function(f, dt, l){
+endpoint_derivative_finite_difference_approx <- function(f, dt, l, mu){
   # Compute endpoints finite difference approximation of l-th derivative
   # with order mu accurate
   # f data: 1D vector 
@@ -420,16 +448,13 @@ compute_r_c_hat <- function(U, tt, S){
 
   endpoint_derivatives <- compute_endpoint_derivatives(U, dt)
   M_tilde <- nrow(U) - 1
-  freq <- fftfreq(M_tilde, d = 1 / M_tilde) # Fourier frequencies
-
-  Is <- lapply(seq(D), function(d){
-                 return(buildI(freq, S, dt, T, endpoint_derivatives[[d]]))
-  })
+  freqs <- fftfreq(M_tilde, d = 1 / M_tilde) # Fourier frequencies
+  Is <- lapply(seq(D), \(d){ buildI(freqs, S, dt, T, endpoint_derivatives[[d]]) })
   
   radii <- seq(2, floor(mp1/2))
   
   for(radius in radii){
-    V <- build_test_function_matrix(tt, radius, order = 0) 
-    psi  <- apply(GT_reshaped, 1, fft) # 𝚿̂
+    V <- build_test_function_matrix(phi,tt, radius, order = 0) 
+    psi  <- apply(V, 1, fft) # 𝚿̂
   }
 }
