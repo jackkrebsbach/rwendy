@@ -1,48 +1,46 @@
 # 𝐂^{∞} Bump test function
-# 𝜱(t; r, n) = exp(1 / [(1 - (t/r)²)]₊)
-phi <- function(t, eta = 9) {
-  exp(-eta / (1 - t^2))
+# 𝜱(t; r, n) = exp(η/ [(1 - (t/r)²)]₊)
+phi <- function(t, r, eta = 9) {
+  exp(-eta / (1 - (t / r)^2))
 }
 
 # Piecewise polynomial test function -
 # Advantageous because we have access to analytic form of Fourier coefficients
-# 𝛹(t; r, p) = [(1- (t/r)²)]₊
-psi <- function(t, p = 16){
-  (1-t^2)^p
-}
+# 𝛹(t; r, p) = [(1- (t/r)²)]ᵖ₊
+psi <- function(t, r, p = 16){
+  (1 - ( t / r)^2)^p
+} 
 
 # Fourier coefficient of 𝛹(t; r, p)  r = dt * radius
 psi_hat <- function(freqs, radius, dt, T, C, p = 16){
-    psih <- numeric(length(freqs))
+   psih <- complex(length(freqs))
 
-    n <- floor(length(freqs) /  2)  
-    r <- dt * radius
+   n_max <- floor(length(freqs) /  2)  
+   r <- dt * radius
 
-    n0 <- 2 * C / sqrt(T) * r^(2 * p + 1) * sum(unlist(sapply(seq(0,p),\(j){combn(p, j) * (-1)^j / (2 * j + 1)})))
-    ng1 <- vapply(seq(1,n), \(n){
-            C / sqrt(T) * sqrt(pi) * (r * T /(n * pi))^(p + 1/2) * gamma(p+1) * besselJ(2 * pi * n * r / T, p + 1/2)
-          }, 1)
-    coeffs <- c(n0, ng1)
+   n0 <- 2 * r^(2 * p + 1) * sum(sapply(0:p,\(j){choose(p, j) * (-1)^j / (2 * j + 1)}))
+   ng1 <- sapply(1:n_max, \(n){
+             sqrt(pi) * (r * T /(n * pi))^(p + 1/2) * gamma(p+1) * besselJ(2 * pi * n * r / T, p + 1/2)
+          })
+   coeffs <- (C / sqrt(T)) *  c(n0, ng1)
     
-   psih[1:(n+1)] <- coeffs
-   psih[(n+1):length(psih)] <- rev(coeffs)
+   psih[1:(n_max + 1)] <- coeffs
+   psih[(n_max + 2):length(psih)] <- rev(coeffs[-1]) 
    
-  return(psih)
-
+   return(psih)
 }
 
 test_function_derivative <- function(test_function, radius, dt, order) {
-  # Chain rule to account for (t/a)^2 we get factors of (1/a), a=dt*radius where radius is discrete 
-  scale_factor <- (radius * dt)^(-order)
   t <- symengine::S("t")
-  phi_sym <- test_function(t)
+  r <- radius * dt
+  phi_sym <- test_function(t, r)
 
   phi_deriv_sym <- phi_sym
   for (i in seq_len(order)) {
     phi_deriv_sym <- symengine::D(phi_deriv_sym, "t")
   }
 
-  symengine::lambdify(scale_factor * phi_deriv_sym, t)
+  symengine::lambdify(phi_deriv_sym, t)
 }
 
 get_test_function_support_indices <- function(radius, len_tt) {
@@ -76,14 +74,13 @@ build_test_function_matrix <- function(test_function, tt, radius, order = 0) {
 
   # For one radius get the support indices for all phi_k (different centers)
   indices <- get_test_function_support_indices(radius, len_tt)
-  # Don't include the endpoints (outside of support or zero for both types of test functions) 
-  lin <- seq(-1, 1, length.out = diameter)
+  r <- dt * radius
+  lin <- seq(-r, r, length.out = diameter)
+  # Don't include the endpoints (outside of support for 𝚽 or zero for 𝚿) 
   xx <- lin[2:(diameter-1)]
-
   ph <- test_function_derivative(test_function, radius, dt, order)
-
   f_vals <- ph(xx)
-  norm_factor <- sqrt(sum(test_function(xx)^2))
+  norm_factor <- sqrt(sum(test_function(xx, r)^2))
   v_row <- f_vals / norm_factor
 
   v_row_padded <- c(0, v_row, 0)
@@ -99,11 +96,11 @@ build_test_function_matrix <- function(test_function, tt, radius, order = 0) {
   return(V)
 }
 
-build_full_test_function_matrix <- function(tt, radii, order = 0) {
+build_full_test_function_matrix <- function(test_function, tt, radii, order = 0) {
   test_matrices <- vector("list", length(radii))
 
   for (i in seq_along(radii)) {
-    test_matrices[[i]] <- build_test_function_matrix(phi, tt, radii[i], order)
+    test_matrices[[i]] <- build_test_function_matrix(test_function, tt, radii[i], order)
   }
 
   V_full <- do.call(rbind, test_matrices)
@@ -155,7 +152,21 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   return(list(index = ix, errors = errors, radii = radii))
 }
 
-build_full_test_function_matrices <- function(U, tt, test_function_params, compute_svd = TRUE) {
+build_full_test_function_matrices_ssl <- function(U, tt, test_function_params) {
+
+  dt <- mean(diff(tt))
+  mp1 <- nrow(U)
+  
+  radius_c <- compute_r_c_hat(U, tt, test_function_params$S, test_function_params$p)
+
+  V <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 0)
+  Vp <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 1)
+  
+  return(list(V = V, V_prime = Vp, min_radius = radius_c))
+
+}
+
+build_full_test_function_matrices_msg <- function(U, tt, test_function_params, compute_svd = TRUE) {
   #cat("<< Building test matrices >>\n")
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
@@ -211,8 +222,8 @@ build_full_test_function_matrices <- function(U, tt, test_function_params, compu
 
   #cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
 
-  V_ <- build_full_test_function_matrix(tt, radii_filtered, order = 0)
-  V_prime_ <- build_full_test_function_matrix(tt, radii_filtered, order = 1)
+  V_ <- build_full_test_function_matrix(phi, tt, radii_filtered, order = 0)
+  V_prime_ <- build_full_test_function_matrix(phi, tt, radii_filtered, order = 1)
 
   if (!compute_svd) {
     return(list(
@@ -366,11 +377,11 @@ endpoint_derivative_finite_difference_approx <- function(f, dt, l, mu){
     A <- matrix(0, nrow = mu + l, ncol = mu + l)
     b <- rep(0, mu + l)
     
-    for(i in seq(mu + l)){
-      for(m in seq(mu + l)){
-        A[i,m] <- (m-1)^(i-1)
-        if(i-1 == l){
-          b[i] = base::factorial(l)
+    for(i in seq(0, mu + l - 1)){
+      for(m in seq(0, mu + l - 1)){
+        A[(i+1),(m+1)] <- m^i
+        if(i == l){
+          b[i+1] = base::factorial(l)
         }
       }
     }
@@ -403,22 +414,22 @@ compute_endpoint_derivatives <- function(U, dt, mus = c(1,2,1), S = 1){
   return(endpoints)
 }
 
-buildI <- function(freq, S_, dt, T, endpoint_derivatives_d) {
-  I <- complex(length(freq))
+buildI <- function(freqs, S, dt, T, endpoint_derivatives_d) {
+  I <- complex(length(freqs))
 
-  for(idx in seq_along(freq)) {
-    n <- freq[idx] 
+  for(idx in seq_along(freqs)) {
+    n <- freqs[idx] 
     In <- endpoint_derivatives_d[1] +
       sum(
-        sapply(1:S_, function(S) {
+        sapply(1:S, function(s) {
           inner_sum <- sum(
-            sapply(0:(2*S), function(l) {
-              choose(2*S, l) * ( (2 * pi * n * 1i) / T )^(2 * S - l) * endpoint_derivatives_d[l+1]
+            sapply(0:(2*s), function(l) {
+              choose(2*s, l) * ( (2 * pi * n * 1i) / T )^(2 * s - l) * endpoint_derivatives_d[l+1]
             })
           )
-          bn <- bernoulli_numbers(2*S)
-          last_bn <- bn[2*S + 1, 1] / bn[2*S + 1, 2]
-          bernoulli_term <- last_bn / factorial(2*S) * dt^(2*S)
+          bn <- bernoulli_numbers(2*s)
+          last_bn <- bn[2 * s + 1, 1] / bn[2 * S + 1, 2]
+          bernoulli_term <- last_bn / factorial(2*s) * dt^(2*s)
           
           return(inner_sum * bernoulli_term)
         })
@@ -440,21 +451,45 @@ fftfreq <- function(n, d = 1.0) {
 }
 
 # Change point in the integration error as a function of test function suppport
-compute_r_c_hat <- function(U, tt, S){
+compute_r_c_hat <- function(U, tt, S, p){
   D <- ncol(U)
   mp1 <- nrow(U)
   dt <- mean(diff(tt))
   T <- as.numeric(tail(tt, n =1))
 
   endpoint_derivatives <- compute_endpoint_derivatives(U, dt)
+
   M_tilde <- nrow(U) - 1
   freqs <- fftfreq(M_tilde, d = 1 / M_tilde) # Fourier frequencies
   Is <- lapply(seq(D), \(d){ buildI(freqs, S, dt, T, endpoint_derivatives[[d]]) })
   
-  radii <- seq(2, floor(mp1/2))
+  radii <- seq(2, floor(mp1 / 2))
   
-  for(radius in radii){
-    V <- build_test_function_matrix(phi,tt, radius, order = 0) 
-    psi  <- apply(V, 1, fft) # 𝚿̂
+  ehat <- numeric(length(radii))
+
+  for(r_ix in seq(length(radii))){ 
+    radius <- radii[r_ix]
+    centers <- seq(radius, mp1 - radius)
+    K <- length(centers)
+
+    C  <- 1 / (sqrt(sum(sapply(0:(2*p), \(k){
+          choose(2*p, k) * (-1)^(k) / (2*k +1)
+    }))) * (dt * radius)^(2 * p) * sqrt(2 * dt * radius))
+
+    psi_hat_eval <- psi_hat(freqs, radius, dt, T, C, p = 16) # 𝚿̂̂
+    
+    e_int_hat <- t(sapply(seq(D), \(d){
+       fft(psi_hat_eval * Is[[d]])[centers] / sqrt(T)
+    }))
+    
+    e_int_hat_norm <- norm(e_int_hat, "2")/ sqrt(K)
+    ehat[r_ix] <- e_int_hat_norm
   }
+
+  ix <- get_corner_index(log(ehat))
+  
+  r_c <- radii[ix]
+  
+
+  return(radii[ix])
 }
