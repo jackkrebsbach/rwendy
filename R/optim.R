@@ -54,3 +54,13 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
     final_sw_pvalue = SW
   ))
 }
+
+ols <- function(G, b, L, reg = 10e-10){
+  dm <- nrow(G)
+  alphaIdm <- reg * diag(rep(1, dm))
+  p <- lm.fit(G, b)$coefficients
+  residuals <- b - G %*% p
+  sw_test <- shapiro.test(residuals)
+  sw_p_value <- sw_test$p.value
+  return(list(p = p, sw_p_value = sw_p_value))
+}

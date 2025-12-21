@@ -172,8 +172,9 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
   if(!optimize) return(res)
 
   data <- switch(method,
+                     OLS = ols(as.array(G$contiguous()), as.array(b$contiguous()), L),
                      IRLS = irls(as.array(G$contiguous()), as.array(b$contiguous()), L, max_its = control$max_iterates), # IRLS WENDy
-                     trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
+                     MLE = trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
                      # trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
                      # optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
                      )

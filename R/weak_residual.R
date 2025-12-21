@@ -45,7 +45,7 @@ build_g_linear <- function(G) {
   }
 }
 
-# ∇ₚr(p) ∈ ℝ^(K*D x J) Jacobian of the weak residual
+# ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual
 build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
