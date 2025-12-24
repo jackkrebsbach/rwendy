@@ -44,9 +44,17 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
   }
 
   sw_pvalues <- sw_pvalues[1:n]
+  
+  # The parameter covariance is estimated from the approxiamte distribution
+  # b ~ N(Gŵ,σ̂^2 Ŝ) and ŵ = (GᵀG)^-1 Gᵀb 
+  # so cov(ŵ) = σ̂^2 (GᵀG)^-1 GᵀŜG(GᵀG)^-1 
+  GTG <- t(G) %*% G
+  quad <- t(G) %*% Sn %*% G 
+  param_covariance <- solve(GTG, t(solve(GTG, t(quad))))
 
   return(list(
     p = p,
+    covp = param_covariance,
     iterations = n,
     converged = (relative_change <= tau_FP || SW <= tau_SW),
     relative_change_n = relative_change,
