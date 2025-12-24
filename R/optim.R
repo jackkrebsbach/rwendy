@@ -45,7 +45,7 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
 
   sw_pvalues <- sw_pvalues[1:n]
   
-  # The parameter covariance is estimated from the approxiamte distribution
+  # The parameter covariance is estimated from the approximate distribution
   # b ~ N(Gŵ,σ̂^2 Ŝ) and ŵ = (GᵀG)^-1 Gᵀb 
   # so cov(ŵ) = σ̂^2 (GᵀG)^-1 GᵀŜG(GᵀG)^-1 
   GTG <- t(G) %*% G
@@ -72,3 +72,33 @@ ols <- function(G, b, L, reg = 10e-10){
   sw_p_value <- sw_test$p.value
   return(list(p = p, sw_p_value = sw_p_value))
 }
+
+# Maximum likelihood estimation for r(p) ~ N(0, S(p))
+mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
+
+  objfun <- function(p) {
+      f <- wnll(p)
+      g <- J_wnll(p)
+      h <- H_wnll(p)
+    list(value = f, gradient = g, hessian = h)
+  }
+
+  data <-  trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) 
+  phat <- as.vector(data$argument)
+
+  G <- as.array(Jp_r(phat)$contiguous()) # ∇ₚr(p) Jacobian of the residual r(p) = g(p) - b
+  Sp <- as.array(S(phat)$contiguous())
+
+  GTG <- t(G) %*% G
+  quad <- t(G) %*% Sp %*% G 
+
+  param_covariance <- solve(GTG, t(solve(GTG, t(quad))))
+  data$covp <- param_covariance
+  data$p <- phat
+  
+  return(data)
+
+}
+# trust.optim -> data$solution = phat
+# trust::trust -> data$argument = phat
+# trust.optim(p0, wnll, J_wnll, method = "BFGS") 

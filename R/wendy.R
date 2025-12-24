@@ -139,12 +139,6 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
                          build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J)
                         )
 
-  objfun <- function(p) {
-      f <- wnll(p)
-      g <- J_wnll(p)
-      h <- H_wnll(p)
-    list(value = f, gradient = g, hessian = h)
-  }
 
   res <- list()
 
@@ -174,15 +168,10 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
   data <- switch(method,
                      OLS = ols(as.array(G$contiguous()), as.array(b$contiguous()), L),
                      IRLS = irls(as.array(G$contiguous()), as.array(b$contiguous()), L, max_its = control$max_iterates), # IRLS WENDy
-                     MLE = trust::trust(objfun, p0, rinit = 25, rmax = 200, blather = FALSE) # Maximum likelihood estimation
-                     # trust.optim(p0, wnll, J_wnll, method = "BFGS") # Maximum likelihood estimation
-                     # optim(par = p0, fn = wnll, gr = J_wnll, method = "L-BFGS-B") # Maximum likelihood estimation
-                     )
+                     MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
+                  )
   res$data <- data
-  res$phat <- switch(method, IRLS = data$p, data$argument)
-  # trust.optim -> data$solution = phat
-  # optim -> data$par = phat
-  # trust::trust -> data$argument = phat
+  res$phat <- data$p 
 
   return(res)
 }
