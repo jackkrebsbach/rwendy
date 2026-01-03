@@ -11,12 +11,12 @@ library(numbers)
 #'
 #' @param f A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 #'   where \code{u} is the state vector, \code{p} is the parameter vector,
-#'   and \code{t} is the time variable. Must return symbolic expressions.
+#'   and \code{t} is the time variable. 
 #' @param p0 Numeric vector. Initial guess for the parameters. Used in MLE or nonlinear least squares solvers.
 #' @param U Numeric matrix. Rows represent observed states at time points in \code{tt}.
 #'   Columns correspond to state variables.
 #' @param tt Numeric vector. Time points corresponding to the rows of \code{U}.
-#' @param method String "MLE" | "IRLS" \code{U}.
+#' @param method String "MLE" | "IRLS" | "OLS" \code{U}.
 #'
 #' @details
 #' The procedure:
@@ -27,14 +27,20 @@ library(numbers)
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, method = "MLE", control = NULL, optimize = T, compute_svd = T){
+solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), 
+            method = c("MLE", "IRLS", "OLS"), control = NULL){
+  
+  noise_dist <- match.arg(noise_dist)
+  method <- match.arg(method)
 
   default_control <- list(
+    optimize = TRUE,
+    compute_svd = TRUE,
     diag_reg = 10e-10,
     max_iterates = 200,
     S = 1,  # Euler-Maclaurin series order
     p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
-    test_fun_type = "SSL",  # Single-scale Local (SSL) or Multi-scale Global (MSG)
+    test_fun_type = "MSG",  # Single-scale Local (SSL) or Multi-scale Global (MSG)
     radius_params = 2^(0:3),
     radius_min_time = 0.1,
     radius_max_time = 5.0,
@@ -62,7 +68,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
   test_fun_matrices <- if(control$test_fun_type == "SSL"){ 
     build_full_test_function_matrices_ssl(U, tt, control) # Single Scale Local
   } else {
-    build_full_test_function_matrices_msg(U, tt, control, compute_svd) # Multi Scale Global
+    build_full_test_function_matrices_msg(U, tt, control, control$compute_svd) # Multi Scale Global
   }
 
   V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64()) # 𝚽 or 𝚿
@@ -163,7 +169,7 @@ solveWendy <- function(f, p0, U, tt, noise_dist = "addgaussian", lip = FALSE, me
   res$V_prime <- Vp
   res$min_radius <- min_radius
 
-  if(!optimize) return(res)
+  if(!control$optimize) return(res)
 
   data <- switch(method,
                      OLS = ols(as.array(G$contiguous()), as.array(b$contiguous()), L),
