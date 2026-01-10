@@ -3,7 +3,7 @@
 WENDy depends on other packages. To install them run 
 
 ```r
-install.packages(c("symengine", "trust", "stats"))
+install.packages(c("symengine", "trust", "stats", "numbers", "torch"))
 ```
 Symengine needs system level dependencies. From the command line run one of the following:
 
@@ -20,8 +20,9 @@ To simulate data using the examples install **deSolve**
 install.packages("deSolve")
 ```
 
-To install WENDy run
+To install WENDy run. Note that if the github repository is private you will have to set your github credentials.
 
 ```r
+library(devtools)
 devtools::install_github("jackkrebsbach/rwendy")
 ```

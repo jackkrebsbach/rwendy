@@ -25,7 +25,7 @@ noise_sd <- nr * sqrt(mean(U_vec^2))
 U <- matrix(c(sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE")
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", dist = "lognorml")
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
