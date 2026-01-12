@@ -18,8 +18,8 @@ psi_hat <- function(freqs, radius, dt, T, C, p = 16){
    n_max <- floor(length(freqs) /  2)  
    r <- dt * radius
 
-   n0 <- 2 * r^(2 * p + 1) * sum(sapply(0:p,\(j){choose(p, j) * (-1)^j / (2 * j + 1)}))
-   ng1 <- sapply(1:n_max, \(n){
+   n0 <- 2 * r^(2 * p + 1) * sum(sapply(0:p, function(j){choose(p, j) * (-1)^j / (2 * j + 1)}))
+   ng1 <- sapply(1:n_max, function(n){
              sqrt(pi) * (r * T /(n * pi))^(p + 1/2) * gamma(p+1) * besselJ(2 * pi * n * r / T, p + 1/2)
           })
    coeffs <- (C / sqrt(T)) *  c(n0, ng1)
@@ -461,7 +461,7 @@ compute_r_c_hat <- function(U, tt, S, p){
 
   M_tilde <- nrow(U) - 1
   freqs <- fftfreq(M_tilde, d = 1 / M_tilde) # Fourier frequencies
-  Is <- lapply(seq(D), \(d){ buildI(freqs, S, dt, T, endpoint_derivatives[[d]]) })
+  Is <- lapply(seq(D), function(d){ buildI(freqs, S, dt, T, endpoint_derivatives[[d]]) })
   
   radii <- seq(2, floor(mp1 / 2))
   
@@ -472,13 +472,13 @@ compute_r_c_hat <- function(U, tt, S, p){
     centers <- seq(radius, mp1 - radius)
     K <- length(centers)
 
-    C  <- 1 / (sqrt(sum(sapply(0:(2*p), \(k){
+    C  <- 1 / (sqrt(sum(sapply(0:(2*p), function(k){
           choose(2*p, k) * (-1)^(k) / (2*k +1)
     }))) * (dt * radius)^(2 * p) * sqrt(2 * dt * radius))
 
     psi_hat_eval <- psi_hat(freqs, radius, dt, T, C, p = 16) # 𝚿̂̂
     
-    e_int_hat <- t(sapply(seq(D), \(d){
+    e_int_hat <- t(sapply(seq(D), function(d){
        fft(psi_hat_eval * Is[[d]])[centers] / sqrt(T)
     }))
     

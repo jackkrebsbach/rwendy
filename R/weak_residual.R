@@ -59,7 +59,7 @@ build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt){
 
 # ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual: r(p) = Gp + go - b → ∇ₚr(p) = G 
 build_Jp_r_linear <- function(G){
-  \(p){G}
+  function(p){G}
 }
 
 # ∇ₚ∇ₚr(p) ∈ ℝ^(K*D × J × J) Hessian of the weak residual
@@ -170,7 +170,7 @@ build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
     Jj_F <- torch::torch_reshape(Jj_F, c(K * D, mp1 * D))
     L1_[,,j] <- Jj_F  - L1_affine
   }
-  return(\(p){L1_})
+  return(function(p){L1_})
 }
 
 # ∇ₚ∇ₚL(p) Hessian of the covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ

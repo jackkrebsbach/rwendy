@@ -38,10 +38,10 @@ build_fn <- function(expr_array, vars) {
 
 lognormal_transform <- function(f_sym){
   D <- length(f_sym)
-  u <- do.call(c, lapply(1:D, \(i) symengine::S(paste0("u", i))))
+  u <- do.call(c, lapply(1:D, function(i) symengine::S(paste0("u", i))))
   sub_args <- unlist(Map(list, u, lapply(u, exp)))
 
-  logu <- do.call(c, lapply(1:D, \(i) {
+  logu <- do.call(c, lapply(1:D, function(i) {
     fud <- f_sym[i] / u[i]
     do.call(symengine::subs, c(list(fud), sub_args))
   }))
