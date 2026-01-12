@@ -157,6 +157,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$b <- b
   res$f <- f_
   res$J_p <- J_p
+  res$J_u <- J_u
   res$J_upp <- J_upp
   res$S <- S
   res$Jp_S <- Jp_S
