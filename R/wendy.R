@@ -1,5 +1,6 @@
 library(symengine)
 library(trust)
+library(minpack.lm)
 library(stats)
 library(numbers)
 
@@ -28,7 +29,7 @@ library(numbers)
 #'
 #' @export
 solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), 
-            method = c("MLE", "IRLS", "OLS"), control = NULL){
+            method = c("IRLS", "MLE", "OLS"), control = NULL){
   
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
@@ -173,8 +174,16 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   if(!control$optimize) return(res)
 
   data <- switch(method,
-                     OLS = ols(as.array(G$contiguous()), as.array(b$contiguous()), L),
-                     IRLS = irls(as.array(G$contiguous()), as.array(b$contiguous()), L, max_its = control$max_iterates), # IRLS WENDy
+                     OLS = if(!lip){ 
+                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
+                      } else {
+                        ols(as.array(G$contiguous()), as.array(b$contiguous()), L) 
+                     },
+                     IRLS = if(!lip){
+                          nirls(g, as.array(b$contiguous()), L, Jp_r, p0, max_its = control$max_iterates)
+                        } else{
+                          irls(as.array(G$contiguous()), as.array(b$contiguous()), L, max_its = control$max_iterates)
+                      }, # IRLS WENDy / NIRLS WENDy
                      MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
                   )
   res$data <- data
@@ -182,5 +191,3 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   return(res)
 }
-
-

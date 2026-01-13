@@ -3,7 +3,7 @@
 WENDy depends on other packages. To install them run 
 
 ```r
-install.packages(c("symengine", "trust", "stats", "numbers", "torch"))
+install.packages(c("symengine", "trust", "stats", "numbers", "torch", "minpack.lm"))
 ```
 Symengine needs system level dependencies. From the command line run one of the following:
 
