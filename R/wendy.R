@@ -23,7 +23,7 @@ library(numbers)
 #' The procedure:
 #' \itemize{
 #'   \item Builds symbolic expressions and derivatives of the ODE system (\eqn{f}, Jacobians, Hessians).
-#'   \item Constructs weak negative log-likelihood and functionals based on observed data.
+#'   \item Constructs weak negative log-likelihood and functionals based on observed (noisy) data.
 #' }
 #'
 #'
@@ -39,9 +39,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     compute_svd = TRUE,
     diag_reg = 10e-10,
     max_iterates = 200,
-    S = 1,  # Euler-Maclaurin series order
+    S = 1,  # Euler-Maclaurin series order expansion
     p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
-    test_fun_type = "MSG",  # Single-scale Local (SSL) or Multi-scale Global (MSG)
+    test_fun_type = "MSG",  # Multi-scale Global (MSG) or Single-scale Local (SSL)
     radius_params = 2^(0:3),
     radius_min_time = 0.1,
     radius_max_time = 5.0,
@@ -54,6 +54,17 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     control <- modifyList(default_control, control)
   } else {
     control <- default_control
+  }
+  
+  # Time spacing must be uniform for WENDy to work 
+  diff_dt <- diff(as.vector(tt))
+  dt <- mean(diff_dt)
+
+  if (max(abs(diff(tt) - dt)) > sqrt(.Machine$double.eps)){
+    warning("Non uniform spacing detected, results go as far as the go, interpolating data...")
+    fits <-  apply(U, 2, function(col){smooth.spline(tt, col)})  
+    tt <- matrix(seq(min(tt), max(tt), length.out = floor((max(tt) - min(tt)) / dt )), ncol = 1)
+    U <- sapply(fits, function(fit){predict(fit, tt)$y})
   }
 
   if(noise_dist == "lognormal"){
