@@ -167,7 +167,7 @@ build_full_test_function_matrices_ssl <- function(U, tt, test_function_params) {
 }
 
 build_full_test_function_matrices_msg <- function(U, tt, test_function_params, compute_svd = TRUE) {
-  #cat("<< Building test matrices >>\n")
+  logger::log_debug("Building MSG test matrices", namespace = "wendy")
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
@@ -193,9 +193,7 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
     radius_min_max <- min_radius * 10
   }
 
-  # cat(sprintf("  Min radius: %d\n", min_radius))
-  # cat(sprintf("  Max radius: %d\n", max_radius))
-  # cat(sprintf("  Minmax radius: %d\n", radius_min_max))
+  logger::log_trace("Radius bounds: min={min_radius}, max={max_radius}, minmax={radius_min_max}", namespace = "wendy")
 
   result <- find_min_radius_int_error(U, tt, min_radius, radius_min_max,
                                       num_radii = 100, sub_sample_rate = 1)
@@ -210,7 +208,7 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   min_radius_ix <- ix
   min_radius <- min_radius_int_error
 
-  #cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
+  logger::log_debug("Integral error min radius: {min_radius_int_error}", namespace = "wendy")
 
   radii <- test_function_params$radius_params * min_radius_int_error
 
@@ -220,7 +218,8 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
     radii_filtered <- max_radius
   }
 
-  #cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
+  radii_str <- paste(radii_filtered, collapse = ", ")
+  logger::log_trace("Radii: [{radii_str}]", namespace = "wendy")
 
   V_ <- build_full_test_function_matrix(phi, tt, radii_filtered, order = 0)
   V_prime_ <- build_full_test_function_matrix(phi, tt, radii_filtered, order = 1)
@@ -238,7 +237,7 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   }
 
   k_full <- nrow(V_)
-  #cat(sprintf("  K Full: %d\n", k_full))
+  logger::log_trace("K full (before SVD reduction): {k_full}", namespace = "wendy")
 
   SVD <- svd(V_)
   U_svd <- SVD$u
@@ -266,13 +265,13 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
 
   K <- min(k1, k2, k_max)
 
-  # cat(sprintf("  Condition Number is now: %.4f\n", condition_numbers[K]))
-  # cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
-  # cat(sprintf("  K is: %d\n", K))
+  cond_num <- condition_numbers[K]
+  info_num <- info_numbers[K]
+  logger::log_trace("Condition number: {round(cond_num, 4)}, Info number: {round(info_num, 4)}, K: {K}", namespace = "wendy")
 
   V_final <- Vt[1:K, , drop = FALSE]
 
-  # cat("  Calculating Vprime\n")
+  logger::log_trace("Calculating V_prime", namespace = "wendy")
 
   U_T <- t(U_svd)[1:K, , drop = FALSE]
   UV <- U_T %*% V_prime_

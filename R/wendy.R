@@ -1,9 +1,3 @@
-library(symengine)
-library(trust)
-library(minpack.lm)
-library(stats)
-library(numbers)
-
 #' Parameter Estimation for ODE Systems
   #'
 #' This function estimates parameters of a system of ordinary differential equations (ODEs)
@@ -28,11 +22,14 @@ library(numbers)
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), 
+solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"),
             method = c("IRLS", "MLE", "OLS"), control = NULL){
-  
+
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
+
+  logger::log_info("Starting WENDy solver", namespace = "wendy")
+  logger::log_debug("Method: {method}, Noise distribution: {noise_dist}", namespace = "wendy")
 
   default_control <- list(
     optimize = TRUE,
@@ -61,8 +58,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   dt <- mean(diff_dt)
 
   if (max(abs(diff(tt) - dt)) > sqrt(.Machine$double.eps)){
-    warning("Non uniform spacing detected, results go as far as the go, interpolating data...")
-    fits <-  apply(U, 2, function(col){smooth.spline(tt, col)})  
+    logger::log_warn("Non-uniform spacing detected, interpolating data", namespace = "wendy")
+    fits <-  apply(U, 2, function(col){smooth.spline(tt, col)})
     tt <- matrix(seq(min(tt), max(tt), length.out = floor((max(tt) - min(tt)) / dt )), ncol = 1)
     U <- sapply(fits, function(fit){predict(fit, tt)$y})
   }
@@ -73,11 +70,14 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     tt <- data$tt
   }
 
+
+  logger::log_debug("Building test function matrices (type: {control$test_fun_type})", namespace = "wendy")
+
   torch::torch_set_default_dtype(torch::torch_float64())
 
   sig <- torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64())
 
-  test_fun_matrices <- if(control$test_fun_type == "SSL"){ 
+  test_fun_matrices <- if(control$test_fun_type == "SSL"){
     build_full_test_function_matrices_ssl(U, tt, control) # Single Scale Local
   } else {
     build_full_test_function_matrices_msg(U, tt, control, control$compute_svd) # Multi Scale Global
@@ -92,6 +92,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   D <- ncol(U)    # Dimension of system
   mp1 <- nrow(U)  # Number of time points
   K <- nrow(V)    # Number of test functions
+
+  logger::log_info("K={K} test functions, D={D} dimensions, J={J} parameters", namespace = "wendy")
+  logger::log_debug("Min radius: {min_radius}, Time points: {mp1}", namespace = "wendy")
 
   u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
@@ -184,6 +187,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   if(!control$optimize) return(res)
 
+  logger::log_info("Running {method} optimization", namespace = "wendy")
+
   data <- switch(method,
                      OLS = if(!lip){ 
                         nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
@@ -198,7 +203,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                      MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
                   )
   res$data <- data
-  res$phat <- data$p 
+  res$phat <- data$p
+
+  logger::log_info("WENDy completed", namespace = "wendy")
 
   return(res)
 }
