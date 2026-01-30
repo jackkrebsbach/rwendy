@@ -193,8 +193,9 @@ build_S <- function(L, diag_reg = 1e-9) {
     Lp <- L(p)
     Lpt <- torch::torch_transpose(Lp, 1, 2)
     S_ <- torch::torch_matmul(Lp, Lpt)
-    WEIGHT <- 1.0 - diag_reg 
-    eye <- diag_reg * diag(nrow(S_))
+    WEIGHT <- 1.0 - diag_reg
+    n <- S_$size(1)
+    eye <- diag_reg * torch::torch_eye(n, dtype = S_$dtype, device = S_$device)
     S <- WEIGHT * S_ + eye
     return(S)
   }
