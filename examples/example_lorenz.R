@@ -9,7 +9,8 @@ f <- function(u, p, t) {
   du1 <- p[1] * (u[2] - u[1])
   du2 <- u[1] * (p[2] - u[3]) - u[2]
   du3 <- u[1] * u[2] - p[3] * u[3]
-  c(du1, du2, du3)
+
+   c(du1, du2, du3)
 }
 
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
@@ -34,7 +35,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "IRLS", control = list(test_fun_type = "SSL"))
+res <- solveWendy(f, p0, U, tt, method = "MLE", control = list(test_fun_type = "SSL"))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 

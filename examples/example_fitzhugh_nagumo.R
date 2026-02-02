@@ -31,7 +31,7 @@ U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 control <- list(radius_max_time = 10)
-res <- solveWendy(f, p0, U, tt, control = control, method = "MLE")
+res <- solveWendy(f, p0, U, tt, control = control, lip= TRUE, method = "IRLS")
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(U[,1],U[,2], cex = 0.5)
