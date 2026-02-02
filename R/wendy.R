@@ -49,7 +49,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     k_max = 200,
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
-    min_number_points = 100,
+    min_number_points = 25,
     interpolation_method = "linear",  # "spline" or "linear"
     device = torch::torch_device("cpu") # If GPUs are available
   )
@@ -75,6 +75,25 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
         sapply(fits, function(fit) predict(fit, tt_new)$y)
       },
       linear = apply(U, 2, function(col) approx(tt, col, xout = tt_new)$y),
+      stop("Unknown interpolation_method: ", control$interpolation_method)
+    )
+
+    tt <- matrix(tt_new, ncol = 1)
+  }
+
+  if (nrow(U) < control$min_number_points) {
+    cat("Warning: Number of time points (", nrow(U), ") is less than min_number_points (",
+        control$min_number_points, "). Interpolating to meet minimum requirement...\n", sep = "")
+
+    tt_vec <- as.vector(tt)
+    tt_new <- seq(min(tt_vec), max(tt_vec), length.out = control$min_number_points)
+
+    U <- switch(control$interpolation_method,
+      spline = {
+        fits <- apply(U, 2, function(col) smooth.spline(tt_vec, col))
+        sapply(fits, function(fit) predict(fit, tt_new)$y)
+      },
+      linear = apply(U, 2, function(col) approx(tt_vec, col, xout = tt_new)$y),
       stop("Unknown interpolation_method: ", control$interpolation_method)
     )
 
