@@ -31,6 +31,7 @@ library(numbers)
 solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), 
             method = c("IRLS", "MLE", "OLS"), control = NULL){
   
+  cat("Solving WENDy Problem... \n\n")
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
@@ -47,7 +48,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     radius_max_time = 5.0,
     k_max = 200,
     max_test_fun_condition_number = 1e4,
-    min_test_fun_info_number = 0.95
+    min_test_fun_info_number = 0.95,
+    min_number_points = 100,
+    device = torch::torch_device("cpu")
   )
   
   if(!is.null(control)) {
@@ -61,9 +64,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   dt <- mean(diff_dt)
 
   if (max(abs(diff(tt) - dt)) > sqrt(.Machine$double.eps)){
-    warning("Non uniform spacing detected, results go as far as the go, interpolating data...")
+    cat("Non uniform spacing detected, interpolating data...")
     fits <-  apply(U, 2, function(col){smooth.spline(tt, col)})  
-    tt <- matrix(seq(min(tt), max(tt), length.out = floor((max(tt) - min(tt)) / dt )), ncol = 1)
+    n <-  max(floor((max(tt) - min(tt)) / dt ), control$min_number_points)
+    tt <- matrix(seq(min(tt), max(tt), length.out = n), ncol = 1)
     U <- sapply(fits, function(fit){predict(fit, tt)$y})
   }
 
@@ -75,7 +79,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   torch::torch_set_default_dtype(torch::torch_float64())
 
-  sig <- torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64())
+  device <- control$device
+  sig <- torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64(), device = device)
 
   test_fun_matrices <- if(control$test_fun_type == "SSL"){ 
     build_full_test_function_matrices_ssl(U, tt, control) # Single Scale Local
@@ -83,8 +88,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     build_full_test_function_matrices_msg(U, tt, control, control$compute_svd) # Multi Scale Global
   }
 
-  V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64()) # 𝚽 or 𝚿
-  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64()) # 𝚽̇' or 𝚿'
+  V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64(), device = device) # 𝚽 or 𝚿
+  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64(), device = device) # 𝚽̇' or 𝚿'
 
   min_radius <- test_fun_matrices$min_radius
 
@@ -118,33 +123,33 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_pp <- build_fn(J_pp_sym, vars)    # ∇ₚ∇ₚf(p,u,t)
   J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
 
-  F_<- build_F(U, tt, f_, J) # F(p,U,t)
+  F_<- build_F(U, tt, f_, J, device) # F(p,U,t)
 
   # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p).
   # In practice we move g0 to the l.h.s. of the linear system  b - g0 = Gp
-  G <- build_G_matrix(V, U, tt, F_, J)
+  G <- build_G_matrix(V, U, tt, F_, J, device)
   g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(c(-1))
   g <- ifelse(!lip, build_g(V, F_),
-                   build_g_linear(G)
+                   build_g_linear(G, device)
                   )
 
-  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64()))$reshape(c(-1)) # b = -𝚽'U 
+  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64(), device = device))$reshape(c(-1)) # b = -𝚽'U 
   b <- if (!lip) b else b - g0
 
-  Jp_r <- ifelse(!lip, build_Jp_r(J_p, K, D, J, mp1, V, U, tt), # ∇ₚr(p) =  ∇ₚ(g(p) - b) =  ∇ₚg(p) Jacobian of the weak residual
+  Jp_r <- ifelse(!lip, build_Jp_r(J_p, K, D, J, mp1, V, U, tt, device), # ∇ₚr(p) =  ∇ₚ(g(p) - b) =  ∇ₚg(p) Jacobian of the weak residual
                        build_Jp_r_linear(G)
                       )
-  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt) #  ∇ₚ∇ₚr(p) Hessian of the weak residual
+  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt, device) #  ∇ₚ∇ₚr(p) Hessian of the weak residual
 
-  L0 <- build_L0(K, D, mp1, Vp, sig) # L0 in factorization of Covariance matrix S = LLᵀ, L = L₁(p) + L₀ 
-  L <- ifelse(!lip, build_L(U, tt, J_u, K, V, L0, sig, J), 
-                    build_L_linear(U, tt, J_u, K, V, L0, sig, J)
+  L0 <- build_L0(K, D, mp1, Vp, sig, device) # L0 in factorization of Covariance matrix S = LLᵀ, L = L₁(p) + L₀
+  L <- ifelse(!lip, build_L(U, tt, J_u, K, V, L0, sig, J, device),
+                    build_L_linear(U, tt, J_u, K, V, L0, sig, J, device)
                   )
-  
-  Jp_L <- ifelse(!lip, build_Jp_L(U, tt, J_up, K, J, D, V, sig), # Jacobian of covariance factor ∇ₚL
-                       build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J) 
+
+  Jp_L <- ifelse(!lip, build_Jp_L(U, tt, J_up, K, J, D, V, sig, device), # Jacobian of covariance factor ∇ₚL
+                       build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J, device)
                       )
-  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig) # ∇ₚ∇ₚL Hessian of covariance factor
+  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig, device) # ∇ₚ∇ₚL Hessian of covariance factor
 
   S <- build_S(L, diag_reg = control$diag_reg) # Covariance of the weak residual S(p)
   Jp_S <- build_J_S(L, Jp_L, J, K ,D) # Jacobian of Covariance of the weak residual ∇ₚS(p)

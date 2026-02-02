@@ -9,9 +9,18 @@ Authors@R: c(
       role = c("aut", "cre")
     )
   )
-Description: More about what it does (maybe more than one line).
-    Continuation lines should be indented.
-License: What license is it under?
+Description: Parameter estimation for ordinary differential equations (ODEs)
+    using weak form estimation. WENDy avoids numerical differentiation of noisy
+    data by leveraging integration by parts with compactly supported test
+    functions. Supports MLE, IRLS, and OLS methods.
+License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 RoxygenNote: 7.3.3
+Imports:
+    symengine,
+    torch,
+    trust,
+    minpack.lm,
+    numbers,
+    stats
