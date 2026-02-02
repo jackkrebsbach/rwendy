@@ -50,7 +50,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
     min_number_points = 100,
-    device = torch::torch_device("cpu")
+    interpolation_method = "linear",  # "spline" or "linear"
+    device = torch::torch_device("cpu") # If GPUs are available
   )
   
   if(!is.null(control)) {
@@ -59,16 +60,25 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     control <- default_control
   }
   
-  # Time spacing must be uniform for WENDy to work 
+  # Time spacing must be uniform for WENDy to work
   diff_dt <- diff(as.vector(tt))
   dt <- mean(diff_dt)
 
-  if (max(abs(diff(tt) - dt)) > sqrt(.Machine$double.eps)){
-    cat("Non uniform spacing detected, interpolating data...")
-    fits <-  apply(U, 2, function(col){smooth.spline(tt, col)})  
-    n <-  max(floor((max(tt) - min(tt)) / dt ), control$min_number_points)
-    tt <- matrix(seq(min(tt), max(tt), length.out = n), ncol = 1)
-    U <- sapply(fits, function(fit){predict(fit, tt)$y})
+  if (max(abs(diff(tt) - dt)) > sqrt(.Machine$double.eps)) {
+    cat("Non uniform spacing detected, interpolating data using", control$interpolation_method, "...\n")
+    n <- max(floor((max(tt) - min(tt)) / dt), control$min_number_points)
+    tt_new <- seq(min(tt), max(tt), length.out = n)
+
+    U <- switch(control$interpolation_method,
+      spline = {
+        fits <- apply(U, 2, function(col) smooth.spline(tt, col))
+        sapply(fits, function(fit) predict(fit, tt_new)$y)
+      },
+      linear = apply(U, 2, function(col) approx(tt, col, xout = tt_new)$y),
+      stop("Unknown interpolation_method: ", control$interpolation_method)
+    )
+
+    tt <- matrix(tt_new, ncol = 1)
   }
 
   if(noise_dist == "lognormal"){
@@ -204,6 +214,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                   )
   res$data <- data
   res$phat <- data$p 
+
+  
+ cat("Done solving WENDy Problem \n\n")
 
   return(res)
 }
