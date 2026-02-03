@@ -1,8 +1,7 @@
 
 # %%
+library(wendy)
 library(deSolve)
-
-invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   du1 <- p[1] / (36 + p[2] * u[2]) - p[3]

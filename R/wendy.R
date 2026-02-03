@@ -244,7 +244,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$data <- data
   res$phat <- data$p 
   
-  cat("Done solving WENDy Problem \n\n")
+  cat("\nDone solving WENDy Problem \n\n")
 
   return(res)
 }
