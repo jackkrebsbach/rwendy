@@ -4,8 +4,6 @@ library(wendy)
 library(deSolve)
 library(plotly)
 
-invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
-
 f <- function(u, p, t) {
   du1 <- p[1] * (u[2] - u[1])
   du2 <- u[1] * (p[2] - u[3]) - u[2]
