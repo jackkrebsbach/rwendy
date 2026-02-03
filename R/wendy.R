@@ -1,11 +1,29 @@
 #' @importFrom stats quantile median predict smooth.spline approx
 #' @importFrom utils modifyList
-#' @importFrom symengine S
-#' @importFrom torch torch_tensor torch_set_default_dtype torch_float64 torch_device torch_mm
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm nls.lm.control
 #' @importFrom numbers mGCD bernoulli_numbers
 NULL
+
+#' Check for required suggested packages
+#' @keywords internal
+check_suggested_packages <- function() {
+
+  if (!requireNamespace("torch", quietly = TRUE)) {
+    stop("Package 'torch' is required but not installed.\n",
+         "Please install it manually with:\n",
+         "  install.packages('torch')\n",
+         "  torch::install_torch()",
+         call. = FALSE)
+  }
+
+  if (!requireNamespace("symengine", quietly = TRUE)) {
+    stop("Package 'symengine' is required but not installed.\n",
+         "Please install it manually with:\n",
+         "  install.packages('symengine')",
+         call. = FALSE)
+  }
+}
 
 #' Parameter Estimation for ODE Systems
   #'
@@ -31,9 +49,11 @@ NULL
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), 
+solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"),
             method = c("IRLS", "MLE", "OLS"), control = NULL){
-  
+
+  check_suggested_packages()
+
   cat("\nSolving WENDy Problem... \n\n")
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
