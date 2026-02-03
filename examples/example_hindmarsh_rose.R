@@ -1,9 +1,8 @@
 
 # %%
+library(wendy)
 library(deSolve)
 library(plotly)
-
-invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   du1 <- p[1] * u[2] + p[2] * u[1]^3 + p[3] * u[1]^2 + p[4] * u[3]

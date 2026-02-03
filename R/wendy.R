@@ -1,8 +1,11 @@
-library(symengine)
-library(trust)
-library(minpack.lm)
-library(stats)
-library(numbers)
+#' @importFrom stats quantile median predict smooth.spline approx
+#' @importFrom utils modifyList
+#' @importFrom symengine S
+#' @importFrom torch torch_tensor torch_set_default_dtype torch_float64 torch_device torch_mm
+#' @importFrom trust trust
+#' @importFrom minpack.lm nls.lm nls.lm.control
+#' @importFrom numbers mGCD
+NULL
 
 #' Parameter Estimation for ODE Systems
   #'
@@ -31,7 +34,7 @@ library(numbers)
 solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), 
             method = c("IRLS", "MLE", "OLS"), control = NULL){
   
-  cat("Solving WENDy Problem... \n\n")
+  cat("\nSolving WENDy Problem... \n\n")
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
@@ -60,7 +63,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     control <- default_control
   }
   
-  # Time spacing must be uniform for WENDy to work
   diff_dt <- diff(as.vector(tt))
   dt <- mean(diff_dt)
 
@@ -216,6 +218,14 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$V_prime <- Vp
   res$min_radius <- min_radius
 
+  class(res) <- "wendy"
+  attr(res, "call") <- match.call()
+  attr(res, "method") <- method
+  attr(res, "noise_dist") <- noise_dist
+  attr(res, "n_obs") <- nrow(U)
+  attr(res, "n_params") <- length(p0)
+  attr(res, "n_states") <- ncol(U)
+
   if(!control$optimize) return(res)
 
   data <- switch(method,
@@ -233,9 +243,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                   )
   res$data <- data
   res$phat <- data$p 
-
   
- cat("Done solving WENDy Problem \n\n")
+  cat("\nDone solving WENDy Problem \n\n")
 
   return(res)
 }
