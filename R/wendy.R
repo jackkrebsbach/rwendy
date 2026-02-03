@@ -4,7 +4,7 @@
 #' @importFrom torch torch_tensor torch_set_default_dtype torch_float64 torch_device torch_mm
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm nls.lm.control
-#' @importFrom numbers mGCD
+#' @importFrom numbers mGCD bernoulli_numbers
 NULL
 
 #' Parameter Estimation for ODE Systems
