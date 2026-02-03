@@ -1,8 +1,9 @@
 
 # %%
 library(deSolve)
+library(wendy)
 
-invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
+#invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
