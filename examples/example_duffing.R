@@ -1,8 +1,7 @@
 
 # %%
+library(wendy)
 library(deSolve)
-
-invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
   u1 <- p[1] * u[2]
@@ -15,8 +14,8 @@ p0 <- c(2, -0.1, -1, -0.25);
 u0 <- c(0,2);
 npoints <- 80
 t_span <- c(0.005, 20);
-# t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
-t_eval <- sort(runif(npoints, min = t_span[1], max = t_span[2]))
+t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
+# t_eval <- sort(runif(npoints, min = t_span[1], max = t_span[2])) non-uniform spacing
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
