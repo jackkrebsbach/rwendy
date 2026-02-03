@@ -2,21 +2,32 @@
 % Please edit documentation in R/wendy.R
 \name{solveWendy}
 \alias{solveWendy}
-\title{Parameter Estimation for ODE Systems via Maximum Likelihood Estimation}
+\title{Parameter Estimation for ODE Systems}
 \usage{
-solveWendy(f, p0, U, tt)
+solveWendy(
+  f,
+  p0,
+  U,
+  tt,
+  lip = FALSE,
+  noise_dist = c("addgaussian", "lognormal"),
+  method = c("IRLS", "MLE", "OLS"),
+  control = NULL
+)
 }
 \arguments{
 \item{f}{A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 where \code{u} is the state vector, \code{p} is the parameter vector,
-and \code{t} is the time variable. Must return symbolic expressions.}
+and \code{t} is the time variable.}
 
-\item{p0}{Numeric vector. Initial guess for the parameters.}
+\item{p0}{Numeric vector. Initial guess for the parameters. Used in MLE or nonlinear least squares solvers.}
 
 \item{U}{Numeric matrix. Rows represent observed states at time points in \code{tt}.
 Columns correspond to state variables.}
 
 \item{tt}{Numeric vector. Time points corresponding to the rows of \code{U}.}
+
+\item{method}{String "MLE" | "IRLS" | "OLS" \code{U}.}
 }
 \description{
 This function estimates parameters of a system of ordinary differential equations (ODEs)
@@ -27,7 +38,6 @@ trust-region optimization algorithm.
 The procedure:
 \itemize{
   \item Builds symbolic expressions and derivatives of the ODE system (\eqn{f}, Jacobians, Hessians).
-  \item Constructs weak negative log-likelihood and functionals based on observed data.
-  \item Uses \code{\link[trustOptim]{trust.optim}} with BFGS updates for optimization.
+  \item Constructs weak negative log-likelihood and functionals based on observed (noisy) data.
 }
 }

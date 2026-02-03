@@ -1,9 +1,7 @@
 
 # %%
-
+library(wendy)
 library(deSolve)
-
-invisible(sapply(list.files("./R", pattern = "\\.R$", full.names = TRUE), source))
 
 f <- function(u, p, t) {
    eta <- 9e-5 * (1 - 0.9 * cos(pi * t / 1000))
