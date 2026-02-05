@@ -218,14 +218,3 @@ coef.wendy <- function(object, ...) {
 residuals.wendy <- function(object, ...) {
   as.numeric(object$g(object$phat) - object$b)
 }
-
-#' Fitted values from a wendy object
-#'
-#' @param object A wendy object
-#' @param ... Additional arguments (ignored)
-#' @return Numeric vector of fitted values
-#' @method fitted wendy
-#' @export
-fitted.wendy <- function(object, ...) {
-  as.numeric(object$g(object$phat))
-}

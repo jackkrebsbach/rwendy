@@ -1,5 +1,5 @@
-#' @importFrom stats quantile median predict smooth.spline approx
-#' @importFrom utils modifyList
+#' @importFrom stats quantile median predict smooth.spline approx fft lm.fit shapiro.test
+#' @importFrom utils modifyList tail
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm nls.lm.control
 #' @importFrom numbers mGCD bernoulli_numbers

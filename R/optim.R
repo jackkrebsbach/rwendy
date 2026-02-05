@@ -85,7 +85,7 @@ nirls <- function(g, b, L, Jp_r, p0, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4,
     Sn <- (1 - reg) * Ln %*% t(Ln) + alphaIdm
     RT <- t(chol(Sn)) # S = RᵀR R is upper triangular
 
-    p <- nls.lm(p, lower = NULL, upper = NULL, \(p){weighted_residual(p, RT)}, \(p){weighted_residual_jacobian(p, RT)})$par
+    p <- nls.lm(p, lower = NULL, upper = NULL, function(p){weighted_residual(p, RT)}, function(p){weighted_residual_jacobian(p, RT)})$par
 
     relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
 
