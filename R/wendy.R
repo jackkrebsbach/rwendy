@@ -233,6 +233,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$F_ <- F_
   res$f_sym <- f_expr
   res$L <- L
+  res$Jp_L <- Jp_L
+  res$Hp_L <- Hp_L
+  res$Hp_r <- Hp_r
   res$sig <- sig
   res$V <- V
   res$V_prime <- Vp
