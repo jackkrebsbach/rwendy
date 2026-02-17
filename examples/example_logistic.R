@@ -18,16 +18,18 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.10
+nr <- 0.3
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 U <- matrix(c(sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS", control = list(test_fun_type = "MSG", min_number_points = 40))
+res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS",
+  control = list(test_fun_type = "MSG", min_number_points = 256))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(tt, U, cex = 0.5, xlab = "Time", ylab=  "u₁")
-# points(tt, sol_hat[,2], cex = 0.5, col = "#1f77b4")
+points(tt, sol_hat[,2], cex = 0.5, col = "#1f77b4")
+
 print(res$phat)
