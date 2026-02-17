@@ -68,7 +68,6 @@ build_test_function_matrix <- function(test_function, tt, radius, order = 0) {
   diameter <- 2 * radius + 1
 
   if (diameter > len_tt - 2) {
-    warning("diameter outside of domain")
     radius <- floor((len_tt - 3) / 2)
     diameter <- 2 * radius + 1
   }
