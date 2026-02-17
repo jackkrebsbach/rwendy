@@ -61,7 +61,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   default_control <- list(
     optimize = TRUE,
     compute_svd = TRUE,
-    diag_reg = 10e-10,
+    diag_reg = 1e-10,
     max_iterates = 200,
     S = 1,  # Euler-Maclaurin series order expansion
     p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
@@ -180,38 +180,28 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   # In practice we move g0 to the l.h.s. of the linear system  b - g0 = Gp
   G <- build_G_matrix(V, U, tt, F_, J, device)
   g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(c(-1))
-  g <- ifelse(!lip, build_g(V, F_),
-                   build_g_linear(G, device)
-                  )
+  g <- if (!lip) build_g(V, F_) else build_g_linear(G, device)
 
   b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64(), device = device))$reshape(c(-1)) # b = -𝚽'U 
   b <- if (!lip) b else b - g0
 
-  Jp_r <- ifelse(!lip, build_Jp_r(J_p, K, D, J, mp1, V, U, tt, device), # ∇ₚr(p) =  ∇ₚ(g(p) - b) =  ∇ₚg(p) Jacobian of the weak residual
-                       build_Jp_r_linear(G)
-                      )
+  Jp_r <- if (!lip) build_Jp_r(J_p, K, D, J, mp1, V, U, tt, device) else build_Jp_r_linear(G) # ∇ₚr(p) =  ∇ₚ(g(p) - b) =  ∇ₚg(p) Jacobian of the weak residual
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt, device) #  ∇ₚ∇ₚr(p) Hessian of the weak residual
 
   L0 <- build_L0(K, D, mp1, Vp, sig, device) # L0 in factorization of Covariance matrix S = LLᵀ, L = L₁(p) + L₀
-  L <- ifelse(!lip, build_L(U, tt, J_u, K, V, L0, sig, J, device),
-                    build_L_linear(U, tt, J_u, K, V, L0, sig, J, device)
-                  )
+  L <- if (!lip) build_L(U, tt, J_u, K, V, L0, sig, J, device) else build_L_linear(U, tt, J_u, K, V, L0, sig, J, device)
 
-  Jp_L <- ifelse(!lip, build_Jp_L(U, tt, J_up, K, J, D, V, sig, device), # Jacobian of covariance factor ∇ₚL
-                       build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J, device)
-                      )
+  Jp_L <- if (!lip) build_Jp_L(U, tt, J_up, K, J, D, V, sig, device) else build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J, device) # Jacobian of covariance factor ∇ₚL
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig, device) # ∇ₚ∇ₚL Hessian of covariance factor
 
   S <- build_S(L, diag_reg = control$diag_reg) # Covariance of the weak residual S(p)
-  Jp_S <- build_J_S(L, Jp_L, J, K ,D) # Jacobian of Covariance of the weak residual ∇ₚS(p)
+  Jp_S <- build_J_S(L, Jp_L, J, K, D, diag_reg = control$diag_reg) # Jacobian of Covariance of the weak residual ∇ₚS(p)
 
   wnll <- build_wnll(S, g, b, K, D) # Negative log likelihood of the weak form residual (wnll)
   J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of wnll 
   # Hessian of the wnll
   # When linear in parameters there are terms are guaranteed to be zero so we define a new function 
-  H_wnll <- ifelse(!lip, build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J), 
-                         build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J)
-                        )
+  H_wnll <- if (!lip) build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg = control$diag_reg) else build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = control$diag_reg)
 
 
   res <- list()
@@ -250,7 +240,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   data <- switch(method,
                      OLS = if(!lip){ 
-                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
+                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 1e-10)
                       } else {
                         ols(as.array(G$contiguous()), as.array(b$contiguous()), L) 
                      },

@@ -1,5 +1,5 @@
 # Iterative (weak) re-weighted least squares
-irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+irls <- function(G, b, L, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- nrow(G)
   alphaIdm <- reg * diag(rep(1, dm))
   p <- lm.fit(G, b)$coefficients
@@ -56,7 +56,7 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
 }
 
 # Nonlinear iterative (weak) re-weighted least squares
-nirls <- function(g, b, L, Jp_r, p0, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+nirls <- function(g, b, L, Jp_r, p0, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- length(b)
   alphaIdm <- reg * diag(rep(1, dm))
   p <- p0
@@ -89,7 +89,7 @@ nirls <- function(g, b, L, Jp_r, p0, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4,
 
     relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
 
-    residuals <- b - g(p) 
+    residuals <- as.numeric(as.array(g(p)$contiguous())) - b
 
     if(n >= n0){
       sw_test <- shapiro.test(residuals)
@@ -119,7 +119,7 @@ nirls <- function(g, b, L, Jp_r, p0, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4,
 }
 
 # Weak ordinary least squares
-ols <- function(G, b, L, reg = 10e-10){
+ols <- function(G, b, L, reg = 1e-10){
   p <- lm.fit(G, b)$coefficients
   residuals <- b - G %*% p
   sw_test <- shapiro.test(residuals)
@@ -128,7 +128,7 @@ ols <- function(G, b, L, reg = 10e-10){
 }
 
 # Weak ordinary nonlinear least squares
-nols <- function(g, b, L, Jp_r, p0, reg = 10e-10){
+nols <- function(g, b, L, Jp_r, p0, reg = 1e-10){
   residual <- function(p){
     as.array(g(p)$contiguous() - b)
   }

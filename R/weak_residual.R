@@ -1,5 +1,3 @@
-torch::torch_set_default_dtype(torch::torch_float64())
-
 # F(p) in -𝚽'U = 𝚽F(p,U,t)
 build_F <- function(U, tt, f_, J, device = torch::torch_device("cpu")) {
   mp1 <- nrow(U)
@@ -202,13 +200,14 @@ build_S <- function(L, diag_reg = 1e-9) {
 }
 
 # ∇ₚS(p) Jacobian of the covariance matrix
-build_J_S <- function(L, Jp_L, J, K, D){
+build_J_S <- function(L, Jp_L, J, K, D, diag_reg = 1e-10){
+  WEIGHT <- 1.0 - diag_reg
   function(p){
     Lp <- L(p)
     Jp_Lp <- Jp_L(p)
     Lp_t <- Lp$t()
     prt <- torch::torch_einsum("ijk,jl->ilk", list(Jp_Lp, Lp_t))
-    Jp_S <- prt + prt$transpose(1, 2)
+    Jp_S <- WEIGHT * (prt + prt$transpose(1, 2))
     return(Jp_S)
   }
 }
@@ -262,7 +261,8 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
 }
 
 # Hessian of the weak form negative log likelihood 
-build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
+build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg = 1e-10) {
+  WEIGHT <- 1.0 - diag_reg
   function(p) {
     r <- as.array(g(p) - b)
 
@@ -298,7 +298,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
         Hp_Lp_ji <- Hp_Lp[, , j, i] # ∂ᵢ∂ⱼS(p)
         p1 <- Jp_Lp_j %*% t(Jp_Lp_i)
         p2 <- Hp_Lp_ji %*% t(Lp)
-        Hp_Sp_ji <- p1 + t(p1) + p2 + t(p2)  # ∂ᵢ∂ⱼS(p)
+        Hp_Sp_ji <- WEIGHT * (p1 + t(p1) + p2 + t(p2))  # ∂ᵢ∂ⱼS(p)
 
         Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
 
@@ -328,7 +328,8 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J) {
 }
 
 # Hessian of the weak form negative log likelihood when linear in parameters
-build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J) {
+build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = 1e-10) {
+  WEIGHT <- 1.0 - diag_reg
   function(p) {
 
     r <- as.array(g(p) - b)
@@ -361,7 +362,7 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J) {
         term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
 
         p1 <- Jp_Lp_j %*% t(Jp_Lp_i) # ∂ᵢ∂ⱼS(p)
-        Hp_Sp_ji <- p1 + t(p1)  # ∂ᵢ∂ⱼS(p)
+        Hp_Sp_ji <- WEIGHT * (p1 + t(p1))  # ∂ᵢ∂ⱼS(p)
 
         inv_factor <- S_inv_solve(Jp_rp_i)
 
