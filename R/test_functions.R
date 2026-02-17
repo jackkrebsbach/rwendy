@@ -25,7 +25,8 @@ psi_hat <- function(freqs, radius, dt, T, C, p = 16){
    coeffs <- (C / sqrt(T)) *  c(n0, ng1)
     
    psih[1:(n_max + 1)] <- coeffs
-   psih[(n_max + 2):length(psih)] <- rev(coeffs[-1]) 
+   n_neg <- length(psih) - n_max - 1
+  psih[(n_max + 2):length(psih)] <- rev(coeffs[2:(n_neg + 1)])
    
    return(psih)
 }
@@ -428,7 +429,7 @@ buildI <- function(freqs, S, dt, T, endpoint_derivatives_d) {
             })
           )
           bn <- bernoulli_numbers(2*s)
-          last_bn <- bn[2 * s + 1, 1] / bn[2 * S + 1, 2]
+          last_bn <- bn[2 * s + 1, 1] / bn[2 * s + 1, 2]
           bernoulli_term <- last_bn / factorial(2*s) * dt^(2*s)
           
           return(inner_sum * bernoulli_term)
@@ -469,7 +470,7 @@ compute_r_c_hat <- function(U, tt, S, p){
 
   for(r_ix in seq(length(radii))){ 
     radius <- radii[r_ix]
-    centers <- seq(radius, mp1 - radius)
+    centers <- seq(radius + 1, mp1 - radius)
     K <- length(centers)
 
     C  <- 1 / (sqrt(sum(sapply(0:(2*p), function(k){
@@ -482,7 +483,7 @@ compute_r_c_hat <- function(U, tt, S, p){
        fft(psi_hat_eval * Is[[d]])[centers] / sqrt(T)
     }))
     
-    e_int_hat_norm <- norm(e_int_hat, "2")/ sqrt(K)
+    e_int_hat_norm <- norm(e_int_hat, "F") / sqrt(K)
     ehat[r_ix] <- e_int_hat_norm
   }
 
