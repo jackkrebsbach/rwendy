@@ -456,7 +456,7 @@ compute_r_c_hat <- function(U, tt, S, p){
   D <- ncol(U)
   mp1 <- nrow(U)
   dt <- mean(diff(tt))
-  T <- as.numeric(tail(tt, n =1))
+  T <- as.numeric(tail(tt, n = 1) - tt[1])
 
   endpoint_derivatives <- compute_endpoint_derivatives(U, dt)
 
