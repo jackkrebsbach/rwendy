@@ -108,18 +108,26 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
         control$min_number_points, "). Interpolating to meet minimum requirement...\n", sep = "")
 
     tt_vec <- as.vector(tt)
-    tt_new <- seq(min(tt_vec), max(tt_vec), length.out = control$min_number_points)
 
-    U <- switch(control$interpolation_method,
-      spline = {
-        fits <- apply(U, 2, function(col) smooth.spline(tt_vec, col))
-        sapply(fits, function(fit) predict(fit, tt_new)$y)
-      },
-      linear = apply(U, 2, function(col) approx(tt_vec, col, xout = tt_new)$y),
-      stop("Unknown interpolation_method: ", control$interpolation_method)
-    )
-
-    tt <- matrix(tt_new, ncol = 1)
+    if (control$interpolation_method == "linear") {
+      tt_dense <- tt_vec
+      while (2 * length(tt_dense) - 1 <= 256) {
+        mids <- (head(tt_dense, -1) + tail(tt_dense, -1)) / 2
+        tt_dense <- sort(c(tt_dense, mids))
+      }
+      U <- apply(U, 2, function(col) approx(tt_vec, col, xout = tt_dense)$y)
+      tt <- matrix(tt_dense, ncol = 1)
+    } else {
+      tt_new <- seq(min(tt_vec), max(tt_vec), length.out = control$min_number_points)
+      U <- switch(control$interpolation_method,
+        spline = {
+          fits <- apply(U, 2, function(col) smooth.spline(tt_vec, col))
+          sapply(fits, function(fit) predict(fit, tt_new)$y)
+        },
+        stop("Unknown interpolation_method: ", control$interpolation_method)
+      )
+      tt <- matrix(tt_new, ncol = 1)
+    }
   }
 
   if(noise_dist == "lognormal"){
@@ -227,6 +235,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$V <- V
   res$V_prime <- Vp
   res$min_radius <- min_radius
+  res$U <- U
+  res$tt <- tt
 
   class(res) <- "wendy"
   attr(res, "call") <- match.call()
