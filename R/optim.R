@@ -26,7 +26,7 @@ irls <- function(G, b, L, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, ma
 
     relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
 
-    residuals <- b - G %*% p
+    residuals <- b_ - G_ %*% p
 
     if(n >= n0){
       sw_test <- shapiro.test(residuals)
