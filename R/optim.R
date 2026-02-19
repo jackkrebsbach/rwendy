@@ -48,7 +48,7 @@ irls <- function(G, b, L, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, ma
   return(list(
     p = p,
     iterations = n,
-    converged = (relative_change <= tau_FP && SW <= tau_SW),
+    converged = (relative_change <= tau_FP || SW <= tau_SW),
     relative_change_n = relative_change,
     sw_pvalues = sw_pvalues,
     final_sw_pvalue = SW
