@@ -60,7 +60,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   default_control <- list(
     optimize = TRUE,
-    noise_sigma = NA,
+    noise_sd = NA,
     compute_svd = TRUE,
     diag_reg = 1e-10,
     max_iterates = 200,
@@ -140,7 +140,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   device <- control$device
 
-  sig <- if (is.na(control$noise_sigma)) {
+  sig <- if (is.na(control$noise_sd)) {
     torch::torch_tensor(
       estimate_std(U, k = 6),
       dtype = torch::torch_float64(),
@@ -148,7 +148,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     )
   } else {
     torch::torch_tensor(
-      control$noise_sigma,
+      control$noise_sd,
       dtype = torch::torch_float64(),
       device = device
     )
