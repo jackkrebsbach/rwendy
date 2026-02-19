@@ -28,12 +28,14 @@ irls <- function(G, b, L, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, ma
 
     residuals <- b_ - G_ %*% p
 
+    sw_test <- shapiro.test(residuals)
+    p_val <- sw_test$p.value
+    sw_pvalues[n] <- p_val
+
     if(n >= n0){
-      sw_test <- shapiro.test(residuals)
-      sw_pvalues[n] <- sw_test$p.value
-      SW <- sw_test$p.value
+      SW <- p_val
     } else {
-      sw_pvalues[n] <- 1
+      SW <- 1
     }
 
     if(relative_change > tau_FP && n < max_its && SW > tau_SW){
@@ -51,7 +53,7 @@ irls <- function(G, b, L, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, ma
     converged = (relative_change <= tau_FP || SW <= tau_SW),
     relative_change_n = relative_change,
     sw_pvalues = sw_pvalues,
-    final_sw_pvalue = SW
+    final_sw_pvalue = tail(sw_pvalues, n=1)
   ))
 }
 
@@ -89,14 +91,16 @@ nirls <- function(g, b, L, Jp_r, p0, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, 
 
     relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
 
-    residuals <- as.numeric(as.array(g(p)$contiguous())) - b
+    residuals <- weighted_residual(p, RT)
+
+    sw_test <- shapiro.test(residuals)
+    p_val <- sw_test$p.value
+    sw_pvalues[n] <- p_val
 
     if(n >= n0){
-      sw_test <- shapiro.test(residuals)
-      sw_pvalues[n] <- sw_test$p.value
-      SW <- sw_test$p.value
+      SW <- p_val
     } else {
-      sw_pvalues[n] <- 1
+      SW <- 1
     }
 
     if(relative_change > tau_FP && n < max_its && SW > tau_SW){
@@ -114,7 +118,7 @@ nirls <- function(g, b, L, Jp_r, p0, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, 
     converged = (relative_change <= tau_FP || SW <= tau_SW),
     relative_change_n = relative_change,
     sw_pvalues = sw_pvalues,
-    final_sw_pvalue = SW
+    final_sw_pvalue = tail(sw_pvalues, n=1)
   ))
 }
 

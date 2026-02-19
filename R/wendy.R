@@ -60,6 +60,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   default_control <- list(
     optimize = TRUE,
+    noise_sigma = NA,
     compute_svd = TRUE,
     diag_reg = 1e-10,
     max_iterates = 200,
@@ -82,6 +83,13 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   } else {
     control <- default_control
   }
+
+  if(noise_dist == "lognormal"){
+    data <- preprocess_data(U, tt) # remove time points with zeros and take log of the data
+    U <- data$U
+    tt <- data$tt
+  }
+
   
   diff_dt <- diff(as.vector(tt))
   dt <- mean(diff_dt)
@@ -130,16 +138,21 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     }
   }
 
-  if(noise_dist == "lognormal"){
-    data <- preprocess_data(U, tt) # remove time points with zeros and take log of the data
-    U <- data$U
-    tt <- data$tt
-  }
-
-  torch::torch_set_default_dtype(torch::torch_float64())
-
   device <- control$device
-  sig <- torch::torch_tensor(estimate_std(U, k = 6), dtype = torch::torch_float64(), device = device)
+
+  sig <- if (is.na(control$noise_sigma)) {
+    torch::torch_tensor(
+      estimate_std(U, k = 6),
+      dtype = torch::torch_float64(),
+      device = device
+    )
+  } else {
+    torch::torch_tensor(
+      control$noise_sigma,
+      dtype = torch::torch_float64(),
+      device = device
+    )
+  }
 
   test_fun_matrices <- if(control$test_fun_type == "SSL"){ 
     build_full_test_function_matrices_ssl(U, tt, control) # Single Scale Local
@@ -148,7 +161,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   }
 
   V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64(), device = device) # 𝚽 or 𝚿
-  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64(), device = device) # 𝚽̇' or 𝚿'
+  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64(), device = device ) # 𝚽̇' or 𝚿'
 
   min_radius <- test_fun_matrices$min_radius
 
