@@ -1,4 +1,4 @@
-#' @importFrom stats quantile median predict smooth.spline approx fft lm.fit shapiro.test
+#' @importFrom stats quantile median predict smooth.spline approx fft lm.fit shapiro.test ksmooth
 #' @importFrom utils modifyList tail
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm nls.lm.control
@@ -74,7 +74,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
     min_number_points = 25,
-    interpolation_method = "linear",  # "spline" or "linear"
+    interpolation_method = "linear",  # "spline", "linear", or "kernel"
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -89,10 +89,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     U <- data$U
     tt <- data$tt
   }
-
   
   diff_dt <- diff(as.vector(tt))
-  dt <- mean(diff_dt)
+  dt <- mean(diff_dt, na.rm = T)
 
   if (max(abs(diff(tt) - dt)) > sqrt(.Machine$double.eps)) {
     cat("Non uniform spacing detected, interpolating data using", control$interpolation_method, "...\n")
@@ -105,6 +104,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
         sapply(fits, function(fit) predict(fit, tt_new)$y)
       },
       linear = apply(U, 2, function(col) approx(tt, col, xout = tt_new)$y),
+      kernel = {
+        bw <- diff(range(tt)) / sqrt(length(tt))
+        apply(U, 2, function(col) ksmooth(tt, col, kernel = "normal", bandwidth = bw, x.points = tt_new)$y)
+      },
       stop("Unknown interpolation_method: ", control$interpolation_method)
     )
 
@@ -117,24 +120,28 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
     tt_vec <- as.vector(tt)
 
+    tt_dense <- tt_vec
+    while (2 * length(tt_dense) - 1 <= 256) {
+      mids <- (head(tt_dense, -1) + tail(tt_dense, -1)) / 2
+      tt_dense <- sort(c(tt_dense, mids))
+    }
+
     if (control$interpolation_method == "linear") {
-      tt_dense <- tt_vec
-      while (2 * length(tt_dense) - 1 <= 256) {
-        mids <- (head(tt_dense, -1) + tail(tt_dense, -1)) / 2
-        tt_dense <- sort(c(tt_dense, mids))
-      }
       U <- apply(U, 2, function(col) approx(tt_vec, col, xout = tt_dense)$y)
       tt <- matrix(tt_dense, ncol = 1)
     } else {
-      tt_new <- seq(min(tt_vec), max(tt_vec), length.out = control$min_number_points)
       U <- switch(control$interpolation_method,
         spline = {
           fits <- apply(U, 2, function(col) smooth.spline(tt_vec, col))
-          sapply(fits, function(fit) predict(fit, tt_new)$y)
+          sapply(fits, function(fit) predict(fit, tt_dense)$y)
+        },
+        kernel = {
+          bw <- diff(range(tt_vec)) / sqrt(length(tt_vec))
+          apply(U, 2, function(col) ksmooth(tt_vec, col, kernel = "normal", bandwidth = bw, x.points = tt_dense)$y)
         },
         stop("Unknown interpolation_method: ", control$interpolation_method)
       )
-      tt <- matrix(tt_new, ncol = 1)
+      tt <- matrix(tt_dense, ncol = 1)
     }
   }
 

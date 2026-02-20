@@ -1,5 +1,5 @@
 # Iterative (weak) re-weighted least squares
-irls <- function(G, b, L, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- nrow(G)
   alphaIdm <- reg * diag(rep(1, dm))
   p <- lm.fit(G, b)$coefficients

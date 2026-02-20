@@ -1,7 +1,10 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
+library(devtools)
+
+devtools::load_all()
 
 f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
@@ -18,33 +21,44 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.1
+nr <- 0.5
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
-U <- matrix(c(sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)), ncol = 1)
+
+#  Gaussian Noise
+# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = nr))
+noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
+U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS",
-  control = list(test_fun_type = "MSG", min_number_points = 18, noise_sigma = c(noise_sd)))
+res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS", noise_dist = "addgaussian",
+  control = list(test_fun_type = "MSG",
+    min_number_points = 50,
+    interpolation_method = "linear")
+  )
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
 sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)
 
-plot(res$tt, res$U, cex = 0.5, xlab = "Time", ylab=  "u₁", col="purple")
-points(tt, U, cex = 0.5, col = "black")
+t_eval_dense <- seq(t_span[1], t_span[2], length.out = 256);
+sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
+
+plot(res$tt, res$U, cex = 0.25, xlab = "Time", ylab=  "u₁", col="purple")
+points(tt, U, cex = 0.75, col = "black")
 lines(t_eval2, sol_hat[,2], cex = 0.5, col = "#1f77b4")
-lines(t_eval, sol[,2], cex = 0.5, col = "red")
-title(paste0("nr ", nr,
-            "\n p̂: ", round(res$phat[1],3), " ", round(res$phat[2], 3),
-            "\n n: ", npoints
+lines(t_eval_dense, sol_true[,2], cex = 0.5, col = "red")
+title(paste0("nr: ", nr,
+            "\n n: ", npoints,
+            "\n p̂: ", round(res$phat[1],3), " ", round(res$phat[2], 3)
             ))
 legend(
   "bottomright",
   legend = c("data", "inferred trajectory", "true trajectory", "interpolated data"),
   col    = c("black", "#1f77b4", "red", "purple"),
-  pch    = c(1, NA),          
-  lty    = c(NA, 1),          
+  pch    = c(1, NA, NA, 1),          
+  lty    = c(NA, 1, 1, NA),          
   xpd    = TRUE,             
-  bty    = "n"                
+  bty    = "n",
+  cex = 0.8
 )
 print(res$phat)
