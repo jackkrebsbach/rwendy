@@ -1,4 +1,4 @@
-#' @importFrom stats quantile median predict smooth.spline approx spline fft lm.fit shapiro.test ksmooth
+#' @importFrom stats quantile median predict fft lm.fit shapiro.test
 #' @importFrom utils modifyList tail
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm nls.lm.control
@@ -54,7 +54,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   check_suggested_packages()
 
-  cat("\nSolving WENDy Problem... \n\n")
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
@@ -74,7 +73,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
     min_number_points = 25,
-    interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", or "kernel"
+    interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -90,75 +89,16 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     tt <- data$tt
   }
   
-  diff_dt <- diff(as.vector(tt))
-  dt <- mean(diff_dt, na.rm = T)
-
-  if (max(abs(diff(tt) - dt)) > sqrt(.Machine$double.eps)) {
-    cat("Non uniform spacing detected, interpolating data using", control$interpolation_method, "...\n")
-    n <- max(floor((max(tt) - min(tt)) / dt), control$min_number_points)
-    tt_new <- seq(min(tt), max(tt), length.out = n)
-
-    U <- switch(control$interpolation_method,
-      spline = {
-        fits <- apply(U, 2, function(col) smooth.spline(tt, col))
-        sapply(fits, function(fit) predict(fit, tt_new)$y)
-      },
-      linear = apply(U, 2, function(col) approx(tt, col, xout = tt_new)$y),
-      cubic = apply(U, 2, function(col) spline(tt, col, xout = tt_new, method = "natural")$y),
-      cubic_ls = {
-        X <- cbind(1, tt, tt^2, tt^3)
-        X_new <- cbind(1, tt_new, tt_new^2, tt_new^3)
-        apply(U, 2, function(col) drop(X_new %*% lm.fit(X, col)$coefficients))
-      },
-      kernel = {
-        bw <- diff(range(tt)) / sqrt(length(tt))
-        apply(U, 2, function(col) ksmooth(tt, col, kernel = "normal", bandwidth = bw, x.points = tt_new)$y)
-      },
-      stop("Unknown interpolation_method: ", control$interpolation_method)
-    )
-
-    tt <- matrix(tt_new, ncol = 1)
-  }
-
-  if (nrow(U) < control$min_number_points) {
-    cat("Warning: Number of time points (", nrow(U), ") is less than min_number_points (",
-        control$min_number_points, "). Interpolating to meet minimum requirement...\n", sep = "")
-
-    tt_vec <- as.vector(tt)
-    tt_dense <- tt_vec
-    while (2 * length(tt_dense) - 1 <= 256) {
-      mids <- (head(tt_dense, -1) + tail(tt_dense, -1)) / 2
-      tt_dense <- sort(c(tt_dense, mids))
-    }
-
-    U <- switch(control$interpolation_method,
-        linear = {
-          U <- apply(U, 2, function(col) approx(tt_vec, col, xout = tt_dense)$y)
-        },
-        spline = {
-          fits <- apply(U, 2, function(col) smooth.spline(tt_vec, col))
-          sapply(fits, function(fit) predict(fit, tt_dense)$y)
-        },
-        cubic = apply(U, 2, function(col) spline(tt_vec, col, xout = tt_dense, method = "natural")$y),
-        cubic_ls = {
-          X <- cbind(1, tt_vec, tt_vec^2, tt_vec^3)
-          X_new <- cbind(1, tt_dense, tt_dense^2, tt_dense^3)
-          apply(U, 2, function(col) drop(X_new %*% lm.fit(X, col)$coefficients))
-        },
-        kernel = {
-          bw <- diff(range(tt_vec)) / sqrt(length(tt_vec))
-          apply(U, 2, function(col) ksmooth(tt_vec, col, kernel = "normal", bandwidth = bw, x.points = tt_dense)$y)
-        },
-        stop("Unknown interpolation_method: ", control$interpolation_method)
-      )
-      tt <- matrix(tt_dense, ncol = 1)
-  }
+  # --- Interpolation: one (U_m, tt) pair per method, all on the same grid ---
+  methods     <- control$interpolation_method
+  interp_list <- lapply(methods, function(m) interpolate_data(U, tt, m, control))
+  tt          <- interp_list[[1]]$tt  # all methods share the same target grid
 
   device <- control$device
 
   sig <- if (is.na(control$noise_sd)) {
     torch::torch_tensor(
-      estimate_std(U, k = 6),
+      estimate_std(interp_list[[1]]$U, k = 6),
       dtype = torch::torch_float64(),
       device = device
     )
@@ -170,23 +110,32 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     )
   }
 
-  test_fun_matrices <- if(control$test_fun_type == "SSL"){ 
-    build_full_test_function_matrices_ssl(U, tt, control) # Single Scale Local
-  } else {
-    build_full_test_function_matrices_msg(U, tt, control, control$compute_svd) # Multi Scale Global
+  # Build test function matrices per interpolant, then stack V and V' row-wise
+  build_tf_matrices <- function(U_m, tt_m) {
+    if (control$test_fun_type == "SSL") {
+      build_full_test_function_matrices_ssl(U_m, tt_m, control)
+    } else {
+      build_full_test_function_matrices_msg(U_m, tt_m, control, control$compute_svd)
+    }
   }
 
-  V <- torch::torch_tensor(test_fun_matrices$V, dtype = torch::torch_float64(), device = device) # 𝚽 or 𝚿
-  Vp <- torch::torch_tensor(test_fun_matrices$V_prime, dtype = torch::torch_float64(), device = device ) # 𝚽̇' or 𝚿'
+  tf_list <- lapply(interp_list, function(d) build_tf_matrices(d$U, d$tt))
 
-  min_radius <- test_fun_matrices$min_radius
+  V_mat  <- do.call(rbind, lapply(tf_list, `[[`, "V"))
+  Vp_mat <- do.call(rbind, lapply(tf_list, `[[`, "V_prime"))
 
-  J <- length(p0) # Number of parameters
-  D <- ncol(U)    # Dimension of system
-  mp1 <- nrow(U)  # Number of time points
-  K <- nrow(V)    # Number of test functions
+  V  <- torch::torch_tensor(V_mat,  dtype = torch::torch_float64(), device = device) # 𝚽 or 𝚿
+  Vp <- torch::torch_tensor(Vp_mat, dtype = torch::torch_float64(), device = device) # 𝚽̇' or 𝚿'
 
-  u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
+  min_radius <- tf_list[[1]]$min_radius
+
+  J      <- length(p0)
+  D      <- ncol(interp_list[[1]]$U)
+  mp1    <- nrow(interp_list[[1]]$U)
+  K_list <- sapply(tf_list, function(tf) nrow(tf$V))
+  K      <- sum(K_list)            # total test functions across all interpolants
+
+  u_expr <- do.call(c, lapply(1:D, function(i) symengine::S(paste0("u", i))))
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
 
@@ -211,25 +160,83 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_pp <- build_fn(J_pp_sym, vars)    # ∇ₚ∇ₚf(p,u,t)
   J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
 
-  F_<- build_F(U, tt, f_, J, device) # F(p,U,t)
+  # Per-interpolant F_m(p): evaluates the ODE rhs on each smoothed dataset
+  F_list <- lapply(interp_list, function(d) build_F(d$U, d$tt, f_, J, device))
+  F_ <- F_list[[1]]  # kept for backward compat in res$F_
+
+  # V tensors per interpolant (reused below to avoid re-converting)
+  V_tensors  <- lapply(tf_list, function(tf)
+    torch::torch_tensor(tf$V,       dtype = torch::torch_float64(), device = device))
+  Vp_tensors <- lapply(tf_list, function(tf)
+    torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device))
 
   # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p).
   # In practice we move g0 to the l.h.s. of the linear system  b - g0 = Gp
-  G <- build_G_matrix(V, U, tt, F_, J, device)
-  g0 <- torch::torch_mm(V, F_(rep(0,J)))$reshape(c(-1))
-  g <- if (!lip) build_g(V, F_) else build_g_linear(G, device)
+  # G: rbind(G_1, ..., G_M)
+  G <- torch::torch_cat(
+    lapply(seq_along(interp_list), function(i)
+      build_G_matrix(V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, F_list[[i]], J, device)),
+    dim = 1L)
 
-  b <- -1 * torch::torch_mm(Vp, torch::torch_tensor(U, dtype = torch::torch_float64(), device = device))$reshape(c(-1)) # b = -𝚽'U 
+  # g0 = cat(V_m F_m(0))
+  g0 <- torch::torch_cat(lapply(seq_along(interp_list), function(i)
+    torch::torch_mm(V_tensors[[i]], F_list[[i]](rep(0, J)))$reshape(c(-1))))
+
+  # g(p) = cat(V_m F_m(p))  or  Gp  for linear case
+  g <- if (!lip) {
+    local({
+      Vt <- V_tensors; Fl <- F_list
+      function(p) torch::torch_cat(lapply(seq_along(Fl), function(i)
+        torch::torch_matmul(Vt[[i]], Fl[[i]](p))$reshape(c(-1))))
+    })
+  } else {
+    build_g_linear(G, device)
+  }
+
+  # b = cat(-V'_m U_m) # b = -𝚽'U
+  b <- torch::torch_cat(lapply(seq_along(interp_list), function(i)
+    -1 * torch::torch_mm(Vp_tensors[[i]],
+           torch::torch_tensor(interp_list[[i]]$U, dtype = torch::torch_float64(), device = device))$reshape(c(-1))))
   b <- if (!lip) b else b - g0
 
-  Jp_r <- if (!lip) build_Jp_r(J_p, K, D, J, mp1, V, U, tt, device) else build_Jp_r_linear(G) # ∇ₚr(p) =  ∇ₚ(g(p) - b) =  ∇ₚg(p) Jacobian of the weak residual
-  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt, device) #  ∇ₚ∇ₚr(p) Hessian of the weak residual
+  # Jp_r: cat(Jp_r_m(p), dim=1)  or  G  for linear case
+  Jp_r_fns <- lapply(seq_along(interp_list), function(i)
+    build_Jp_r(J_p, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device))
+  Jp_r <- if (!lip) {
+    local({ fns <- Jp_r_fns
+      function(p) torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L) })
+  } else {
+    build_Jp_r_linear(G)
+  }
 
-  L0 <- build_L0(K, D, mp1, Vp, sig, device) # L0 in factorization of Covariance matrix S = LLᵀ, L = L₁(p) + L₀
-  L <- if (!lip) build_L(U, tt, J_u, K, V, L0, sig, J, device) else build_L_linear(U, tt, J_u, K, V, L0, sig, J, device)
+  # Hp_r: cat(Hp_r_m(p), dim=1)
+  Hp_r_fns <- lapply(seq_along(interp_list), function(i)
+    build_Hp_r(J_pp, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device))
+  Hp_r <- local({ fns <- Hp_r_fns
+    function(p) torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L) })
 
-  Jp_L <- if (!lip) build_Jp_L(U, tt, J_up, K, J, D, V, sig, device) else build_Jp_L_linear(U, tt, J_u, K, V, L0, sig, J, device) # Jacobian of covariance factor ∇ₚL
-  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig, device) # ∇ₚ∇ₚL Hessian of covariance factor
+  # L0, L, Jp_L, Hp_L: per-interpolant then block-diagonal
+  # S = L L^T is block-diagonal — no cross-covariance between interpolants
+  L0_list <- lapply(seq_along(interp_list), function(i)
+    build_L0(K_list[i], D, mp1, Vp_tensors[[i]], sig, device))
+
+  L_fns <- lapply(seq_along(interp_list), function(i) {
+    if (!lip) build_L(      interp_list[[i]]$U, interp_list[[i]]$tt, J_u,  K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
+    else      build_L_linear(interp_list[[i]]$U, interp_list[[i]]$tt, J_u, K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
+  })
+
+  Jp_L_fns <- lapply(seq_along(interp_list), function(i) {
+    if (!lip) build_Jp_L(      interp_list[[i]]$U, interp_list[[i]]$tt, J_up, K_list[i], J, D, V_tensors[[i]], sig, device)
+    else      build_Jp_L_linear(interp_list[[i]]$U, interp_list[[i]]$tt, J_u,  K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
+  })
+
+  Hp_L_fns <- lapply(seq_along(interp_list), function(i)
+    build_Hp_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_upp, K_list[i], J, D, V_tensors[[i]], sig, device))
+
+  L0   <- build_L0_block(  L0_list,   K_list, D, mp1,    device)
+  L    <- build_L_block(   L_fns,     K_list, D, mp1,    device)
+  Jp_L <- build_Jp_L_block(Jp_L_fns,  K_list, D, mp1, J, device)
+  Hp_L <- build_Hp_L_block(Hp_L_fns,  K_list, D, mp1, J, device)
 
   S <- build_S(L, diag_reg = control$diag_reg) # Covariance of the weak residual S(p)
   Jp_S <- build_J_S(L, Jp_L, J, K, D, diag_reg = control$diag_reg) # Jacobian of Covariance of the weak residual ∇ₚS(p)
@@ -264,16 +271,17 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$V <- V
   res$V_prime <- Vp
   res$min_radius <- min_radius
-  res$U <- U
+  res$interp_list <- interp_list  # all interpolated datasets
+  res$U  <- interp_list[[1]]$U   # first interpolant for backward compat
   res$tt <- tt
 
   class(res) <- "wendy"
   attr(res, "call") <- match.call()
   attr(res, "method") <- method
   attr(res, "noise_dist") <- noise_dist
-  attr(res, "n_obs") <- nrow(U)
+  attr(res, "n_obs") <- mp1
   attr(res, "n_params") <- length(p0)
-  attr(res, "n_states") <- ncol(U)
+  attr(res, "n_states") <- D
 
   if(!control$optimize) return(res)
 
@@ -292,8 +300,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                   )
   res$data <- data
   res$phat <- data$p 
-  
-  cat("\nDone solving WENDy Problem \n\n")
 
   return(res)
 }
