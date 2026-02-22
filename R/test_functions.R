@@ -156,12 +156,16 @@ build_full_test_function_matrices_ssl <- function(U, tt, test_function_params) {
 
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
-  
-  radius_c <- compute_r_c_hat(U, tt, test_function_params$S, test_function_params$p)
 
-  V <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 0)
+  radius_c <- if (!is.null(test_function_params$fixed_radius)) {
+    test_function_params$fixed_radius
+  } else {
+    compute_r_c_hat(U, tt, test_function_params$S, test_function_params$p)
+  }
+
+  V  <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 0)
   Vp <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 1)
-  
+
   return(list(V = V, V_prime = Vp, min_radius = radius_c))
 
 }
@@ -197,17 +201,19 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   # cat(sprintf("  Max radius: %d\n", max_radius))
   # cat(sprintf("  Minmax radius: %d\n", radius_min_max))
 
-  result <- find_min_radius_int_error(U, tt, min_radius, radius_min_max,
-                                      num_radii = 100, sub_sample_rate = 1)
-  ix <- result$index
-  errors <- result$errors
-  radii_sweep <- result$radii
-
-  min_radius_int_error <- radii_sweep[ix]
-
-  min_radius_errors <- errors
-  min_radius_radii <- radii_sweep
-  min_radius_ix <- ix
+  if (!is.null(test_function_params$fixed_radius)) {
+    min_radius_int_error <- test_function_params$fixed_radius
+    min_radius_errors    <- NA
+    min_radius_radii     <- NA
+    min_radius_ix        <- NA
+  } else {
+    result               <- find_min_radius_int_error(U, tt, min_radius, radius_min_max,
+                                                      num_radii = 100, sub_sample_rate = 1)
+    min_radius_int_error <- result$radii[result$index]
+    min_radius_errors    <- result$errors
+    min_radius_radii     <- result$radii
+    min_radius_ix        <- result$index
+  }
   min_radius <- min_radius_int_error
 
   #cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
