@@ -13,28 +13,30 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 10
+npoints <- 16
 t_span <- c(0.005, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-# Additive Gaussian Noise
 nr <- 0.5
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
-#  Gaussian Noise
-# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = nr))
+# Additive Gaussian Noise
 noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
+
+# Multiplicative Lognormal Noise
+# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = nr))
+
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS", noise_dist = "addgaussian",
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS", noise_dist = "addgaussian",
   control = list(test_fun_type = "MSG",
-    min_number_points = 50,
-    interpolation_method = "linear")
+    min_number_points = 256,
+    interpolation_method = "cubic")
   )
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);

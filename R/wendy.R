@@ -1,4 +1,4 @@
-#' @importFrom stats quantile median predict smooth.spline approx fft lm.fit shapiro.test ksmooth
+#' @importFrom stats quantile median predict smooth.spline approx spline fft lm.fit shapiro.test ksmooth
 #' @importFrom utils modifyList tail
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm nls.lm.control
@@ -74,7 +74,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
     min_number_points = 25,
-    interpolation_method = "linear",  # "spline", "linear", or "kernel"
+    interpolation_method = "linear",  # "spline", "linear", "cubic", or "kernel"
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -104,6 +104,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
         sapply(fits, function(fit) predict(fit, tt_new)$y)
       },
       linear = apply(U, 2, function(col) approx(tt, col, xout = tt_new)$y),
+      cubic = apply(U, 2, function(col) spline(tt, col, xout = tt_new, method = "natural")$y),
       kernel = {
         bw <- diff(range(tt)) / sqrt(length(tt))
         apply(U, 2, function(col) ksmooth(tt, col, kernel = "normal", bandwidth = bw, x.points = tt_new)$y)
@@ -119,22 +120,21 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
         control$min_number_points, "). Interpolating to meet minimum requirement...\n", sep = "")
 
     tt_vec <- as.vector(tt)
-
     tt_dense <- tt_vec
     while (2 * length(tt_dense) - 1 <= 256) {
       mids <- (head(tt_dense, -1) + tail(tt_dense, -1)) / 2
       tt_dense <- sort(c(tt_dense, mids))
     }
 
-    if (control$interpolation_method == "linear") {
-      U <- apply(U, 2, function(col) approx(tt_vec, col, xout = tt_dense)$y)
-      tt <- matrix(tt_dense, ncol = 1)
-    } else {
-      U <- switch(control$interpolation_method,
+    U <- switch(control$interpolation_method,
+        linear = {
+          U <- apply(U, 2, function(col) approx(tt_vec, col, xout = tt_dense)$y)
+        },
         spline = {
           fits <- apply(U, 2, function(col) smooth.spline(tt_vec, col))
           sapply(fits, function(fit) predict(fit, tt_dense)$y)
         },
+        cubic = apply(U, 2, function(col) spline(tt_vec, col, xout = tt_dense, method = "natural")$y),
         kernel = {
           bw <- diff(range(tt_vec)) / sqrt(length(tt_vec))
           apply(U, 2, function(col) ksmooth(tt_vec, col, kernel = "normal", bandwidth = bw, x.points = tt_dense)$y)
@@ -142,7 +142,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
         stop("Unknown interpolation_method: ", control$interpolation_method)
       )
       tt <- matrix(tt_dense, ncol = 1)
-    }
   }
 
   device <- control$device
