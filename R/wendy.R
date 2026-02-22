@@ -74,6 +74,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     min_test_fun_info_number = 0.95,
     min_number_points = 25,
     interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
+    fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
     device = torch::torch_device("cpu") # If GPUs are available
   )
   

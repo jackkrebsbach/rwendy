@@ -33,10 +33,11 @@ noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS", noise_dist = "addgaussian",
-  control = list(test_fun_type = "MSG",
-    min_number_points = 50,
-    interpolation_method = c("cubic_ls")
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
+  control = list(test_fun_type = "SSL",
+    min_number_points = 100,
+    interpolation_method = c("cubic_ls", "linear"),
+    fixed_radius = 10
     )
   )
 
@@ -67,3 +68,4 @@ legend(
   cex = 0.8
 )
 print(res$phat)
+print(res$min_radius)
