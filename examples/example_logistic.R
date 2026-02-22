@@ -13,7 +13,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 16
+npoints <- 10
 t_span <- c(0.005, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -33,10 +33,11 @@ noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
-  control = list(test_fun_type = "SSL",
-    min_number_points = 256,
-    interpolation_method = "linear")
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS", noise_dist = "addgaussian",
+  control = list(test_fun_type = "MSG",
+    min_number_points = 50,
+    interpolation_method = c("cubic_ls")
+    )
   )
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
@@ -45,9 +46,11 @@ sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)
 t_eval_dense <- seq(t_span[1], t_span[2], length.out = 256);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
 
-plot(res$tt, res$U, cex = 0.25, xlab = "Time", ylab=  "u₁", col="purple")
-points(tt, U, cex = 0.75, col = "black")
-lines(t_eval2, sol_hat[,2], cex = 0.5, col = "#1f77b4")
+plot(tt, U, cex = 1, xlab = "Time", ylab=  "u₁", col="black")
+for(interps in res$interp_list){
+  points(interps$tt, interps$U, cex = 0.75, col = "purple")
+}
+lines(t_eval2, sol_hat[,2], cex = 0.25, col = "#1f77b4")
 lines(t_eval_dense, sol_true[,2], cex = 0.5, col = "red")
 title(paste0("nr: ", nr,
             "\n n: ", npoints,

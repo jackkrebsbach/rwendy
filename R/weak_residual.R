@@ -387,6 +387,80 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = 1e-1
   }
 }
 
+# --- Block-diagonal stacking helpers for multiple interpolants ---
+# Each L_m(p) has shape K_m*D x mp1*D.  The block-diagonal assembly gives
+# shape (K_total*D) x (M * mp1*D), so that L_block @ L_block^T is block-
+# diagonal with blocks S_1, ..., S_M — no cross-covariance between interpolants.
+
+# Assemble a constant block-diagonal tensor from a list of L0 matrices.
+# @keywords internal
+build_L0_block <- function(L0_list, K_list, D, mp1, device) {
+  M <- length(L0_list); K_total <- sum(K_list)
+  out <- torch::torch_zeros(c(K_total * D, M * mp1 * D),
+                            dtype = torch::torch_float64(), device = device)
+  k_off <- 0L; m_off <- 0L
+  for (i in seq_along(L0_list)) {
+    k_i <- K_list[i] * D; m_i <- mp1 * D
+    out[(k_off + 1):(k_off + k_i), (m_off + 1):(m_off + m_i)] <- L0_list[[i]]
+    k_off <- k_off + k_i; m_off <- m_off + m_i
+  }
+  out
+}
+
+# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) tensor.
+# @keywords internal
+build_L_block <- function(L_fns, K_list, D, mp1, device) {
+  M <- length(L_fns); K_total <- sum(K_list)
+  function(p) {
+    mats <- lapply(L_fns, function(lf) lf(p))
+    out  <- torch::torch_zeros(c(K_total * D, M * mp1 * D),
+                               dtype = torch::torch_float64(), device = device)
+    k_off <- 0L; m_off <- 0L
+    for (i in seq_along(mats)) {
+      k_i <- K_list[i] * D; m_i <- mp1 * D
+      out[(k_off + 1):(k_off + k_i), (m_off + 1):(m_off + m_i)] <- mats[[i]]
+      k_off <- k_off + k_i; m_off <- m_off + m_i
+    }
+    out
+  }
+}
+
+# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) x J tensor.
+# @keywords internal
+build_Jp_L_block <- function(Jp_L_fns, K_list, D, mp1, J, device) {
+  M <- length(Jp_L_fns); K_total <- sum(K_list)
+  function(p) {
+    mats <- lapply(Jp_L_fns, function(jf) jf(p))
+    out  <- torch::torch_zeros(c(K_total * D, M * mp1 * D, J),
+                               dtype = torch::torch_float64(), device = device)
+    k_off <- 0L; m_off <- 0L
+    for (i in seq_along(mats)) {
+      k_i <- K_list[i] * D; m_i <- mp1 * D
+      out[(k_off + 1):(k_off + k_i), (m_off + 1):(m_off + m_i), ] <- mats[[i]]
+      k_off <- k_off + k_i; m_off <- m_off + m_i
+    }
+    out
+  }
+}
+
+# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) x J x J tensor.
+# @keywords internal
+build_Hp_L_block <- function(Hp_L_fns, K_list, D, mp1, J, device) {
+  M <- length(Hp_L_fns); K_total <- sum(K_list)
+  function(p) {
+    mats <- lapply(Hp_L_fns, function(hf) hf(p))
+    out  <- torch::torch_zeros(c(K_total * D, M * mp1 * D, J, J),
+                               dtype = torch::torch_float64(), device = device)
+    k_off <- 0L; m_off <- 0L
+    for (i in seq_along(mats)) {
+      k_i <- K_list[i] * D; m_i <- mp1 * D
+      out[(k_off + 1):(k_off + k_i), (m_off + 1):(m_off + m_i), , ] <- mats[[i]]
+      k_off <- k_off + k_i; m_off <- m_off + m_i
+    }
+    out
+  }
+}
+
 # Robust solver for applying the inverse of S(p) to a vector or matrix
 make_S_inv_solver <- function(Sp) {
   cholF <- NULL
