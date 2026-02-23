@@ -34,7 +34,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE", control = list(test_fun_type = "SSL"))
+res <- solveWendy(f, p0, U, tt, method = "MLE", control = list(test_fun_type = "MSG"))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 
