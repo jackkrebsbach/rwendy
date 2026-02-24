@@ -92,7 +92,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   
   # --- Interpolation: one (U_m, tt) pair per method, all on the same grid ---
   methods     <- control$interpolation_method
-  interp_list <- lapply(methods, function(m) interpolate_data(U, tt, m, control))
+  interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control)), methods)
   tt          <- interp_list[[1]]$tt  # all methods share the same target grid
 
   device <- control$device
@@ -275,6 +275,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$interp_list <- interp_list  # all interpolated datasets
   res$U  <- interp_list[[1]]$U   # first interpolant for backward compat
   res$tt <- tt
+  res$interp_methods <- control$interpolation_method
 
   class(res) <- "wendy"
   attr(res, "call") <- match.call()
