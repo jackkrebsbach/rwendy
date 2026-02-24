@@ -5,7 +5,7 @@ NULL
 # Apply one interpolation method to map rows of U from tt_vec onto tt_target.
 # Returns an interpolated matrix with nrow = length(tt_target), ncol = D.
 # @keywords internal
-interpolate_to_grid <- function(U, tt_vec, tt_target, method) {
+interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = TRUE) {
   result <- switch(method,
     spline = {
       fits <- apply(U, 2, function(col) smooth.spline(tt_vec, col))
@@ -27,10 +27,12 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method) {
   )
 
   # Substitute original observed values at their exact time points
-  tol <- sqrt(.Machine$double.eps)
-  for (i in seq_along(tt_vec)) {
-    j <- which(abs(tt_target - tt_vec[i]) < tol)
-    if (length(j) == 1L) result[j, ] <- U[i, ]
+  if(substitute_data){
+    tol <- sqrt(.Machine$double.eps)
+    for (i in seq_along(tt_vec)) {
+      j <- which(abs(tt_target - tt_vec[i]) < tol)
+      if (length(j) == 1L) result[j, ] <- U[i, ]
+    }
   }
 
   result

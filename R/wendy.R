@@ -91,6 +91,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   }
   
   # --- Interpolation: one (U_m, tt) pair per method, all on the same grid ---
+  U_orig      <- U
+  tt_orig     <- as.vector(tt)
   methods     <- control$interpolation_method
   interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control)), methods)
   tt          <- interp_list[[1]]$tt  # all methods share the same target grid
@@ -98,8 +100,14 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   device <- control$device
 
   sig <- if (is.na(control$noise_sd)) {
+    if (nrow(U) < 20) {
+      U_cubic_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, "cubic_ls", substitute_data = FALSE)
+      estimated_sd <- sqrt(mean((U_orig - U_cubic_fit)^2))
+    } else {
+      estimated_sd <- estimate_std(U, k = 6)
+    }
     torch::torch_tensor(
-      estimate_std(interp_list[[1]]$U, k = 6),
+      estimated_sd,
       dtype = torch::torch_float64(),
       device = device
     )
