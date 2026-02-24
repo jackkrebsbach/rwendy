@@ -4,7 +4,7 @@
 library(deSolve)
 library(devtools)
 
-devtools::load_all()
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
@@ -36,7 +36,7 @@ tt <- sol[, 1, drop = FALSE]
 res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS", noise_dist = "addgaussian",
   control = list(
     min_number_points = 25,
-    interpolation_method = "loess",
+    interpolation_method = "cubic_ls",
     test_fun_type = "MSG"
     )
   )
@@ -71,4 +71,3 @@ legend(
   bty    = "n",
   cex = 0.8
 )
-print(res$phat)
