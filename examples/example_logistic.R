@@ -34,10 +34,10 @@ U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
 res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS", noise_dist = "addgaussian",
-  control = list(test_fun_type = "SSL",
-    min_number_points = 50,
-    interpolation_method = c("cubic_ls", "spline", "linear"),
-    fixed_radius = 10
+  control = list(
+    min_number_points = 25,
+    interpolation_method = "loess",
+    test_fun_type = "MSG"
     )
   )
 
@@ -47,9 +47,13 @@ sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)
 t_eval_dense <- seq(t_span[1], t_span[2], length.out = 256);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
 
+interp_colors <- c("purple", "darkorange", "forestgreen", "deeppink", "cyan4")
+interp_names  <- names(res$interp_list)
+
 plot(tt, U, cex = 1, xlab = "Time", ylab=  "u₁", col="black")
-for(interps in res$interp_list){
-  points(interps$tt, interps$U, cex = 0.75, col = "purple")
+for(i in seq_along(res$interp_list)){
+  interps <- res$interp_list[[i]]
+  points(interps$tt, interps$U, cex = 0.75, col = interp_colors[i])
 }
 lines(t_eval2, sol_hat[,2], cex = 0.25, col = "#1f77b4")
 lines(t_eval_dense, sol_true[,2], cex = 0.5, col = "red")
@@ -59,13 +63,12 @@ title(paste0("nr: ", nr,
             ))
 legend(
   "bottomright",
-  legend = c("data", "inferred trajectory", "true trajectory", "interpolated data"),
-  col    = c("black", "#1f77b4", "red", "purple"),
-  pch    = c(1, NA, NA, 1),          
-  lty    = c(NA, 1, 1, NA),          
-  xpd    = TRUE,             
+  legend = c("data", "inferred trajectory", "true trajectory", interp_names),
+  col    = c("black", "#1f77b4", "red", interp_colors[seq_along(interp_names)]),
+  pch    = c(1, NA, NA, rep(1, length(interp_names))),
+  lty    = c(NA, 1, 1, rep(NA, length(interp_names))),
+  xpd    = TRUE,
   bty    = "n",
   cex = 0.8
 )
 print(res$phat)
-print(res$min_radius)
