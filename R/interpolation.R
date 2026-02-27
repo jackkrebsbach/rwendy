@@ -18,6 +18,11 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
       X_new <- cbind(1, tt_target, tt_target^2, tt_target^3)
       apply(U, 2, function(col) drop(X_new %*% lm.fit(X, col)$coefficients))
     },
+    linear_ls = {
+      X     <- cbind(1, tt_vec)
+      X_new <- cbind(1, tt_target)
+      apply(U, 2, function(col) drop(X_new %*% lm.fit(X, col)$coefficients))
+    },
     loess  = apply(U, 2, function(col) predict(loess(col ~ tt_vec), newdata = tt_target)),
     kernel = {
       bw <- diff(range(tt_vec)) / sqrt(length(tt_vec))

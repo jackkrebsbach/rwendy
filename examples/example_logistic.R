@@ -13,7 +13,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 10
+npoints <-10 
 t_span <- c(0.005, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -33,7 +33,7 @@ noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS", noise_dist = "addgaussian",
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
   control = list(
     min_number_points = 25,
     interpolation_method = "cubic_ls",
