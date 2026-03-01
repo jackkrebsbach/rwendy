@@ -127,6 +127,7 @@ compute_interpolation_variance <- function(tt_obs, tt_target, method, U_obs = NU
 interpolate_data <- function(U, tt, method, control) {
   tt_obs  <- as.vector(tt)          # original observed times (saved before any modification)
   U_obs   <- U                      # original observed data  (saved before any modification)
+
   diff_dt <- diff(tt_obs)
   dt      <- mean(diff_dt, na.rm = TRUE)
 

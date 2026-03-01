@@ -164,6 +164,7 @@ mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
   return(data)
 
 }
+
 # Extracting estimated parameters from various packages
 # trust.optim -> data$solution = phat
 # trust::trust -> data$argument = phat
