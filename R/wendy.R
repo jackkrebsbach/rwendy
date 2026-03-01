@@ -73,9 +73,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
     min_number_points = 25,
+    max_points_interp = 20,           # integer: skip interpolation/densification when nrow(U) exceeds this
     interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
-    scale_by_var = TRUE,              # logical: scale V/Vp by sqrt(var[m]) to upweight interpolation uncertainty
+    scale_by_var = FALSE,              # logical: scale V/Vp by sqrt(var[m]) to upweight interpolation uncertainty
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -95,8 +96,16 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   U_orig      <- U
   tt_orig     <- as.vector(tt)
   methods     <- control$interpolation_method
-  interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control)), methods)
-  tt          <- interp_list[[1]]$tt  # all methods share the same target grid
+
+  # If enough data points are supplied, skip interpolation entirely.
+  # Every point is an original observation so var = 1 everywhere.
+  if (nrow(U) > control$max_points_interp) {
+    interp_list <- list(none = list(U = U, tt = tt, var = rep(1.0, nrow(U))))
+  } else {
+    interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control)), methods)
+  }
+
+  tt <- interp_list[[1]]$tt  # all methods share the same target grid
 
   device <- control$device
 
@@ -297,7 +306,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$U   <- interp_list[[1]]$U    # first interpolant for backward compat
   res$tt  <- tt
   res$var <- interp_list[[1]]$var  # per-time-point variance weights (var=1 at observed times)
-  res$interp_methods <- control$interpolation_method
+  res$interp_methods <- names(interp_list)
 
   class(res) <- "wendy"
   attr(res, "call") <- match.call()
