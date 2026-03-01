@@ -35,8 +35,8 @@ tt <- sol[, 1, drop = FALSE]
 
 res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
   control = list(
-    min_number_points = 25,
-    interpolation_method = "cubic_ls",
+    min_number_points = 50,
+    interpolation_method = ("cubic_ls"),
     test_fun_type = "MSG"
     )
   )

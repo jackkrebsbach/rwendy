@@ -75,6 +75,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     min_number_points = 25,
     interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
+    scale_by_var = TRUE,              # logical: scale V/Vp by sqrt(var[m]) to upweight interpolation uncertainty
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -130,12 +131,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   tf_list <- lapply(interp_list, function(d) build_tf_matrices(d$U, d$tt))
 
-  V_mat  <- do.call(rbind, lapply(tf_list, `[[`, "V"))
-  Vp_mat <- do.call(rbind, lapply(tf_list, `[[`, "V_prime"))
-
-  V  <- torch::torch_tensor(V_mat,  dtype = torch::torch_float64(), device = device) # 𝚽 or 𝚿
-  Vp <- torch::torch_tensor(Vp_mat, dtype = torch::torch_float64(), device = device) # 𝚽̇' or 𝚿'
-
   min_radius <- tf_list[[1]]$min_radius
 
   J      <- length(p0)
@@ -178,6 +173,24 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     torch::torch_tensor(tf$V,       dtype = torch::torch_float64(), device = device))
   Vp_tensors <- lapply(tf_list, function(tf)
     torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device))
+
+  # Optionally scale V and Vp column-wise by sqrt(var[m]).
+  # Interpolated time points have var[m] > 1, so this right-multiplies L by
+  # diag(sqrt(var)) ⊗ I_D, giving S(p) = L W² Lᵀ with W² = diag(var) ⊗ I_D.
+  # Observed time points have var[m] = 1 and are unaffected.
+  if (control$scale_by_var) {
+    for (i in seq_along(interp_list)) {
+      sqrt_var_i <- torch::torch_tensor(
+        sqrt(interp_list[[i]]$var), dtype = torch::torch_float64(), device = device
+      )$unsqueeze(1L)                        # (1, mp1) broadcasts over (K_i, mp1)
+      V_tensors[[i]]  <- V_tensors[[i]]  * sqrt_var_i
+      Vp_tensors[[i]] <- Vp_tensors[[i]] * sqrt_var_i
+    }
+  }
+
+  # Stacked V / Vp (var-scaled when control$scale_by_var = TRUE)
+  V  <- torch::torch_cat(V_tensors,  dim = 1L)  # 𝚽 or 𝚿
+  Vp <- torch::torch_cat(Vp_tensors, dim = 1L)  # 𝚽' or 𝚿'
 
   # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p).
   # In practice we move g0 to the l.h.s. of the linear system  b - g0 = Gp
@@ -281,8 +294,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$V_prime <- Vp
   res$min_radius <- min_radius
   res$interp_list <- interp_list  # all interpolated datasets
-  res$U  <- interp_list[[1]]$U   # first interpolant for backward compat
-  res$tt <- tt
+  res$U   <- interp_list[[1]]$U    # first interpolant for backward compat
+  res$tt  <- tt
+  res$var <- interp_list[[1]]$var  # per-time-point variance weights (var=1 at observed times)
   res$interp_methods <- control$interpolation_method
 
   class(res) <- "wendy"
