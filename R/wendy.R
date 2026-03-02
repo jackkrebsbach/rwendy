@@ -76,7 +76,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     max_points_interp = 20,           # integer: skip interpolation/densification when nrow(U) exceeds this
     interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
-    scale_by_var = FALSE,              # logical: scale V/Vp by sqrt(var[m]) to upweight interpolation uncertainty
+    scale_by_var = NULL,              # logical: scale V/Vp by sqrt(var[m]) to upweight interpolation uncertainty
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -172,9 +172,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   Vp_tensors <- lapply(tf_list, function(tf)
     torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device))
 
-  if (control$scale_by_var) {
+  if (!is.null(control$scale_by_var)) {
     for (i in seq_along(interp_list)) {
-      sqrt_scale_i <- torch::torch_tensor(1 / sqrt(interp_list[[i]]$scale), dtype = torch::torch_float64(), device = device)$unsqueeze(1L)
+      sqrt_scale_i <- torch::torch_tensor(1 / (control$scale_by_var * sqrt(interp_list[[i]]$scale)), dtype = torch::torch_float64(), device = device)$unsqueeze(1L)
       V_tensors[[i]]  <- V_tensors[[i]]  * sqrt_scale_i
       Vp_tensors[[i]] <- Vp_tensors[[i]] * sqrt_scale_i
     }
