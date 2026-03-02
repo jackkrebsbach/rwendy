@@ -126,9 +126,9 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
   list(U = U_new, var = var_vec)
 }
 
-build_scale_vec <- function(tt_target, tt_obs, var_vec) {
+build_scale_vec <- function(tt_target, tt_obs, var_vec, control) {
   tol       <- sqrt(.Machine$double.eps)
-  scale_vec <- 1 + var_vec
+  scale_vec <- 1 + var_vec * if(!is.null(control$scale_by_var)) control$scale_by_var else 1
   for (i in seq_along(tt_obs)) {
     j <- which(abs(tt_target - tt_obs[i]) < tol)
     if (length(j) == 1L) scale_vec[j] <- 1
@@ -163,6 +163,6 @@ interpolate_data <- function(U, tt, method, control, sigma = NULL) {
   }
 
   result    <- interpolate_to_grid(U_obs, tt_obs, as.vector(tt), method, substitute_data = FALSE, sigma = sigma)
-  scale_vec <- build_scale_vec(as.vector(tt), tt_obs, result$var)
+  scale_vec <- build_scale_vec(as.vector(tt), tt_obs, result$var, control)
   list(U = U, tt = tt, var = result$var, scale = scale_vec)
 }
