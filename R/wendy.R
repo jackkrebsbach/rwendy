@@ -172,13 +172,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   Vp_tensors <- lapply(tf_list, function(tf)
     torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device))
 
-  if (!is.null(control$scale_by_var)) {
-    for (i in seq_along(interp_list)) {
-      sqrt_scale_i <- torch::torch_tensor(1 / (sqrt(interp_list[[i]]$scale)), dtype = torch::torch_float64(), device = device)$unsqueeze(1L)
-      V_tensors[[i]]  <- V_tensors[[i]]  * sqrt_scale_i
-      Vp_tensors[[i]] <- Vp_tensors[[i]] * sqrt_scale_i
-    }
-  }
 
   V  <- torch::torch_cat(V_tensors,  dim = 1L)  # 𝚽 or 𝚿
   Vp <- torch::torch_cat(Vp_tensors, dim = 1L)  # 𝚽' or 𝚿'
@@ -187,9 +180,11 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   # In practice we move g0 to the l.h.s. of the linear system  b - g0 = Gp
   # G: rbind(G_1, ..., G_M)
   G <- torch::torch_cat(
-    lapply(seq_along(interp_list), function(i)
-      build_G_matrix(V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, F_list[[i]], J, device)),
-    dim = 1L)
+    lapply(seq_along(interp_list), function(i) {
+      build_G_matrix(V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, F_list[[i]], J, device)
+    }),
+    dim = 1L
+  )
 
   # g0 = cat(V_m F_m(0))
   g0 <- torch::torch_cat(lapply(seq_along(interp_list), function(i)
@@ -251,14 +246,23 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   Jp_L <- build_Jp_L_block(Jp_L_fns,  K_list, D, mp1, J, device)
   Hp_L <- build_Hp_L_block(Hp_L_fns,  K_list, D, mp1, J, device)
 
-  S <- build_S(L, diag_reg = control$diag_reg) # Covariance of the weak residual S(p)
-  Jp_S <- build_J_S(L, Jp_L, J, K, D, diag_reg = control$diag_reg) # Jacobian of Covariance of the weak residual ∇ₚS(p)
+  # W: diagonal variance matrix, shape (M*mp1*D, M*mp1*D), ordered (time, state) within each interpolant block.
+  # Only built when scale_by_var is set; otherwise W=NULL and S = L Lᵀ as before.
+  W <- if (!is.null(control$scale_by_var)) {
+    var_vec <- unlist(lapply(interp_list, function(d) rep(d$var, each = D)))
+    torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
+  } else {
+    NULL
+  }
+
+  S <- build_S(L, W, diag_reg = control$diag_reg) # Covariance of the weak residual S(p) = L W Lᵀ
+  Jp_S <- build_J_S(L, Jp_L, J, K, D, W, diag_reg = control$diag_reg) # Jacobian of Covariance of the weak residual ∇ₚS(p)
 
   wnll <- build_wnll(S, g, b, K, D) # Negative log likelihood of the weak form residual (wnll)
-  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of wnll 
+  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of wnll
   # Hessian of the wnll
-  # When linear in parameters there are terms are guaranteed to be zero so we define a new function 
-  H_wnll <- if (!lip) build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg = control$diag_reg) else build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = control$diag_reg)
+  # When linear in parameters there are terms are guaranteed to be zero so we define a new function
+  H_wnll <- if (!lip) build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W, diag_reg = control$diag_reg) else build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W, diag_reg = control$diag_reg)
 
 
   res <- list()

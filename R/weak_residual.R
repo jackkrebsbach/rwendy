@@ -186,11 +186,12 @@ build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig, device = torch::torch_devic
 }
 
 # S(p) is the covariance matrix of the weak residual
-build_S <- function(L, diag_reg = 1e-9) {
+build_S <- function(L, W = NULL, diag_reg = 10e-10) {
   function(p) {
     Lp <- L(p)
     Lpt <- torch::torch_transpose(Lp, 1, 2)
-    S_ <- torch::torch_matmul(Lp, Lpt)
+    S_ <- if (!is.null(W)) torch::torch_matmul(Lp, torch::torch_matmul(W, Lpt))
+          else              torch::torch_matmul(Lp, Lpt)
     WEIGHT <- 1.0 - diag_reg
     n <- S_$size(1)
     eye <- diag_reg * torch::torch_eye(n, dtype = S_$dtype, device = S_$device)
@@ -200,13 +201,14 @@ build_S <- function(L, diag_reg = 1e-9) {
 }
 
 # ∇ₚS(p) Jacobian of the covariance matrix
-build_J_S <- function(L, Jp_L, J, K, D, diag_reg = 1e-10){
+build_J_S <- function(L, Jp_L, J, K, D, W = NULL, diag_reg = 1e-10){
   WEIGHT <- 1.0 - diag_reg
   function(p){
     Lp <- L(p)
     Jp_Lp <- Jp_L(p)
-    Lp_t <- Lp$t()
-    prt <- torch::torch_einsum("ijk,jl->ilk", list(Jp_Lp, Lp_t))
+    # With W: ∂S/∂pₖ = (∂L/∂pₖ) W Lᵀ + L W (∂L/∂pₖ)ᵀ  →  use W Lᵀ in einsum
+    WLp_t <- if (!is.null(W)) torch::torch_mm(W, Lp$t()) else Lp$t()
+    prt <- torch::torch_einsum("ijk,jl->ilk", list(Jp_Lp, WLp_t))
     Jp_S <- WEIGHT * (prt + prt$transpose(1, 2))
     return(Jp_S)
   }
@@ -261,7 +263,7 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
 }
 
 # Hessian of the weak form negative log likelihood 
-build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg = 1e-10) {
+build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, diag_reg = 1e-10) {
   WEIGHT <- 1.0 - diag_reg
   function(p) {
     r <- as.array(g(p) - b)
@@ -272,6 +274,9 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg =
     Lp <- as.array(L(p))                     # L(p)
     Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
     Hp_Lp <- as.array(Hp_L(p)$contiguous())  # ∇ₚ∇ₚL(p)
+    W_mat <- if (!is.null(W)) as.array(W) else NULL
+    # Precompute W Lᵀ once (used in p2 = ∂ᵢ∂ⱼL · W · Lᵀ)
+    LpW_t <- if (!is.null(W_mat)) W_mat %*% t(Lp) else t(Lp)
 
     Sp <- as.array(S(p)) # S(p)
     Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
@@ -285,6 +290,8 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg =
       Jp_rp_j <- Jp_rp[, j]
       Jp_Sp_j <- Jp_Sp[, , j]
       Jp_Lp_j <- Jp_Lp[, , j]
+      # Precompute ∂ⱼL · W once per outer iteration
+      Jp_Lp_j_W <- if (!is.null(W_mat)) Jp_Lp_j %*% W_mat else Jp_Lp_j
 
       shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
 
@@ -296,8 +303,9 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg =
         term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
 
         Hp_Lp_ji <- Hp_Lp[, , j, i] # ∂ᵢ∂ⱼS(p)
-        p1 <- Jp_Lp_j %*% t(Jp_Lp_i)
-        p2 <- Hp_Lp_ji %*% t(Lp)
+        # p1 = ∂ⱼL · W · ∂ᵢLᵀ,  p2 = ∂ᵢ∂ⱼL · W · Lᵀ
+        p1 <- Jp_Lp_j_W %*% t(Jp_Lp_i)
+        p2 <- Hp_Lp_ji %*% LpW_t
         Hp_Sp_ji <- WEIGHT * (p1 + t(p1) + p2 + t(p2))  # ∂ᵢ∂ⱼS(p)
 
         Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
@@ -328,7 +336,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, diag_reg =
 }
 
 # Hessian of the weak form negative log likelihood when linear in parameters
-build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = 1e-10) {
+build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_reg = 1e-10) {
   WEIGHT <- 1.0 - diag_reg
   function(p) {
 
@@ -342,6 +350,7 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = 1e-1
     Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
 
     S_inv_solve <- make_S_inv_solver(Sp)
+    W_mat <- if (!is.null(W)) as.array(W) else NULL
 
     S_inv_rp <- S_inv_solve(r)
     H_wnn <- matrix(0, nrow = J, ncol = J)
@@ -350,6 +359,7 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = 1e-1
       Jp_rp_j <- Jp_rp[, j]
       Jp_Sp_j <- Jp_Sp[, , j]
       Jp_Lp_j <- Jp_Lp[, , j]
+      Jp_Lp_j_W <- if (!is.null(W_mat)) Jp_Lp_j %*% W_mat else Jp_Lp_j
 
       shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
 
@@ -361,7 +371,8 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, diag_reg = 1e-1
 
         term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
 
-        p1 <- Jp_Lp_j %*% t(Jp_Lp_i) # ∂ᵢ∂ⱼS(p)
+        # p1 = ∂ⱼL · W · ∂ᵢLᵀ
+        p1 <- Jp_Lp_j_W %*% t(Jp_Lp_i)
         Hp_Sp_ji <- WEIGHT * (p1 + t(p1))  # ∂ᵢ∂ⱼS(p)
 
         inv_factor <- S_inv_solve(Jp_rp_i)
