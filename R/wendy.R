@@ -174,7 +174,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   if (!is.null(control$scale_by_var)) {
     for (i in seq_along(interp_list)) {
-      sqrt_scale_i <- torch::torch_tensor(1 / (control$scale_by_var * sqrt(interp_list[[i]]$scale)), dtype = torch::torch_float64(), device = device)$unsqueeze(1L)
+      sqrt_scale_i <- torch::torch_tensor(1 / (sqrt(interp_list[[i]]$scale)), dtype = torch::torch_float64(), device = device)$unsqueeze(1L)
       V_tensors[[i]]  <- V_tensors[[i]]  * sqrt_scale_i
       Vp_tensors[[i]] <- Vp_tensors[[i]] * sqrt_scale_i
     }

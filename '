@@ -163,6 +163,6 @@ interpolate_data <- function(U, tt, method, control, sigma = NULL) {
   }
 
   result    <- interpolate_to_grid(U_obs, tt_obs, as.vector(tt), method, substitute_data = FALSE, sigma = sigma)
-  scale_vec <- build_scale_vec(as.vector(tt), tt_obs, result$var, control)
+  scale_vec <- build_scale_vec(as.vector(tt), tt_obs, result$var)
   list(U = U, tt = tt, var = result$var, scale = scale_vec)
 }
