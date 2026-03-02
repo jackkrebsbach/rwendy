@@ -38,7 +38,7 @@ res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgau
     min_number_points = 50,
     interpolation_method = "cubic_ls",
     test_fun_type = "MSG",
-    scale_by_var = 0.01
+    scale_by_var = NULL
     )
   )
 
