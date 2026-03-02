@@ -92,42 +92,33 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     tt <- data$tt
   }
   
-  # --- Interpolation: one (U_m, tt) pair per method, all on the same grid ---
   U_orig      <- U
   tt_orig     <- as.vector(tt)
   methods     <- control$interpolation_method
 
-  # If enough data points are supplied, skip interpolation entirely.
-  # Every point is an original observation so var = 1 everywhere.
-  if (nrow(U) > control$max_points_interp) {
-    interp_list <- list(none = list(U = U, tt = tt, var = rep(1.0, nrow(U))))
-  } else {
-    interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control)), methods)
-  }
-
-  tt <- interp_list[[1]]$tt  # all methods share the same target grid
-
   device <- control$device
 
-  sig <- if (is.na(control$noise_sd)) {
+  estimated_sd <- if (is.na(control$noise_sd)) {
     if (nrow(U) < 20) {
-      U_cubic_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, "cubic_ls", substitute_data = FALSE)
-      estimated_sd <- sqrt(mean((U_orig - U_cubic_fit)^2))
+      U_cubic_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, "cubic_ls", substitute_data = FALSE)$U
+      sqrt(mean((U_orig - U_cubic_fit)^2))
     } else {
-      estimated_sd <- estimate_std(U, k = 6)
+      estimate_std(U, k = 6)
     }
-    torch::torch_tensor(
-      estimated_sd,
-      dtype = torch::torch_float64(),
-      device = device
-    )
   } else {
-    torch::torch_tensor(
-      control$noise_sd,
-      dtype = torch::torch_float64(),
-      device = device
-    )
+    control$noise_sd
   }
+
+  sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
+
+  # Interpolation if data is sparse
+  if (nrow(U) > control$max_points_interp) {
+    interp_list <- list(none = list(U = U, tt = tt, var = rep(1.0, nrow(U)), scale = rep(1.0, nrow(U))))
+  } else {
+    interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control, sigma = estimated_sd)), methods)
+  }
+
+  tt <- interp_list[[1]]$tt 
 
   # Build test function matrices per interpolant, then stack V and V' row-wise
   build_tf_matrices <- function(U_m, tt_m) {
@@ -173,31 +164,22 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_pp <- build_fn(J_pp_sym, vars)    # ∇ₚ∇ₚf(p,u,t)
   J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
 
-  # Per-interpolant F_m(p): evaluates the ODE rhs on each smoothed dataset
   F_list <- lapply(interp_list, function(d) build_F(d$U, d$tt, f_, J, device))
-  F_ <- F_list[[1]]  # kept for backward compat in res$F_
+  F_ <- F_list[[1]]  
 
-  # V tensors per interpolant (reused below to avoid re-converting)
   V_tensors  <- lapply(tf_list, function(tf)
     torch::torch_tensor(tf$V,       dtype = torch::torch_float64(), device = device))
   Vp_tensors <- lapply(tf_list, function(tf)
     torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device))
 
-  # Optionally scale V and Vp column-wise by sqrt(var[m]).
-  # Interpolated time points have var[m] > 1, so this right-multiplies L by
-  # diag(sqrt(var)) ⊗ I_D, giving S(p) = L W² Lᵀ with W² = diag(var) ⊗ I_D.
-  # Observed time points have var[m] = 1 and are unaffected.
   if (control$scale_by_var) {
     for (i in seq_along(interp_list)) {
-      sqrt_var_i <- torch::torch_tensor(
-        sqrt(interp_list[[i]]$var), dtype = torch::torch_float64(), device = device
-      )$unsqueeze(1L)                        # (1, mp1) broadcasts over (K_i, mp1)
-      V_tensors[[i]]  <- V_tensors[[i]]  * sqrt_var_i
-      Vp_tensors[[i]] <- Vp_tensors[[i]] * sqrt_var_i
+      sqrt_scale_i <- torch::torch_tensor(1 / sqrt(interp_list[[i]]$scale), dtype = torch::torch_float64(), device = device)$unsqueeze(1L)
+      V_tensors[[i]]  <- V_tensors[[i]]  * sqrt_scale_i
+      Vp_tensors[[i]] <- Vp_tensors[[i]] * sqrt_scale_i
     }
   }
 
-  # Stacked V / Vp (var-scaled when control$scale_by_var = TRUE)
   V  <- torch::torch_cat(V_tensors,  dim = 1L)  # 𝚽 or 𝚿
   Vp <- torch::torch_cat(Vp_tensors, dim = 1L)  # 𝚽' or 𝚿'
 
