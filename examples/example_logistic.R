@@ -14,13 +14,13 @@ p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
 npoints <- 10
-t_span <- c(0.005, 10);
+t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.05
+nr <- 0.5
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
@@ -35,10 +35,10 @@ tt <- sol[, 1, drop = FALSE]
 
 res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
   control = list(
-    min_number_points = 50,
+    min_number_points = 256,
     interpolation_method = "cubic_ls",
     test_fun_type = "MSG",
-    scale_by_var = NULL
+    scale_by_var = 1 
     )
   )
 

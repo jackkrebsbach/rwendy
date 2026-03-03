@@ -111,6 +111,13 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
     var_vec <- rowMeans(var_mat, na.rm = TRUE)
   }
 
+  # Observed time points are real data — reset their variance to 1
+  tol <- sqrt(.Machine$double.eps)
+  for (i in seq_along(tt_vec)) {
+    j <- which(abs(tt_target - tt_vec[i]) < tol)
+    if (length(j) == 1L) var_vec[j] <- 1.0
+  }
+
   if (!is.matrix(U_new)){
     U_new <- matrix(U_new, nrow = length(tt_target), ncol = ncol(U))
   }
@@ -127,7 +134,7 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
 }
 
 build_scale_vec <- function(tt_target, tt_obs, var_vec, control) {
-  tol       <- sqrt(.Machine$double.eps)
+  tol       <- .Machine$double.eps
   scale_vec <- 1 + var_vec * if(!is.null(control$scale_by_var)) control$scale_by_var else 1
   for (i in seq_along(tt_obs)) {
     j <- which(abs(tt_target - tt_obs[i]) < tol)
