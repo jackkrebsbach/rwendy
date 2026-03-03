@@ -52,7 +52,7 @@ fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
 
     model  <- lm(y ~ ., data = cbind(y = y, df_obs))
     pred   <- predict(model, newdata = df_new, se.fit = TRUE, interval = "prediction")
-    pred_var <- pred$se.fit^2 #+ pred$residual.scale^2
+    pred_var <- pred$se.fit^2 + pred$residual.scale^2
 
     list(fit = pred$fit[, "fit"], var = pred_var)
 
@@ -93,29 +93,30 @@ fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
 # Apply one interpolation method across all D columns of U.
 # Returns list(U, var):
 #   U   — interpolated matrix, nrow = length(tt_target), ncol = D.
-#   var — numeric vector of length(tt_target), prediction-interval variance
-#         averaged across state dimensions.  Falls back to 1 for exact
-#         interpolants that carry no residual model and sigma is not supplied.
+#   var — numeric matrix of shape (length(tt_target), D), prediction-interval
+#         variance per time point per state dimension.  Falls back to 1 for
+#         exact interpolants that carry no residual model and sigma is not
+#         supplied.  Observed time-point rows are reset to 1.
 # sigma: optional scalar noise SD forwarded to fit_col for exact interpolants.
 # @keywords internal
-interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = TRUE, sigma = NULL) {
+interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = TRUE, sigma = NULL, control) {
   cols <- lapply(seq_len(ncol(U)), function(d) {
     fit_col(U[, d], tt_vec, tt_target, method, sigma = sigma)
   })
   U_new   <- do.call(cbind, lapply(cols, `[[`, "fit"))
   var_mat <- do.call(cbind, lapply(cols, `[[`, "var"))
 
-  if (all(is.na(var_mat))) {
-    var_vec <- rep(1.0, length(tt_target))
-  } else {
-    var_vec <- rowMeans(var_mat, na.rm = TRUE)
+  if (!is.matrix(var_mat)) {
+    var_mat <- matrix(var_mat, nrow = length(tt_target), ncol = ncol(U))
   }
 
-  # Observed time points are real data — reset their variance to 1
+  var_mat[is.na(var_mat)] <- 0
+  var_mat <- 1 + var_mat * (if(is.null(control$scale_by_var)) 1 else control$scale_by_var) # W = 1 (baseline) + extra interpolation variance
+
   tol <- sqrt(.Machine$double.eps)
   for (i in seq_along(tt_vec)) {
     j <- which(abs(tt_target - tt_vec[i]) < tol)
-    if (length(j) == 1L) var_vec[j] <- 1.0
+    if (length(j) == 1L) var_mat[j, ] <- 1.0  # observed: no extra variance
   }
 
   if (!is.matrix(U_new)){
@@ -130,17 +131,7 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
     }
   }
 
-  list(U = U_new, var = var_vec)
-}
-
-build_scale_vec <- function(tt_target, tt_obs, var_vec, control) {
-  tol       <- .Machine$double.eps
-  scale_vec <- 1 + var_vec * if(!is.null(control$scale_by_var)) control$scale_by_var else 1
-  for (i in seq_along(tt_obs)) {
-    j <- which(abs(tt_target - tt_obs[i]) < tol)
-    if (length(j) == 1L) scale_vec[j] <- 1
-  }
-  scale_vec
+  list(U = U_new, var = var_mat)
 }
 
 interpolate_data <- function(U, tt, method, control, sigma = NULL) {
@@ -150,14 +141,16 @@ interpolate_data <- function(U, tt, method, control, sigma = NULL) {
   diff_dt <- diff(tt_obs)
   dt      <- mean(diff_dt, na.rm = TRUE)
 
+  # Non uniform spacing
   if (max(abs(diff(tt_obs) - dt)) > sqrt(.Machine$double.eps)) {
     cat("Non uniform spacing detected, interpolating data using", method, "...\n")
     n      <- max(floor((max(tt) - min(tt)) / dt), control$min_number_points)
     tt_new <- seq(min(tt), max(tt), length.out = n)
-    U      <- interpolate_to_grid(U, tt_obs, tt_new, method, sigma = sigma)$U
+    U      <- interpolate_to_grid(U, tt_obs, tt_new, method, sigma = sigma, control = control)$U
     tt     <- matrix(tt_new, ncol = 1)
   }
 
+  # Interpolation
   if (nrow(U) < control$min_number_points) {
     tt_vec   <- as.vector(tt)
     tt_dense <- tt_vec
@@ -165,11 +158,10 @@ interpolate_data <- function(U, tt, method, control, sigma = NULL) {
       mids     <- (head(tt_dense, -1) + tail(tt_dense, -1)) / 2
       tt_dense <- sort(c(tt_dense, mids))
     }
-    U  <- interpolate_to_grid(U, tt_vec, tt_dense, method, sigma = sigma)$U
+    U  <- interpolate_to_grid(U, tt_vec, tt_dense, method, sigma = sigma, control=control)$U
     tt <- matrix(tt_dense, ncol = 1)
   }
 
-  result    <- interpolate_to_grid(U_obs, tt_obs, as.vector(tt), method, substitute_data = FALSE, sigma = sigma)
-  scale_vec <- build_scale_vec(as.vector(tt), tt_obs, result$var, control)
-  list(U = U, tt = tt, var = result$var, scale = scale_vec)
+  result <- interpolate_to_grid(U_obs, tt_obs, as.vector(tt), method, substitute_data = FALSE, sigma = sigma, control=control)
+  list(U = U, tt = tt, var = result$var)
 }
