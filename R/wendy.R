@@ -312,9 +312,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                         ols(as.array(G$contiguous()), as.array(b$contiguous()), L) 
                      },
                      IRLS = if(!lip){
-                          nirls(g, as.array(b$contiguous()), L, Jp_r, p0, max_its = control$max_iterates)
+                          nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
                         } else{
-                          irls(as.array(G$contiguous()), as.array(b$contiguous()), L, max_its = control$max_iterates)
+                          irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
                       }, # IRLS WENDy / NIRLS WENDy
                      MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
                   )
