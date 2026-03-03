@@ -13,7 +13,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 100
+npoints <- 10
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -33,12 +33,12 @@ noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
+res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS", noise_dist = "addgaussian",
   control = list(
-    min_number_points = 256,
+    min_number_points = 100,
     interpolation_method = "cubic_ls",
     test_fun_type = "MSG",
-    scale_by_var = 1
+    scale_by_var = 10
     )
   )
 
@@ -72,8 +72,5 @@ legend(
   bty    = "n",
   cex = 0.8
 )
-
-print(res$phat)
-print(res$sig)
 
 # View(tibble( diag(as.array(res$W ))))

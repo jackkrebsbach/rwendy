@@ -1,7 +1,8 @@
 # Iterative (weak) re-weighted least squares
-irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+irls <- function(G, b, L, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- nrow(G)
   alphaIdm <- reg * diag(rep(1, dm))
+  W_mat <- if (!is.null(W)) as.array(W) else NULL
   p <- lm.fit(G, b)$coefficients
   n <- 0
   SW <- Inf
@@ -18,7 +19,8 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
     # Gᵀ(RᵀR)⁻¹G = Gᵀ(RᵀR)⁻¹b which reduces to (GᵀR⁻¹)R⁻ᵀG =(GᵀR⁻¹)R⁻ᵀb
     # Thus we solve the least squares problem R⁻ᵀG = R⁻ᵀb where R is upper triangular matrix
     Ln <- as.array(L(p)$contiguous())
-    Sn <- (1 - reg) * Ln %*% t(Ln) + alphaIdm
+    Sn <- if (!is.null(W_mat)) (1 - reg) * Ln %*% W_mat %*% t(Ln) + alphaIdm
+          else                 (1 - reg) * Ln %*% t(Ln) + alphaIdm
     RT <- t(chol(Sn)) # S = RᵀR R is upper triangular
     G_ <- forwardsolve(RT, G)
     b_ <- forwardsolve(RT, b)
@@ -58,9 +60,10 @@ irls <- function(G, b, L, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, m
 }
 
 # Nonlinear iterative (weak) re-weighted least squares
-nirls <- function(g, b, L, Jp_r, p0, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- length(b)
   alphaIdm <- reg * diag(rep(1, dm))
+  W_mat <- if (!is.null(W)) as.array(W) else NULL
   p <- p0
   n <- 0
   SW <- Inf
@@ -84,7 +87,8 @@ nirls <- function(g, b, L, Jp_r, p0, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, 
     }
 
     Ln <- as.array(L(p)$contiguous())
-    Sn <- (1 - reg) * Ln %*% t(Ln) + alphaIdm
+    Sn <- if (!is.null(W_mat)) (1 - reg) * Ln %*% W_mat %*% t(Ln) + alphaIdm
+          else                 (1 - reg) * Ln %*% t(Ln) + alphaIdm
     RT <- t(chol(Sn)) # S = RᵀR R is upper triangular
 
     p <- nls.lm(p, lower = NULL, upper = NULL, function(p){weighted_residual(p, RT)}, function(p){weighted_residual_jacobian(p, RT)})$par
