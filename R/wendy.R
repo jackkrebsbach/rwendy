@@ -100,7 +100,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   estimated_sd <- if (is.na(control$noise_sd)) {
     if (nrow(U) < 20) {
-      U_cubic_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, "cubic_ls", substitute_data = FALSE)$U
+      U_cubic_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, "cubic_ls", substitute_data = FALSE, control=control)$U
       sqrt(mean((U_orig - U_cubic_fit)^2))
     } else {
       estimate_std(U, k = 6)
@@ -113,7 +113,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   # Interpolation if data is sparse
   if (nrow(U) > control$max_points_interp) {
-    interp_list <- list(none = list(U = U, tt = tt, var = rep(1.0, nrow(U)), scale = rep(1.0, nrow(U))))
+    interp_list <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = D)))
   } else {
     interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control, sigma = estimated_sd)), methods)
   }
@@ -249,7 +249,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   # W: diagonal variance matrix, shape (M*mp1*D, M*mp1*D), ordered (time, state) within each interpolant block.
   # Only built when scale_by_var is set; otherwise W=NULL and S = L Lᵀ as before.
   W <- if (!is.null(control$scale_by_var)) {
-    var_vec <- unlist(lapply(interp_list, function(d) rep(d$var, each = D)))
+    var_vec <- unlist(lapply(interp_list, function(d) c(t(d$var))))
     torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
   } else {
     NULL
@@ -291,8 +291,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$interp_list <- interp_list  # all interpolated datasets
   res$U   <- interp_list[[1]]$U    # first interpolant for backward compat
   res$tt  <- tt
-  res$var <- interp_list[[1]]$var  # per-time-point variance weights (var=1 at observed times)
+  res$var <- interp_list[[1]]$var  # (mp1 x D) per-time-per-state variance weights (1 at observed times)
   res$interp_methods <- names(interp_list)
+  res$W <- W
 
   class(res) <- "wendy"
   attr(res, "call") <- match.call()

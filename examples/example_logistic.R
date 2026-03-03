@@ -38,7 +38,7 @@ res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgau
     min_number_points = 256,
     interpolation_method = "cubic_ls",
     test_fun_type = "MSG",
-    scale_by_var = 1 
+    scale_by_var = 1
     )
   )
 
@@ -74,3 +74,5 @@ legend(
 )
 
 print(res$phat)
+
+View(tibble( diag(as.array(res$W ))))
