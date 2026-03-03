@@ -113,7 +113,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   # Interpolation if data is sparse
   if (nrow(U) > control$max_points_interp) {
-    interp_list <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = D)))
+    interp_list <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
   } else {
     interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control, sigma = estimated_sd)), methods)
   }
