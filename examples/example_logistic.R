@@ -13,7 +13,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 10
+npoints <- 100
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -74,5 +74,6 @@ legend(
 )
 
 print(res$phat)
+print(res$sig)
 
-View(tibble( diag(as.array(res$W ))))
+# View(tibble( diag(as.array(res$W ))))
