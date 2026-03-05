@@ -1,3 +1,23 @@
+# Detect the maximum polynomial degree of state variables in the symbolic RHS.
+# Parses the string representation of f_expr and looks for u_i^N patterns.
+# Returns an integer >= 1.
+# @keywords internal
+detect_max_state_order <- function(f_expr, u_expr) {
+  expr_str  <- paste(as.character(f_expr), collapse = " ")
+  u_names   <- as.character(u_expr)
+  max_order <- 1L
+  for (u_name in u_names) {
+    escaped <- gsub("([.|()\\^{}+?$*])", "\\\\\\1", u_name)
+    pattern <- paste0(escaped, "\\^(\\d+)")
+    hits    <- regmatches(expr_str, gregexpr(pattern, expr_str))[[1]]
+    for (h in hits) {
+      pwr       <- as.integer(sub(paste0(escaped, "\\^"), "", h))
+      max_order <- max(max_order, pwr)
+    }
+  }
+  max_order
+}
+
 compute_symbolic_jacobian <- function(f_expr, vars) {
   dims <- dim(f_expr)
 
