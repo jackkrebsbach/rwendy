@@ -121,6 +121,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     }
     methods                      <- auto_method
     control$interpolation_method <- auto_method
+    control$scale_by_var <- TRUE
   }
 
   device <- control$device

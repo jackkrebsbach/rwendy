@@ -110,7 +110,7 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
     var_mat <- matrix(var_mat, nrow = length(tt_target), ncol = ncol(U))
   }
 
-  var_mat[is.na(var_mat)] <- 0
+  var_mat[is.na(var_mat)] <- if (!is.null(sigma)) sigma^2 else 1.0
 
   tol <- sqrt(.Machine$double.eps)
   for (i in seq_along(tt_vec)) {
