@@ -49,8 +49,7 @@ check_suggested_packages <- function() {
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"),
-            method = c("IRLS", "MLE", "OLS"), control = NULL){
+solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS"), control = NULL){
 
   check_suggested_packages()
 
@@ -72,8 +71,8 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     k_max = 200,
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
-    min_number_points = 256,
-    max_points_interp = 25,           # integer: skip interpolation/densification when nrow(U) exceeds this
+    min_number_points = 256,            
+    max_points_interp = 25,           # integer: only interpolate data when number of data points is less than this
     interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
     scale_by_var = TRUE,              # logical: scale covariance with matrix W, S = LWL^T upweight interpolation uncertainty
@@ -95,7 +94,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   U_orig      <- U
   tt_orig     <- as.vector(tt)
 
-  # Build symbolic RHS early so we can inspect state-variable order for auto interpolation.
   u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
@@ -105,31 +103,27 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                     f(u_expr, p_expr, t_expr)
                    )
 
+  device <- control$device
   methods <- control$interpolation_method
 
-  # Auto-select interpolation method for sparse data based on RHS polynomial order.
   # When nrow(U) < max_points_interp, use a polynomial LS fit of degree (max_order + 1).
   if (nrow(U) < control$max_points_interp) {
     max_order    <- detect_max_state_order(f_expr, u_expr)
     target_deg   <- max_order + 1L
-    degree_names <- c("linear", "quadratic", "cubic", "quartic", "quintic",
-                      "sextic", "septic", "octic", "nonic", "decic")
-    auto_method  <- if (target_deg <= length(degree_names)) {
-      paste0(degree_names[target_deg], "_ls")
-    } else {
-      paste0("poly_ls_", target_deg)
-    }
-    methods                      <- auto_method
+    auto_method  <- paste0("poly_ls_", target_deg)
+    methods <- auto_method
     control$interpolation_method <- auto_method
     control$scale_by_var <- TRUE
   }
 
-  device <- control$device
 
   estimated_sd <- if (is.na(control$noise_sd)) {
     if (nrow(U) < 20) {
-      U_cubic_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, "cubic_ls", substitute_data = FALSE, control=control)$U
-      sqrt(mean((U_orig - U_cubic_fit)^2))
+      max_order    <- detect_max_state_order(f_expr, u_expr)
+      target_deg   <- max_order + 1L
+      degree_interpolation  <- paste0("poly_ls_", target_deg)
+      U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control=control)$U
+      sqrt(mean((U_orig - U_fit)^2))
     } else {
       estimate_std(U, k = 6)
     }
@@ -143,12 +137,11 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   if (nrow(U) > control$max_points_interp) {
     interp_list <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
   } else {
-    interp_list <- setNames(lapply(methods, function(m) interpolate_data(U, tt, m, control, sigma = estimated_sd)), methods)
+    interp_list <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
   }
 
   tt <- interp_list[[1]]$tt 
 
-  # Build test function matrices per interpolant, then stack V and V' row-wise
   build_tf_matrices <- function(U_m, tt_m) {
     if (control$test_fun_type == "SSL") {
       build_full_test_function_matrices_ssl(U_m, tt_m, control)
@@ -157,10 +150,13 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     }
   }
 
-  tf_list <- lapply(interp_list, function(d) build_tf_matrices(d$U, d$tt))
+  tf_list <- lapply(interp_list, function(d){ 
+    build_tf_matrices(d$U, d$tt)
+  })
 
   min_radius <- tf_list[[1]]$min_radius
-
+  
+  # Problem parameters
   J      <- length(p0)
   D      <- ncol(interp_list[[1]]$U)
   mp1    <- nrow(interp_list[[1]]$U)
@@ -187,11 +183,16 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   F_list <- lapply(interp_list, function(d) build_F(d$U, d$tt, f_, J, device))
   F_ <- F_list[[1]]  
 
-  V_tensors  <- lapply(tf_list, function(tf)
-    torch::torch_tensor(tf$V,       dtype = torch::torch_float64(), device = device))
-  Vp_tensors <- lapply(tf_list, function(tf)
-    torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device))
-
+  V_tensors <- lapply(tf_list, function(tf) {
+    torch::torch_tensor(tf$V, dtype = torch::torch_float64(), device = device)
+  })
+  Vp_tensors <- lapply(tf_list, function(tf) {
+    torch::torch_tensor(
+      tf$V_prime,
+      dtype = torch::torch_float64(),
+      device = device
+    )
+  })
 
   V  <- torch::torch_cat(V_tensors,  dim = 1L)  # 𝚽 or 𝚿
   Vp <- torch::torch_cat(Vp_tensors, dim = 1L)  # 𝚽' or 𝚿'
@@ -228,8 +229,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   b <- if (!lip) b else b - g0
 
   # Jp_r: cat(Jp_r_m(p), dim=1)  or  G  for linear case
-  Jp_r_fns <- lapply(seq_along(interp_list), function(i)
-    build_Jp_r(J_p, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device))
+  Jp_r_fns <- lapply(seq_along(interp_list), function(i){
+    build_Jp_r(J_p, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device)
+  })
+
   Jp_r <- if (!lip) {
     local({ fns <- Jp_r_fns
       function(p) torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L) })
@@ -238,28 +241,33 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   }
 
   # Hp_r: cat(Hp_r_m(p), dim=1)
-  Hp_r_fns <- lapply(seq_along(interp_list), function(i)
-    build_Hp_r(J_pp, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device))
-  Hp_r <- local({ fns <- Hp_r_fns
-    function(p) torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L) })
+  Hp_r_fns <- lapply(seq_along(interp_list), function(i){
+    build_Hp_r(J_pp, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device)
+  })
+  Hp_r <- local({ 
+    fns <- Hp_r_fns
+    function(p){ torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L) }
+  })
 
   # L0, L, Jp_L, Hp_L: per-interpolant then block-diagonal
   # S = L L^T is block-diagonal — no cross-covariance between interpolants
-  L0_list <- lapply(seq_along(interp_list), function(i)
-    build_L0(K_list[i], D, mp1, Vp_tensors[[i]], sig, device))
+  L0_list <- lapply(seq_along(interp_list), function(i){
+    build_L0(K_list[i], D, mp1, Vp_tensors[[i]], sig, device)
+  })
 
   L_fns <- lapply(seq_along(interp_list), function(i) {
-    if (!lip) build_L(      interp_list[[i]]$U, interp_list[[i]]$tt, J_u,  K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
+    if (!lip) build_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_u,  K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
     else      build_L_linear(interp_list[[i]]$U, interp_list[[i]]$tt, J_u, K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
   })
 
   Jp_L_fns <- lapply(seq_along(interp_list), function(i) {
-    if (!lip) build_Jp_L(      interp_list[[i]]$U, interp_list[[i]]$tt, J_up, K_list[i], J, D, V_tensors[[i]], sig, device)
+    if (!lip) build_Jp_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_up, K_list[i], J, D, V_tensors[[i]], sig, device)
     else      build_Jp_L_linear(interp_list[[i]]$U, interp_list[[i]]$tt, J_u,  K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
   })
 
-  Hp_L_fns <- lapply(seq_along(interp_list), function(i)
-    build_Hp_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_upp, K_list[i], J, D, V_tensors[[i]], sig, device))
+  Hp_L_fns <- lapply(seq_along(interp_list), function(i){
+    build_Hp_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_upp, K_list[i], J, D, V_tensors[[i]], sig, device)
+  })
 
   L0   <- build_L0_block(  L0_list,   K_list, D, mp1,    device)
   L    <- build_L_block(   L_fns,     K_list, D, mp1,    device)
@@ -267,7 +275,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   Hp_L <- build_Hp_L_block(Hp_L_fns,  K_list, D, mp1, J, device)
 
   # W: diagonal variance matrix, shape (M*mp1*D, M*mp1*D), ordered (time, state) within each interpolant block.
-  # Only built when scale_by_var is set; otherwise W=NULL and S = L Lᵀ as before.
   W <- if (!is.null(control$scale_by_var)) {
     var_vec <- unlist(lapply(interp_list, function(d) c(t(d$var))))
     torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
@@ -275,15 +282,15 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     NULL
   }
 
-  S <- build_S(L, W, diag_reg = control$diag_reg) # Covariance of the weak residual S(p) = L W Lᵀ
+  S <- build_S(L, W, diag_reg = control$diag_reg) # Covariance of the weak residual S(p) = LLᵀ (if interpolating S(p) = LWLᵀ)
   Jp_S <- build_J_S(L, Jp_L, J, K, D, W, diag_reg = control$diag_reg) # Jacobian of Covariance of the weak residual ∇ₚS(p)
 
   wnll <- build_wnll(S, g, b, K, D) # Negative log likelihood of the weak form residual (wnll)
   J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of wnll
   # Hessian of the wnll
   # When linear in parameters there are terms are guaranteed to be zero so we define a new function
-  H_wnll <- if (!lip) build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W, diag_reg = control$diag_reg) else build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W, diag_reg = control$diag_reg)
-
+  H_wnll <- if (!lip) build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W, diag_reg = control$diag_reg) 
+            else build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W, diag_reg = control$diag_reg)
 
   res <- list()
 
@@ -327,16 +334,16 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   data <- switch(method,
                      OLS = if(!lip){ 
-                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 1e-10)
+                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
                       } else {
                         ols(as.array(G$contiguous()), as.array(b$contiguous()), L) 
-                     },
+                     }, # Ordinary Least Squares 
                      IRLS = if(!lip){
                           nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
                         } else{
                           irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
-                      }, # IRLS WENDy / NIRLS WENDy
-                     MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
+                      }, # Iterative Reweighted Least Squares
+                     MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) # Maximum Likelihood Estimation 
                   )
   res$data <- data
   res$phat <- data$p 

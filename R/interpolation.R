@@ -36,12 +36,10 @@ poly_ls_degree <- function(method) {
 #         - model-based methods (*_ls, loess, spline): se.fit^2 + residual.scale^2
 #         - linear: sigma^2 * (1 + (1-t)^2 + t^2) when sigma is supplied, else NA
 #         - cubic, kernel: NA (no residual model available)
-# sigma: optional scalar noise SD used for exact interpolants that cannot
-#        estimate their own residual scale.
 # @keywords internal
 fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
 
-  if (grepl("_ls$", method)) {
+  if (grepl("_ls$", method) || grepl("^poly_ls_\\d+$", method)) {
     degree <- poly_ls_degree(method)
     X      <- poly_design(tt_obs,    degree)
     df_obs <- as.data.frame(X[, -1L, drop = FALSE])

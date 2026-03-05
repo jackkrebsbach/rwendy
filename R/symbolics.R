@@ -66,9 +66,3 @@ lognormal_transform <- function(f_sym){
     do.call(symengine::subs, c(list(fud), sub_args))
   }))
 }
-
-
-
-
-
-
