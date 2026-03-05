@@ -66,5 +66,5 @@ legend(
   cex = 0.8
 )
 
-print(as.numeric(res$sig)^2)
-View(tibble( diag(as.array(res$W))))
+# print(as.numeric(res$sig)^2)
+# View(tibble( diag(as.array(res$W))))

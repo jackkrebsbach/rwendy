@@ -75,7 +75,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     max_points_interp = 25,           # integer: only interpolate data when number of data points is less than this
     interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
-    scale_by_var = TRUE,              # logical: scale covariance with matrix W, S = LWL^T upweight interpolation uncertainty
+    scale_by_var = 10,                 # numeric: W_ii = 1 + scale_by_var * var_ii; NULL/NA disables W entirely
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -130,7 +130,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     interp_method  <- paste0("poly_ls_", target_deg)
     methods <- interp_method
     control$interpolation_method <- interp_method
-    control$scale_by_var <- TRUE
+    control$scale_by_var <- 1
   }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
