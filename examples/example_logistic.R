@@ -42,12 +42,12 @@ t_eval_dense <- seq(t_span[1], t_span[2], length.out = 256);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
 
 interp_colors <- c("purple", "darkorange", "forestgreen", "deeppink", "cyan4")
-interp_names  <- names(res$interp_list)
+problem_names <- names(res$wendy_data)
 
 plot(tt, U, cex = 1, xlab = "Time", ylab=  "u₁", col="black")
-for(i in seq_along(res$interp_list)){
-  interps <- res$interp_list[[i]]
-  points(interps$tt, interps$U, cex = 0.75, col = interp_colors[i])
+for(i in seq_along(res$wendy_problems)){
+  prob <- res$wendy_problems[[i]]
+  points(prob$tt, prob$U, cex = 0.75, col = interp_colors[i])
 }
 lines(t_eval2, sol_hat[,2], cex = 0.25, col = "#1f77b4")
 lines(t_eval_dense, sol_true[,2], cex = 0.5, col = "red")
@@ -57,14 +57,14 @@ title(paste0("nr: ", nr,
             ))
 legend(
   "bottomright",
-  legend = c("data", "inferred trajectory", "true trajectory", interp_names),
-  col    = c("black", "#1f77b4", "red", interp_colors[seq_along(interp_names)]),
-  pch    = c(1, NA, NA, rep(1, length(interp_names))),
-  lty    = c(NA, 1, 1, rep(NA, length(interp_names))),
+  legend = c("data", "inferred trajectory", "true trajectory", problem_names),
+  col    = c("black", "#1f77b4", "red", interp_colors[seq_along(problem_names)]),
+  pch    = c(1, NA, NA, rep(1, length(problem_names))),
+  lty    = c(NA, 1, 1, rep(NA, length(problem_names))),
   xpd    = TRUE,
   bty    = "n",
   cex = 0.8
 )
 
-# print(as.numeric(res$sig)^2)
-# View(tibble( diag(as.array(res$W))))
+print(as.numeric(res$sig)^2)
+View(tibble( diag(as.array(res$W))))

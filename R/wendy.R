@@ -60,7 +60,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     optimize = TRUE,
     noise_sd = NA,
     compute_svd = TRUE,
-    diag_reg = 1e-10,
+    diag_reg = 10e-10,
     max_iterates = 200,
     S = 1,  # Euler-Maclaurin series order expansion
     p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
@@ -94,6 +94,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   U_orig   <- U
   tt_orig  <- as.vector(tt)
 
+  device  <- control$device
+  methods <- control$interpolation_method
+
   # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
   u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
@@ -119,12 +122,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_p   <- build_fn(J_p_sym,   vars)  # ∇ₚf(p,u,t)
   J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
   J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
-  device <- control$device
-  methods <- control$interpolation_method
 
   # When nrow(U) < max_points_interp, use a polynomial LS fit of degree (max_order + 1).
   if (nrow(U) < control$max_points_interp) {
-    print("interpolating")
     max_order    <- detect_max_state_order(f_expr, u_expr)
     target_deg   <- max_order + 1L
     interp_method  <- paste0("poly_ls_", target_deg)
@@ -153,17 +153,15 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
   }
 
-  tt <- wendy_data[[1]]$tt 
-
   # Problem parameters
   J <- length(p0)
   D <- ncol(wendy_data[[1]]$U)
 
   wendy_problems <- lapply(wendy_data, function(d) {
-    build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp,J, lip, sig, device, control)
+    build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control)
   })
 
-  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, device)
+  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$scale_by_var, device)
 
   p1 <- wendy_problems[[1]]
 
@@ -193,9 +191,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$wendy_problems      <- wendy_problems         # one WENDyProblem per interpolant
   res$wendy_data   <- wendy_data      # all interpolated datasets
   res$U             <- p1$U             # first interpolant for backward compat
-  res$tt            <- tt
+  res$tt            <- wendy_data[[1]]$tt
   res$var           <- p1$var
-  res$interp_methods <- names(wendy_data)
+  res$wendy_methods  <- names(wendy_data)
   res$W <- system$W
 
   class(res) <- "wendy"
