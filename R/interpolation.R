@@ -111,12 +111,11 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
   }
 
   var_mat[is.na(var_mat)] <- 0
-  var_mat <- 1 + var_mat * (if(is.null(control$scale_by_var)) 1 else control$scale_by_var) # W = 1 (baseline) + extra interpolation variance
 
   tol <- sqrt(.Machine$double.eps)
   for (i in seq_along(tt_vec)) {
     j <- which(abs(tt_target - tt_vec[i]) < tol)
-    if (length(j) == 1L) var_mat[j, ] <- 1.0  # observed: no extra variance
+    if (length(j) == 1L) var_mat[j, ] <- if (!is.null(sigma)) sigma^2 else 1.0  # observed: noise variance
   }
 
   if (!is.matrix(U_new)){

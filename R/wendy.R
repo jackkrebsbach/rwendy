@@ -72,11 +72,11 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     k_max = 200,
     max_test_fun_condition_number = 1e4,
     min_test_fun_info_number = 0.95,
-    min_number_points = 25,
-    max_points_interp = 20,           # integer: skip interpolation/densification when nrow(U) exceeds this
+    min_number_points = 256,
+    max_points_interp = 25,           # integer: skip interpolation/densification when nrow(U) exceeds this
     interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
-    scale_by_var = NULL,              # logical: scale V/Vp by sqrt(var[m]) to upweight interpolation uncertainty
+    scale_by_var = TRUE,              # logical: scale covariance with matrix W, S = LWL^T upweight interpolation uncertainty
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -94,7 +94,34 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   
   U_orig      <- U
   tt_orig     <- as.vector(tt)
-  methods     <- control$interpolation_method
+
+  # Build symbolic RHS early so we can inspect state-variable order for auto interpolation.
+  u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
+  p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
+  t_expr <- symengine::S("t")
+
+  f_expr <- switch(noise_dist,
+                    lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
+                    f(u_expr, p_expr, t_expr)
+                   )
+
+  methods <- control$interpolation_method
+
+  # Auto-select interpolation method for sparse data based on RHS polynomial order.
+  # When nrow(U) < max_points_interp, use a polynomial LS fit of degree (max_order + 1).
+  if (nrow(U) < control$max_points_interp) {
+    max_order    <- detect_max_state_order(f_expr, u_expr)
+    target_deg   <- max_order + 1L
+    degree_names <- c("linear", "quadratic", "cubic", "quartic", "quintic",
+                      "sextic", "septic", "octic", "nonic", "decic")
+    auto_method  <- if (target_deg <= length(degree_names)) {
+      paste0(degree_names[target_deg], "_ls")
+    } else {
+      paste0("poly_ls_", target_deg)
+    }
+    methods                      <- auto_method
+    control$interpolation_method <- auto_method
+  }
 
   device <- control$device
 
@@ -139,14 +166,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   K_list <- sapply(tf_list, function(tf) nrow(tf$V))
   K      <- sum(K_list)            # total test functions across all interpolants
 
-  u_expr <- do.call(c, lapply(1:D, function(i) symengine::S(paste0("u", i))))
-  p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
-  t_expr <- symengine::S("t")
-
-  f_expr <- switch(noise_dist, # Symbolic representation of the r.h.s.
-                    lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
-                    f(u_expr, p_expr, t_expr)
-                   )
   # Compute symbolic gradients of the r.h.s. u̇ = f(p,u,t)
   J_u_sym <- compute_symbolic_jacobian(f_expr, u_expr)
   J_up_sym <- compute_symbolic_jacobian(J_u_sym, p_expr)
