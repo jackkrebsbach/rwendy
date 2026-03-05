@@ -97,9 +97,10 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
 #' @param wendy_problems  List of WENDyProblem objects.
 #' @param lip             Logical; TRUE when f is linear in parameters.
 #' @param diag_reg        Diagonal regularisation added to S.
+#' @param scale_by_var    Logical; if TRUE build block-diagonal W from per-problem variances.
 #' @param device          Torch device.
 #' @keywords internal
-build_wendy_system <- function(wendy_problems, lip, diag_reg, device) {
+build_wendy_system <- function(wendy_problems, lip, diag_reg, scale_by_var, device) {
   J      <- wendy_problems[[1]]$J
   D      <- wendy_problems[[1]]$D
   mp1    <- wendy_problems[[1]]$mp1
@@ -128,20 +129,26 @@ build_wendy_system <- function(wendy_problems, lip, diag_reg, device) {
     G <- torch::torch_cat(lapply(wendy_problems, `[[`, "G"), dim = 1L)
 
     Jp_r_fns <- lapply(wendy_problems, `[[`, "Jp_r")
-    Jp_r     <- local({ fns <- Jp_r_fns
-      function(p) torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L)
+    Jp_r     <- local({ 
+      fns <- Jp_r_fns
+      function(p){ 
+        torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L)
+      }
     })
 
     Hp_r_fns <- lapply(wendy_problems, `[[`, "Hp_r")
-    Hp_r     <- local({ fns <- Hp_r_fns
-      function(p) torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L)
+    Hp_r     <- local({ 
+      fns <- Hp_r_fns
+      function(p){ 
+        torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L)
+      }
     })
 
-    L    <- build_L_block(   lapply(wendy_problems, `[[`, "L"),    K_list, D, mp1,    device)
+    L    <- build_L_block(lapply(wendy_problems, `[[`, "L"),    K_list, D, mp1,    device)
     Jp_L <- build_Jp_L_block(lapply(wendy_problems, `[[`, "Jp_L"), K_list, D, mp1, J, device)
     Hp_L <- build_Hp_L_block(lapply(wendy_problems, `[[`, "Hp_L"), K_list, D, mp1, J, device)
 
-    W <- if (!is.null(wendy_problems[[1]]$W)) {
+    W <- if (isTRUE(scale_by_var)) {
       var_vec <- unlist(lapply(wendy_problems, function(pr) c(t(pr$var))))
       torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
     } else {
