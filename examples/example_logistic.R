@@ -13,14 +13,14 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 5
+npoints <- 10
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.05
+nr <- 0.5
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
