@@ -33,7 +33,9 @@ noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian")
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
+                    control = list(scale_by_var = 1)
+                 )
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
 sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)

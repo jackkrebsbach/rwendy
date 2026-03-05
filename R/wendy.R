@@ -130,7 +130,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     interp_method  <- paste0("poly_ls_", target_deg)
     methods <- interp_method
     control$interpolation_method <- interp_method
-    control$scale_by_var <- 1
   }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
