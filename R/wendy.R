@@ -91,9 +91,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     tt <- data$tt
   }
   
-  U_orig      <- U
-  tt_orig     <- as.vector(tt)
+  U_orig   <- U
+  tt_orig  <- as.vector(tt)
 
+  # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
   u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
@@ -103,247 +104,133 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                     f(u_expr, p_expr, t_expr)
                    )
 
+  J_u_sym   <- compute_symbolic_jacobian(f_expr, u_expr)
+  J_up_sym  <- compute_symbolic_jacobian(J_u_sym, p_expr)
+  J_p_sym   <- compute_symbolic_jacobian(f_expr, p_expr)
+  J_pp_sym  <- compute_symbolic_jacobian(J_p_sym, p_expr)
+  J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p_expr)
+
+  vars <- c(p_expr, u_expr, t_expr)
+
+  # Callable functions of p, u, and t
+  f_    <- build_fn(f_expr,    vars)  # f(p,u,t)
+  J_u   <- build_fn(J_u_sym,   vars)  # ∇ᵤf(p,u,t)
+  J_up  <- build_fn(J_up_sym,  vars)  # ∇ₚ∇ᵤf(p,u,t)
+  J_p   <- build_fn(J_p_sym,   vars)  # ∇ₚf(p,u,t)
+  J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
+  J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
   device <- control$device
   methods <- control$interpolation_method
 
   # When nrow(U) < max_points_interp, use a polynomial LS fit of degree (max_order + 1).
   if (nrow(U) < control$max_points_interp) {
+    print("interpolating")
     max_order    <- detect_max_state_order(f_expr, u_expr)
     target_deg   <- max_order + 1L
-    auto_method  <- paste0("poly_ls_", target_deg)
-    methods <- auto_method
-    control$interpolation_method <- auto_method
+    interp_method  <- paste0("poly_ls_", target_deg)
+    methods <- interp_method
+    control$interpolation_method <- interp_method
     control$scale_by_var <- TRUE
   }
 
-
-  estimated_sd <- if (is.na(control$noise_sd)) {
-    if (nrow(U) < 20) {
-      max_order    <- detect_max_state_order(f_expr, u_expr)
-      target_deg   <- max_order + 1L
-      degree_interpolation  <- paste0("poly_ls_", target_deg)
-      U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control=control)$U
-      sqrt(mean((U_orig - U_fit)^2))
-    } else {
-      estimate_std(U, k = 6)
-    }
-  } else {
+  estimated_sd <- if (!is.na(control$noise_sd)) {
     control$noise_sd
+  } else if (nrow(U) >= 20) {
+    estimate_std(U, k = 6)
+  } else {
+    # Standard SD estimation unreliable for sparse data; use poly LS residuals
+    degree_interpolation <- paste0("poly_ls_", detect_max_state_order(f_expr, u_expr) + 1L)
+    U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control = control)$U
+    sqrt(mean((U_orig - U_fit)^2))
   }
 
   sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
 
   # Interpolation if data is sparse
   if (nrow(U) > control$max_points_interp) {
-    interp_list <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
+    wendy_data <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
   } else {
-    interp_list <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
+    wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
   }
 
-  tt <- interp_list[[1]]$tt 
+  tt <- wendy_data[[1]]$tt 
 
-  build_tf_matrices <- function(U_m, tt_m) {
-    if (control$test_fun_type == "SSL") {
-      build_full_test_function_matrices_ssl(U_m, tt_m, control)
-    } else {
-      build_full_test_function_matrices_msg(U_m, tt_m, control, control$compute_svd)
-    }
-  }
-
-  tf_list <- lapply(interp_list, function(d){ 
-    build_tf_matrices(d$U, d$tt)
-  })
-
-  min_radius <- tf_list[[1]]$min_radius
-  
   # Problem parameters
-  J      <- length(p0)
-  D      <- ncol(interp_list[[1]]$U)
-  mp1    <- nrow(interp_list[[1]]$U)
-  K_list <- sapply(tf_list, function(tf) nrow(tf$V))
-  K      <- sum(K_list)            # total test functions across all interpolants
+  J <- length(p0)
+  D <- ncol(wendy_data[[1]]$U)
 
-  # Compute symbolic gradients of the r.h.s. u̇ = f(p,u,t)
-  J_u_sym <- compute_symbolic_jacobian(f_expr, u_expr)
-  J_up_sym <- compute_symbolic_jacobian(J_u_sym, p_expr)
-  J_p_sym <- compute_symbolic_jacobian(f_expr, p_expr)
-  J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p_expr)
-  J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p_expr)
-
-  vars <- c(p_expr, u_expr ,t_expr)
-
-  # Callable functions of p, u, and t
-  f_ <- build_fn(f_expr, vars)        # f(p,u,t) 
-  J_u <- build_fn(J_u_sym, vars)      # ∇ᵤf(p,u,t)      
-  J_up <- build_fn(J_up_sym, vars)    # ∇ₚ∇ᵤf(p,u,t)
-  J_p <- build_fn(J_p_sym, vars)      # ∇ₚf(p,u,t)
-  J_pp <- build_fn(J_pp_sym, vars)    # ∇ₚ∇ₚf(p,u,t)
-  J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
-
-  F_list <- lapply(interp_list, function(d) build_F(d$U, d$tt, f_, J, device))
-  F_ <- F_list[[1]]  
-
-  V_tensors <- lapply(tf_list, function(tf) {
-    torch::torch_tensor(tf$V, dtype = torch::torch_float64(), device = device)
-  })
-  Vp_tensors <- lapply(tf_list, function(tf) {
-    torch::torch_tensor(
-      tf$V_prime,
-      dtype = torch::torch_float64(),
-      device = device
-    )
+  wendy_problems <- lapply(wendy_data, function(d) {
+    build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp,J, lip, sig, device, control)
   })
 
-  V  <- torch::torch_cat(V_tensors,  dim = 1L)  # 𝚽 or 𝚿
-  Vp <- torch::torch_cat(Vp_tensors, dim = 1L)  # 𝚽' or 𝚿'
+  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, device)
 
-  # If linear in parameters the function g(p) is an affine transformation Gp + g0 = g(p).
-  # In practice we move g0 to the l.h.s. of the linear system  b - g0 = Gp
-  # G: rbind(G_1, ..., G_M)
-  G <- torch::torch_cat(
-    lapply(seq_along(interp_list), function(i) {
-      build_G_matrix(V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, F_list[[i]], J, device)
-    }),
-    dim = 1L
-  )
-
-  # g0 = cat(V_m F_m(0))
-  g0 <- torch::torch_cat(lapply(seq_along(interp_list), function(i)
-    torch::torch_mm(V_tensors[[i]], F_list[[i]](rep(0, J)))$reshape(c(-1))))
-
-  # g(p) = cat(V_m F_m(p))  or  Gp  for linear case
-  g <- if (!lip) {
-    local({
-      Vt <- V_tensors; Fl <- F_list
-      function(p) torch::torch_cat(lapply(seq_along(Fl), function(i)
-        torch::torch_matmul(Vt[[i]], Fl[[i]](p))$reshape(c(-1))))
-    })
-  } else {
-    build_g_linear(G, device)
-  }
-
-  # b = cat(-V'_m U_m) # b = -𝚽'U
-  b <- torch::torch_cat(lapply(seq_along(interp_list), function(i)
-    -1 * torch::torch_mm(Vp_tensors[[i]],
-           torch::torch_tensor(interp_list[[i]]$U, dtype = torch::torch_float64(), device = device))$reshape(c(-1))))
-  b <- if (!lip) b else b - g0
-
-  # Jp_r: cat(Jp_r_m(p), dim=1)  or  G  for linear case
-  Jp_r_fns <- lapply(seq_along(interp_list), function(i){
-    build_Jp_r(J_p, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device)
-  })
-
-  Jp_r <- if (!lip) {
-    local({ fns <- Jp_r_fns
-      function(p) torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L) })
-  } else {
-    build_Jp_r_linear(G)
-  }
-
-  # Hp_r: cat(Hp_r_m(p), dim=1)
-  Hp_r_fns <- lapply(seq_along(interp_list), function(i){
-    build_Hp_r(J_pp, K_list[i], D, J, mp1, V_tensors[[i]], interp_list[[i]]$U, interp_list[[i]]$tt, device)
-  })
-  Hp_r <- local({ 
-    fns <- Hp_r_fns
-    function(p){ torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L) }
-  })
-
-  # L0, L, Jp_L, Hp_L: per-interpolant then block-diagonal
-  # S = L L^T is block-diagonal — no cross-covariance between interpolants
-  L0_list <- lapply(seq_along(interp_list), function(i){
-    build_L0(K_list[i], D, mp1, Vp_tensors[[i]], sig, device)
-  })
-
-  L_fns <- lapply(seq_along(interp_list), function(i) {
-    if (!lip) build_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_u,  K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
-    else      build_L_linear(interp_list[[i]]$U, interp_list[[i]]$tt, J_u, K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
-  })
-
-  Jp_L_fns <- lapply(seq_along(interp_list), function(i) {
-    if (!lip) build_Jp_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_up, K_list[i], J, D, V_tensors[[i]], sig, device)
-    else      build_Jp_L_linear(interp_list[[i]]$U, interp_list[[i]]$tt, J_u,  K_list[i], V_tensors[[i]], L0_list[[i]], sig, J, device)
-  })
-
-  Hp_L_fns <- lapply(seq_along(interp_list), function(i){
-    build_Hp_L(interp_list[[i]]$U, interp_list[[i]]$tt, J_upp, K_list[i], J, D, V_tensors[[i]], sig, device)
-  })
-
-  L0   <- build_L0_block(  L0_list,   K_list, D, mp1,    device)
-  L    <- build_L_block(   L_fns,     K_list, D, mp1,    device)
-  Jp_L <- build_Jp_L_block(Jp_L_fns,  K_list, D, mp1, J, device)
-  Hp_L <- build_Hp_L_block(Hp_L_fns,  K_list, D, mp1, J, device)
-
-  # W: diagonal variance matrix, shape (M*mp1*D, M*mp1*D), ordered (time, state) within each interpolant block.
-  W <- if (!is.null(control$scale_by_var)) {
-    var_vec <- unlist(lapply(interp_list, function(d) c(t(d$var))))
-    torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
-  } else {
-    NULL
-  }
-
-  S <- build_S(L, W, diag_reg = control$diag_reg) # Covariance of the weak residual S(p) = LLᵀ (if interpolating S(p) = LWLᵀ)
-  Jp_S <- build_J_S(L, Jp_L, J, K, D, W, diag_reg = control$diag_reg) # Jacobian of Covariance of the weak residual ∇ₚS(p)
-
-  wnll <- build_wnll(S, g, b, K, D) # Negative log likelihood of the weak form residual (wnll)
-  J_wnll <- build_J_wnll(S, Jp_S, Jp_r, g, b, J) # Jacobian of wnll
-  # Hessian of the wnll
-  # When linear in parameters there are terms are guaranteed to be zero so we define a new function
-  H_wnll <- if (!lip) build_H_wnll(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W, diag_reg = control$diag_reg) 
-            else build_H_wnll_linear(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W, diag_reg = control$diag_reg)
+  p1 <- wendy_problems[[1]]
 
   res <- list()
 
-  res$wnll <- wnll
-  res$J_wnll <- J_wnll
-  res$H_wnll <- H_wnll
-  res$g <- g
-  res$g0 <- g0
-  res$G <- G
-  res$b <- b
-  res$f <- f_
-  res$J_p <- J_p
-  res$J_u <- J_u
-  res$J_upp <- J_upp
-  res$S <- S
-  res$Jp_S <- Jp_S
-  res$Jp_r <- Jp_r
-  res$F_ <- F_
-  res$f_sym <- f_expr
-  res$L <- L
-  res$sig <- sig
-  res$V <- V
-  res$V_prime <- Vp
-  res$min_radius <- min_radius
-  res$interp_list <- interp_list  # all interpolated datasets
-  res$U   <- interp_list[[1]]$U    # first interpolant for backward compat
-  res$tt  <- tt
-  res$var <- interp_list[[1]]$var  # (mp1 x D) per-time-per-state variance weights (1 at observed times)
-  res$interp_methods <- names(interp_list)
-  res$W <- W
+  res$wnll    <- system$wnll
+  res$J_wnll  <- system$J_wnll
+  res$H_wnll  <- system$H_wnll
+  res$g       <- system$g
+  res$g0      <- p1$g0
+  res$G       <- system$G
+  res$b       <- system$b
+  res$f       <- f_
+  res$J_p     <- J_p
+  res$J_u     <- J_u
+  res$J_upp   <- J_upp
+  res$S       <- system$S
+  res$Jp_S    <- system$Jp_S
+  res$Jp_r    <- system$Jp_r
+  res$F_      <- p1$F_
+  res$f_sym   <- f_expr
+  res$L       <- system$L
+  res$sig     <- sig
+  res$V       <- p1$V
+  res$V_prime <- p1$Vp
+  res$min_radius    <- p1$min_radius
+  res$wendy_problems      <- wendy_problems         # one WENDyProblem per interpolant
+  res$wendy_data   <- wendy_data      # all interpolated datasets
+  res$U             <- p1$U             # first interpolant for backward compat
+  res$tt            <- tt
+  res$var           <- p1$var
+  res$interp_methods <- names(wendy_data)
+  res$W <- system$W
 
   class(res) <- "wendy"
   attr(res, "call") <- match.call()
   attr(res, "method") <- method
   attr(res, "noise_dist") <- noise_dist
-  attr(res, "n_obs") <- mp1
+  attr(res, "n_obs") <- p1$mp1
   attr(res, "n_params") <- length(p0)
   attr(res, "n_states") <- D
 
   if(!control$optimize) return(res)
 
+  g      <- system$g
+  b      <- system$b
+  G      <- system$G
+  L      <- system$L
+  W      <- system$W
+  Jp_r   <- system$Jp_r
+  S      <- system$S
+  wnll   <- system$wnll
+  J_wnll <- system$J_wnll
+  H_wnll <- system$H_wnll
+
   data <- switch(method,
-                     OLS = if(!lip){ 
+                     OLS = if(!lip){
                         nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
                       } else {
-                        ols(as.array(G$contiguous()), as.array(b$contiguous()), L) 
-                     }, # Ordinary Least Squares 
+                        ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
+                     }, # Ordinary Least Squares
                      IRLS = if(!lip){
                           nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
                         } else{
                           irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
                       }, # Iterative Reweighted Least Squares
-                     MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) # Maximum Likelihood Estimation 
+                     MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) # Maximum Likelihood Estimation
                   )
   res$data <- data
   res$phat <- data$p 
