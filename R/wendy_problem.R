@@ -20,6 +20,11 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   D   <- ncol(U)
   mp1 <- nrow(U)
 
+  # Ensure sig is a D-vector for einsum 'a' indices; expand scalar if needed
+  if (sig$numel() != D) {
+    sig <- sig * torch::torch_ones(D, dtype = torch::torch_float64(), device = device)
+  }
+
   tf <- if (control$test_fun_type == "SSL") {
     build_full_test_function_matrices_ssl(U, tt, control)
   } else {
