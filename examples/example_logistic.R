@@ -68,5 +68,6 @@ legend(
   cex = 0.8
 )
 
-# print(as.numeric(res$sig)^2)
+print(as.numeric(res$sig))
+print(noise_sd)
 # View(tibble( diag(as.array(res$W))))
