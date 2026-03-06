@@ -10,7 +10,7 @@
 #' @param lip     Logical; TRUE when f is linear in parameters.
 #' @param sig     Torch scalar: estimated noise SD.
 #' @param device  Torch device.
-#' @param control Control list (uses $test_fun_type, $scale_by_var, etc.).
+#' @param control Control list (uses $test_fun_type, $use_interp_uncertainty, etc.).
 #' @return A list of class "WENDyProblem".
 #' @keywords internal
 build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control) {
@@ -20,7 +20,6 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   D   <- ncol(U)
   mp1 <- nrow(U)
 
-  # Ensure sig is a D-vector for einsum 'a' indices; expand scalar if needed
   if (sig$numel() != D) {
     sig <- sig * torch::torch_ones(D, dtype = torch::torch_float64(), device = device)
   }
@@ -67,7 +66,7 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
 
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig, device)
 
-  W <- if (!is.null(control$scale_by_var) && !is.na(control$scale_by_var)) {
+  W <- if (isTRUE(control$use_interp_uncertainty)) {
     var_vec <- c(t(var))
     torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
   } else {
@@ -102,10 +101,10 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
 #' @param wendy_problems  List of WENDyProblem objects.
 #' @param lip             Logical; TRUE when f is linear in parameters.
 #' @param diag_reg        Diagonal regularisation added to S.
-#' @param scale_by_var    Logical; if TRUE build block-diagonal W from per-problem variances.
+#' @param use_interp_uncertainty    Logical; if TRUE build block-diagonal W from per-problem variances.
 #' @param device          Torch device.
 #' @keywords internal
-build_wendy_system <- function(wendy_problems, lip, diag_reg, scale_by_var, device) {
+build_wendy_system <- function(wendy_problems, lip, diag_reg, use_interp_uncertainty, device) {
   J      <- wendy_problems[[1]]$J
   D      <- wendy_problems[[1]]$D
   mp1    <- wendy_problems[[1]]$mp1
@@ -153,7 +152,7 @@ build_wendy_system <- function(wendy_problems, lip, diag_reg, scale_by_var, devi
     Jp_L <- build_Jp_L_block(lapply(wendy_problems, `[[`, "Jp_L"), K_list, D, mp1, J, device)
     Hp_L <- build_Hp_L_block(lapply(wendy_problems, `[[`, "Hp_L"), K_list, D, mp1, J, device)
 
-    W <- if (!is.null(scale_by_var) && !is.na(scale_by_var)) {
+    W <- if (isTRUE(use_interp_uncertainty)) {
       var_vec <- unlist(lapply(wendy_problems, function(pr) c(t(pr$var))))
       torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
     } else {

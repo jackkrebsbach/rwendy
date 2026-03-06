@@ -34,7 +34,8 @@ U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
 res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
-                    control = list(scale_by_var = 1)
+                    control = list(use_interp_uncertainty = TRUE,
+                    interpolation_method = c("cubic_ls", "linear"))
                  )
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
@@ -67,7 +68,3 @@ legend(
   bty    = "n",
   cex = 0.8
 )
-
-# print(as.numeric(res$sig))
-# print(noise_sd)
-View(tibble( diag(as.array(res$W))))
