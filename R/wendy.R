@@ -138,9 +138,11 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     estimate_std(U, k = 6)
   } else {
     # Standard SD estimation unreliable for sparse data; use poly LS residuals
-    degree_interpolation <- paste0("poly_ls_", detect_max_state_order(f_expr, u_expr) + 1L)
+    degree               <- detect_max_state_order(f_expr, u_expr) + 1L
+    degree_interpolation <- paste0("poly_ls_", degree)
     U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control = control)$U
-    sqrt(mean((U_orig - U_fit)^2))
+    df    <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
+    sqrt(sum((U_orig - U_fit)^2) / df)
   }
 
   sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)

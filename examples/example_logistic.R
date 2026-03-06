@@ -22,13 +22,13 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 nr <- 0.5
 U_vec <- as.vector(sol[,-1])
-noise_sd <- nr * sqrt(mean(U_vec^2))
-
 # Additive Gaussian Noise
+noise_sd <- nr * sqrt(mean(U_vec^2))
 noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 
 # Multiplicative Lognormal Noise
-# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = nr))
+# noise_sd <- nr
+# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
@@ -68,6 +68,6 @@ legend(
   cex = 0.8
 )
 
-print(as.numeric(res$sig))
-print(noise_sd)
-# View(tibble( diag(as.array(res$W))))
+# print(as.numeric(res$sig))
+# print(noise_sd)
+View(tibble( diag(as.array(res$W))))
