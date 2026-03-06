@@ -73,9 +73,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     min_test_fun_info_number = 0.95,
     min_number_points = 256,            
     max_points_interp = 25,           # integer: only interpolate data when number of data points is less than this
-    interpolation_method = "linear",  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
+    interpolation_method = NULL,  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
-    scale_by_var = 10,                 # numeric: W_ii = 1 + scale_by_var * var_ii; NULL/NA disables W entirely
+    use_interp_uncertainty = TRUE,               # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
     device = torch::torch_device("cpu") # If GPUs are available
   )
   
@@ -123,13 +123,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
   J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
 
-  # When nrow(U) < max_points_interp, use a polynomial LS fit of degree (max_order + 1).
-  if (nrow(U) < control$max_points_interp) {
-    max_order    <- detect_max_state_order(f_expr, u_expr)
-    target_deg   <- max_order + 1L
-    interp_method  <- paste0("poly_ls_", target_deg)
-    methods <- interp_method
-    control$interpolation_method <- interp_method
+  # When nrow(U) < max_points_interp  we interpolate the sparse data
+  if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
+    max_order   <- detect_max_state_order(f_expr, u_expr)
+    control$interpolation_method <- paste0("poly_ls_", max_order + 1L)
   }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
@@ -147,10 +144,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
 
-  # Interpolation if data is sparse
-  if (nrow(U) > control$max_points_interp) {
+  if (is.null(control$interpolation_method) && nrow(U) > control$max_points_interp) {
     wendy_data <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
   } else {
+    methods <- control$interpolation_method
     wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
   }
 
@@ -162,7 +159,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control)
   })
 
-  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$scale_by_var, device)
+  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty, device)
 
   p1 <- wendy_problems[[1]]
 
@@ -189,9 +186,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$V       <- p1$V
   res$V_prime <- p1$Vp
   res$min_radius    <- p1$min_radius
-  res$wendy_problems      <- wendy_problems         # one WENDyProblem per interpolant
-  res$wendy_data   <- wendy_data      # all interpolated datasets
-  res$U             <- p1$U             # first interpolant for backward compat
+  res$wendy_problems      <- wendy_problems         
+  res$wendy_data   <- wendy_data      
+  res$U             <- p1$U             
   res$tt            <- wendy_data[[1]]$tt
   res$var           <- p1$var
   res$wendy_methods  <- names(wendy_data)

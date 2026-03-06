@@ -110,16 +110,15 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
 
   var_mat[is.na(var_mat)] <- if (!is.null(sigma)) sigma^2 else 1
 
-  sbv <- control$scale_by_var
   var_mat <- matrix(
-    if (!is.null(sbv) && !is.na(sbv)) sbv * var_mat / sigma^2 else var_mat,
+    if (isTRUE(control$use_interp_uncertainty) && !is.null(sigma)) var_mat / sigma^2 else var_mat,
     nrow = length(tt_target), ncol = ncol(U)
   )
 
   tol <- sqrt(.Machine$double.eps)
   for (i in seq_along(tt_vec)) {
     j <- which(abs(tt_target - tt_vec[i]) < tol)
-    if (length(j) == 1L) var_mat[j, ] <- 1.0  # observed: no interpolation uncertainty
+    if (length(j) == 1L) var_mat[j, ] <- 1.0  # observed: no added uncertainty
   }
 
   if (!is.matrix(U_new)){
