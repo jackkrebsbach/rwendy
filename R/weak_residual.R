@@ -1,337 +1,325 @@
 # F(p) in -𝚽'U = 𝚽F(p,U,t)
-build_F <- function(U, tt, f_, J, device = torch::torch_device("cpu")) {
+build_F <- function(U, tt, f_, J) {
   mp1 <- nrow(U)
   D   <- ncol(U)
   function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    Fp <- f_(input)
-    return(torch::torch_tensor(Fp, dtype = torch::torch_float64(), device = device))
+    f_(input)  # returns mp1 x D matrix
   }
 }
 
 # g(p) = 𝚽F(p,u,t)
 build_g <- function(V, F_) {
   function(p) {
-    torch::torch_matmul(V, F_(p))$reshape(c(-1))
+    as.vector(V %*% F_(p))
   }
 }
 
 # G matrix in the linear system Gp = b - g0 : G ∈ ℝ^{K * D x J}
-build_G_matrix <- function(V, U, tt, F_, J, device = torch::torch_device("cpu")){
-  K <- nrow(V)
+build_G_matrix <- function(V, U, tt, F_, J) {
+  K   <- nrow(V)
   mp1 <- nrow(U)
-  D <- ncol(U)
-  G <- matrix(0, nrow = K*D, ncol = J)
-  g0 <- F_(rep(0,J))
-  for(j in seq(1,J)){
-    e_j <- rep(0, J)
-    e_j[j] <- 1
-    F_e <- F_(e_j) - g0
-    result <- torch::torch_matmul(V, F_e)
-    g_j <- torch::torch_reshape(result, c(-1))
-    G[,j] <- as.numeric(g_j)
+  D   <- ncol(U)
+  G   <- matrix(0, nrow = K * D, ncol = J)
+  g0  <- F_(rep(0, J))
+  for (j in seq_len(J)) {
+    e_j    <- rep(0, J); e_j[j] <- 1
+    F_e    <- F_(e_j) - g0
+    G[, j] <- as.vector(V %*% F_e)
   }
-  return(torch::torch_tensor(G, dtype = torch::torch_float64(), device = device))
+  G
 }
 
 # g(p) = Gp in system Gp = b - g0
-build_g_linear <- function(G, device = torch::torch_device("cpu")) {
-  function(p) {
-    p <- torch::torch_tensor(p, dtype = torch::torch_float64(), device = device)
-    torch::torch_matmul(G, p)$reshape(c(-1))
-  }
+build_g_linear <- function(G) {
+  function(p) as.vector(G %*% p)
 }
 
 # ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual
-build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt, device = torch::torch_device("cpu")){
-  function(p){
-    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
-    J_p_eval <- torch::torch_tensor(J_p(input), dtype = torch::torch_float64(), device = device)
-    Jp_F <- torch::torch_reshape(J_p_eval, c(mp1, D, J))
-    Jp_r <- torch::torch_einsum("km,mdj->kdj", list(V, Jp_F))
-    Jp_r <- torch::torch_reshape(Jp_r, c(K * D, J))
+# einsum "km,mdj->kdj": result[k,d,j] = sum_m V[k,m] * Jp_F[m,d,j]
+build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt) {
+  function(p) {
+    p_mat  <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input  <- rbind(p_mat, t(U), t(tt))
+    Jp_F   <- array(J_p(input), c(mp1, D, J))
+    result <- array(V %*% matrix(Jp_F, mp1, D * J), c(K, D, J))
+    matrix(result, K * D, J)
   }
 }
 
-# ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual: r(p) = Gp + go - b → ∇ₚr(p) = G 
-build_Jp_r_linear <- function(G){
-  function(p){G}
+# ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual: r(p) = Gp + go - b → ∇ₚr(p) = G
+build_Jp_r_linear <- function(G) {
+  function(p) G
 }
 
 # ∇ₚ∇ₚr(p) ∈ ℝ^(K*D × J × J) Hessian of the weak residual
-build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt, device = torch::torch_device("cpu")){
-  function(p){
-    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
-    H_p_eval <- torch::torch_tensor(H_p(input), dtype = torch::torch_float64(), device = device)
-    Hp_F <- torch::torch_reshape(H_p_eval, c(mp1, D, J, J))
-    Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
-    Hp_r <- torch::torch_reshape(Hp_r, c(K * D, J, J))
-    return(Hp_r)
+# einsum "km,mdab->kdab": result[k,d,a,b] = sum_m V[k,m] * Hp_F[m,d,a,b]
+build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt) {
+  function(p) {
+    p_mat  <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    input  <- rbind(p_mat, t(U), t(tt))
+    Hp_F   <- array(H_p(input), c(mp1, D, J, J))
+    result <- array(V %*% matrix(Hp_F, mp1, D * J * J), c(K, D, J, J))
+    array(result, c(K * D, J, J))
   }
 }
 
 # L₀ where L(p) = L₁(p) + L₀
-build_L0 <- function(K, D, mp1, Vp, sig, device = torch::torch_device("cpu")) {
-  sig_diag <- torch::torch_diag(sig)
-  L0_ <- torch::torch_einsum('km,ab->kamb', list(Vp, sig_diag))
-  L0 <- torch::torch_reshape(L0_, c(K * D, mp1 * D))
-  return(L0)
+# einsum 'km,ab->kamb': result[k,a,m,b] = Vp[k,m] * sig_diag[a,b]
+build_L0 <- function(K, D, mp1, Vp, sig) {
+  sig_diag <- diag(as.numeric(sig), nrow = D)
+  L0_      <- array(0, c(K, D, mp1, D))
+  for (a in seq_len(D)) {
+    for (b in seq_len(D)) {
+      L0_[, a, , b] <- sig_diag[a, b] * Vp
+    }
+  }
+  matrix(L0_, K * D, mp1 * D)
+}
+
+# Helper: compute L1 matrix (K*D x mp1*D) from J_F (mp1 x D x D), V, sig
+# einsum 'mab,km,a->kamb': result[k,a,m,b] = J_F[m,a,b] * V[k,m] * sig[a]
+.compute_L1_mat <- function(J_F, V, sig, K, D, mp1) {
+  L1_ <- array(0, c(K, D, mp1, D))
+  for (a in seq_len(D)) {
+    # Use matrix() to guard against dimension dropping when D==1
+    sig_JF_a <- sig[a] * matrix(J_F[, a, ], mp1, D)  # mp1 x D
+    for (b in seq_len(D)) {
+      # L1_[k,a,m,b] = V[k,m] * sig_JF_a[m,b]
+      L1_[, a, , b] <- V * matrix(rep(sig_JF_a[, b], each = K), K, mp1)
+    }
+  }
+  matrix(L1_, K * D, mp1 * D)
 }
 
 # L(p) where L(p)Lᵀ(p) = S(p), the covariance matrix of the weak residual
-build_L <-function(U, tt, J_u, K, V, L0, sig, J, device = torch::torch_device("cpu")){
-  D <- ncol(U)
+build_L <- function(U, tt, J_u, K, V, L0, sig, J) {
+  D   <- ncol(U)
   mp1 <- length(tt)
-  function(p){
+  function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64(), device = device)
-    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
-    L1 <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
-    L1 <- torch::torch_reshape(L1, c(K * D, mp1 * D))
-    L <- L1 + L0
-    return(L)
+    J_F   <- array(J_u(input), c(mp1, D, D))
+    L1    <- .compute_L1_mat(J_F, V, sig, K, D, mp1)
+    L1 + L0
   }
 }
 
-# L for linear in parameters where LpLᵀp = S(p), the covariance matrix of the weak residual
-build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J, device = torch::torch_device("cpu")){
-  D <- ncol(U)
+# L for linear in parameters where L(p)Lᵀ(p) = S(p)
+build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J) {
+  D   <- ncol(U)
   mp1 <- length(tt)
-  L1_ <- torch::torch_zeros(c(K * D, mp1 * D, J), dtype = torch::torch_float64(), device = device)
 
-  p_mat_affine <- matrix(rep(rep(0,J), mp1), ncol = mp1, nrow = J)
+  p_mat_affine <- matrix(0, nrow = J, ncol = mp1)
   input_affine <- rbind(p_mat_affine, t(U), t(tt))
-  J_F_affine <- torch::torch_tensor(J_u(input_affine), dtype = torch::torch_float64(), device = device)
-  J_F_affine <- torch::torch_reshape(J_F_affine, c(mp1, D, D))
-  J_F_affine <- torch::torch_einsum('mab,km,a->kamb', list(J_F_affine, V, sig))
-  L1_affine <- torch::torch_reshape(J_F_affine, c(K * D, mp1 * D))
+  J_F_affine   <- array(J_u(input_affine), c(mp1, D, D))
+  L1_affine    <- .compute_L1_mat(J_F_affine, V, sig, K, D, mp1)
 
-  for(j in seq_len(J)){
-    e_j <- rep(0, J)
-    e_j[j] <- 1
+  L1_ <- array(0, c(K * D, mp1 * D, J))
+  for (j in seq_len(J)) {
+    e_j   <- rep(0, J); e_j[j] <- 1
     p_mat <- matrix(rep(e_j, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64(), device = device)
-    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
-    Jj_F <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
-    Jj_F <- torch::torch_reshape(Jj_F, c(K * D, mp1 * D))
-    L1_[,,j] <- Jj_F - L1_affine
+    J_F   <- array(J_u(input), c(mp1, D, D))
+    Jj_F  <- .compute_L1_mat(J_F, V, sig, K, D, mp1)
+    L1_[, , j] <- Jj_F - L1_affine
   }
 
-  function(p){
-    p <- torch::torch_tensor(p, dtype = torch::torch_float64(), device = device)
-    L1 <- torch::torch_einsum('abj,j->ab', list(L1_, p))
-    L <- L1 + L1_affine + L0
-    return(L)
+  function(p) {
+    L1 <- matrix(matrix(L1_, K * D * mp1 * D, J) %*% p, K * D, mp1 * D)
+    L1 + L1_affine + L0
   }
 }
 
 # ∇ₚL(p) Jacobian of the covariance factor
-build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig, device = torch::torch_device("cpu")){
+# einsum "mabj,km,a->kambj": result[k,a,m,b,j] = H_F[m,a,b,j] * V[k,m] * sig[a]
+build_Jp_L <- function(U, tt, J_up, K, J, D, V, sig) {
   mp1 <- length(tt)
-  function(p){
+  function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    H_F <- torch::torch_tensor(J_up(input), dtype = torch::torch_float64(), device = device)
-    H_F <- torch::torch_reshape(H_F, c(mp1, D, D, J))
-    J_ <- torch::torch_einsum("mabj,km,a->kambj", list(H_F, V, sig))
-    J_ <- torch::torch_reshape(J_, c(K * D, mp1 * D, J))
-    return(J_)
+    H_F   <- array(J_up(input), c(mp1, D, D, J))
+    Jp_L_ <- array(0, c(K, D, mp1, D, J))
+    for (a in seq_len(D)) {
+      for (b in seq_len(D)) {
+        # Use matrix() to guard against dimension dropping when J==1
+        sig_HF_ab <- sig[a] * matrix(H_F[, a, b, ], mp1, J)  # mp1 x J
+        for (j in seq_len(J)) {
+          Jp_L_[, a, , b, j] <- V * matrix(rep(sig_HF_ab[, j], each = K), K, mp1)
+        }
+      }
+    }
+    array(Jp_L_, c(K * D, mp1 * D, J))
   }
 }
 
 # ∇ₚL(p) Linear Jacobian of the Covariance factor L(p) = L₁p + L_affine + L0 → ∇ₚL(p) = L₁
-build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J, device = torch::torch_device("cpu")){
-  D <- ncol(U)
+build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J) {
+  D   <- ncol(U)
   mp1 <- length(tt)
-  L1_ <- torch::torch_zeros(c(K * D, mp1 * D, J), dtype = torch::torch_float64(), device = device)
 
-  p_mat_affine <- matrix(rep(rep(0,J), mp1), ncol = mp1, nrow = J)
+  p_mat_affine <- matrix(0, nrow = J, ncol = mp1)
   input_affine <- rbind(p_mat_affine, t(U), t(tt))
-  J_F_affine <- torch::torch_tensor(J_u(input_affine), dtype = torch::torch_float64(), device = device)
-  J_F_affine <- torch::torch_reshape(J_F_affine, c(mp1, D, D))
-  J_F_affine <- torch::torch_einsum('mab,km,a->kamb', list(J_F_affine, V, sig))
-  L1_affine <- torch::torch_reshape(J_F_affine, c(K * D, mp1 * D))
+  J_F_affine   <- array(J_u(input_affine), c(mp1, D, D))
+  L1_affine    <- .compute_L1_mat(J_F_affine, V, sig, K, D, mp1)
 
-  for(j in seq_len(J)){
-    e_j <- rep(0, J)
-    e_j[j] <- 1
+  L1_ <- array(0, c(K * D, mp1 * D, J))
+  for (j in seq_len(J)) {
+    e_j   <- rep(0, J); e_j[j] <- 1
     p_mat <- matrix(rep(e_j, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    J_F <- torch::torch_tensor(J_u(input), dtype = torch::torch_float64(), device = device)
-    J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
-    Jj_F <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
-    Jj_F <- torch::torch_reshape(Jj_F, c(K * D, mp1 * D))
-    L1_[,,j] <- Jj_F  - L1_affine
+    J_F   <- array(J_u(input), c(mp1, D, D))
+    Jj_F  <- .compute_L1_mat(J_F, V, sig, K, D, mp1)
+    L1_[, , j] <- Jj_F - L1_affine
   }
-  return(function(p){L1_})
+
+  function(p) L1_
 }
 
-# ∇ₚ∇ₚL(p) Hessian of the covariance factor where ∇ₚ∇ₚS(p) = ∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ + (∇ₚ∇ₚLLᵀ + ∇ₚL∇ₚLᵀ)ᵀ
-build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig, device = torch::torch_device("cpu")){
+# ∇ₚ∇ₚL(p) Hessian of the covariance factor
+# einsum "mabcd,km,a->kambcd": result[k,a,m,b,c,d] = T_F[m,a,b,c,d] * V[k,m] * sig[a]
+build_Hp_L <- function(U, tt, J_upp, K, J, D, V, sig) {
   mp1 <- length(tt)
-  function(p){
+  function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    T_F <- torch::torch_tensor(J_upp(input), dtype = torch::torch_float64(), device = device)
-    T_F <- torch::torch_reshape(T_F, c(mp1, D, D, J, J))
-    H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))
-    H_ <- torch::torch_reshape(H_, c(K * D, mp1 * D, J, J))
-    return(H_)
+    T_F   <- array(J_upp(input), c(mp1, D, D, J, J))
+    Hp_L_ <- array(0, c(K, D, mp1, D, J, J))
+    for (a in seq_len(D)) {
+      for (b in seq_len(D)) {
+        for (j1 in seq_len(J)) {
+          for (j2 in seq_len(J)) {
+            sig_TF <- sig[a] * T_F[, a, b, j1, j2]  # mp1 vector
+            Hp_L_[, a, , b, j1, j2] <- V * matrix(rep(sig_TF, each = K), K, mp1)
+          }
+        }
+      }
+    }
+    array(Hp_L_, c(K * D, mp1 * D, J, J))
   }
 }
 
 # S(p) is the covariance matrix of the weak residual
 build_S <- function(L, W = NULL, diag_reg = 10e-10) {
   function(p) {
-    Lp <- L(p)
-    Lpt <- torch::torch_transpose(Lp, 1, 2)
-    S_ <- if (!is.null(W)) torch::torch_matmul(Lp, torch::torch_matmul(W, Lpt))
-          else              torch::torch_matmul(Lp, Lpt)
+    Lp     <- L(p)
+    Lpt    <- t(Lp)
+    S_     <- if (!is.null(W)) Lp %*% W %*% Lpt else Lp %*% Lpt
     WEIGHT <- 1.0 - diag_reg
-    n <- S_$size(1)
-    eye <- diag_reg * torch::torch_eye(n, dtype = S_$dtype, device = S_$device)
-    S <- WEIGHT * S_ + eye
-    return(S)
+    n      <- nrow(S_)
+    WEIGHT * S_ + diag_reg * diag(n)
   }
 }
 
 # ∇ₚS(p) Jacobian of the covariance matrix
-build_J_S <- function(L, Jp_L, J, K, D, W = NULL, diag_reg = 1e-10){
+# einsum "ijk,jl->ilk": result[i,l,k] = sum_j Jp_Lp[i,j,k] * WLp_t[j,l]
+build_J_S <- function(L, Jp_L, J, K, D, W = NULL, diag_reg = 1e-10) {
   WEIGHT <- 1.0 - diag_reg
-  function(p){
-    Lp <- L(p)
-    Jp_Lp <- Jp_L(p)
-    # With W: ∂S/∂pₖ = (∂L/∂pₖ) W Lᵀ + L W (∂L/∂pₖ)ᵀ  →  use W Lᵀ in einsum
-    WLp_t <- if (!is.null(W)) torch::torch_mm(W, Lp$t()) else Lp$t()
-    prt <- torch::torch_einsum("ijk,jl->ilk", list(Jp_Lp, WLp_t))
-    Jp_S <- WEIGHT * (prt + prt$transpose(1, 2))
-    return(Jp_S)
+  function(p) {
+    Lp     <- L(p)
+    Jp_Lp  <- Jp_L(p)
+    WLp_t  <- if (!is.null(W)) W %*% t(Lp) else t(Lp)
+    # For each j: prt[,,j] = Jp_Lp[,,j] %*% WLp_t
+    KD     <- nrow(Lp)
+    prt    <- array(0, c(KD, KD, J))
+    for (k in seq_len(J)) {
+      prt[, , k] <- Jp_Lp[, , k] %*% WLp_t
+    }
+    WEIGHT * (prt + aperm(prt, c(2L, 1L, 3L)))
   }
 }
 
 # Weak negative log likelihood  (Multivariate Gaussian distribution)
-build_wnll <- function(S, g, b, K, D){
+build_wnll <- function(S, g, b, K, D) {
   constant_term <- 0.5 * K * D * log(2 * pi)
-  function(p){
-    Sp <- as.array(S(p))
-    r <- as.array(g(p) - b)
+  function(p) {
+    Sp    <- S(p)
+    r     <- g(p) - b
     cholF <- chol(Sp)
     log_det <- 2 * sum(log(diag(cholF)))
-    S_invr <- backsolve(cholF, forwardsolve(t(cholF), r))
-    mdist <- (r %*% S_invr)[1,1]
-    return(0.5 * (mdist + log_det) + constant_term)
+    S_invr  <- backsolve(cholF, forwardsolve(t(cholF), r))
+    mdist   <- (r %*% S_invr)[1, 1]
+    0.5 * (mdist + log_det) + constant_term
   }
 }
 
-# Jacobian of the weak form negative log likelihood 
-build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
-  function(p){
-    Sp <- as.array(S(p))
-
-    J_Sp <- as.array(Jp_S(p)$contiguous())
-    J_rp <- as.array(Jp_r(p)$contiguous())
-
-    r <- as.array(g(p) - b)
-
-    cholF <- chol(Sp)
+# Jacobian of the weak form negative log likelihood
+build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J) {
+  function(p) {
+    Sp     <- S(p)
+    J_Sp   <- Jp_S(p)
+    J_rp   <- Jp_r(p)
+    r      <- g(p) - b
+    cholF  <- chol(Sp)
     S_inv_rp <- backsolve(cholF, forwardsolve(t(cholF), r))
-
     gradient <- numeric(J)
-
-    for(j in seq(J)){
+    for (j in seq_len(J)) {
       J_S_j <- J_Sp[, , j]
       J_r_j <- J_rp[, j]
-
-      tmp <- J_S_j %*% S_inv_rp
-
-      prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
-      prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
-
-      fact <- backsolve(cholF, forwardsolve(t(cholF), J_S_j))
+      tmp       <- J_S_j %*% S_inv_rp
+      prt0      <- 2.0 * (J_r_j %*% S_inv_rp)[1, 1]
+      prt1      <- -1.0 * (S_inv_rp %*% tmp)[1, 1]
+      fact      <- backsolve(cholF, forwardsolve(t(cholF), J_S_j))
       logDetPart <- sum(diag(fact))
-
       gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
     }
-
-    return(gradient)
+    gradient
   }
 }
 
-# Hessian of the weak form negative log likelihood 
+# Hessian of the weak form negative log likelihood
 build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, diag_reg = 1e-10) {
   WEIGHT <- 1.0 - diag_reg
   function(p) {
-    r <- as.array(g(p) - b)
-
-    Jp_rp <- as.array(Jp_r(p)$contiguous())
-    Hp_rp <- as.array(Hp_r(p)$contiguous())
-
-    Lp <- as.array(L(p))                     # L(p)
-    Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
-    Hp_Lp <- as.array(Hp_L(p)$contiguous())  # ∇ₚ∇ₚL(p)
-    W_mat <- if (!is.null(W)) as.array(W) else NULL
-    # Precompute W Lᵀ once (used in p2 = ∂ᵢ∂ⱼL · W · Lᵀ)
-    LpW_t <- if (!is.null(W_mat)) W_mat %*% t(Lp) else t(Lp)
-
-    Sp <- as.array(S(p)) # S(p)
-    Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
+    r      <- g(p) - b
+    Jp_rp  <- Jp_r(p)
+    Hp_rp  <- Hp_r(p)
+    Lp     <- L(p)
+    Jp_Lp  <- Jp_L(p)
+    Hp_Lp  <- Hp_L(p)
+    W_mat  <- W
+    LpW_t  <- if (!is.null(W_mat)) W_mat %*% t(Lp) else t(Lp)
+    Sp     <- S(p)
+    Jp_Sp  <- Jp_S(p)
 
     S_inv_solve <- make_S_inv_solver(Sp)
-
-    S_inv_rp <- S_inv_solve(r)
-    H_wnn <- matrix(0, nrow = J, ncol = J)
+    S_inv_rp    <- S_inv_solve(r)
+    H_wnn       <- matrix(0, nrow = J, ncol = J)
 
     for (j in seq_len(J)) {
-      Jp_rp_j <- Jp_rp[, j]
-      Jp_Sp_j <- Jp_Sp[, , j]
-      Jp_Lp_j <- Jp_Lp[, , j]
-      # Precompute ∂ⱼL · W once per outer iteration
-      Jp_Lp_j_W <- if (!is.null(W_mat)) Jp_Lp_j %*% W_mat else Jp_Lp_j
-
-      shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
+      Jp_rp_j    <- Jp_rp[, j]
+      Jp_Sp_j    <- Jp_Sp[, , j]
+      Jp_Lp_j    <- Jp_Lp[, , j]
+      Jp_Lp_j_W  <- if (!is.null(W_mat)) Jp_Lp_j %*% W_mat else Jp_Lp_j
+      shar_       <- S_inv_solve(Jp_Sp_j)
 
       for (i in j:J) {
-        Jp_Sp_i <- Jp_Sp[, , i]  # ∂ᵢS(p)
-        Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
-        Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
-
-        term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
-
-        Hp_Lp_ji <- Hp_Lp[, , j, i] # ∂ᵢ∂ⱼS(p)
-        # p1 = ∂ⱼL · W · ∂ᵢLᵀ,  p2 = ∂ᵢ∂ⱼL · W · Lᵀ
-        p1 <- Jp_Lp_j_W %*% t(Jp_Lp_i)
-        p2 <- Hp_Lp_ji %*% LpW_t
-        Hp_Sp_ji <- WEIGHT * (p1 + t(p1) + p2 + t(p2))  # ∂ᵢ∂ⱼS(p)
-
-        Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
+        Jp_Sp_i  <- Jp_Sp[, , i]
+        Jp_Lp_i  <- Jp_Lp[, , i]
+        Jp_rp_i  <- Jp_rp[, i]
+        term     <- Jp_Sp_i %*% shar_
+        Hp_Lp_ji <- Hp_Lp[, , j, i]
+        p1       <- Jp_Lp_j_W %*% t(Jp_Lp_i)
+        p2       <- Hp_Lp_ji %*% LpW_t
+        Hp_Sp_ji <- WEIGHT * (p1 + t(p1) + p2 + t(p2))
+        Hp_rp_ji <- Hp_rp[, j, i]
 
         prt0 <- as.numeric(t(Hp_rp_ji) %*% S_inv_rp)
         prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
-
         inv_factor <- S_inv_solve(Jp_rp_i)
         prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
-
         prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
         prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
-        prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
-
+        prt5 <-  2.0 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
         logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
 
         Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
-
         H_wnn[j, i] <- Hij
-
-        if (i != j) {
-          H_wnn[i, j] <- Hij
-        }
+        if (i != j) H_wnn[i, j] <- Hij
       }
     }
-    return(H_wnn)
+    H_wnn
   }
 }
 
@@ -339,77 +327,58 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, 
 build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_reg = 1e-10) {
   WEIGHT <- 1.0 - diag_reg
   function(p) {
-
-    r <- as.array(g(p) - b)
-    Jp_rp <- as.array(Jp_r(p)$contiguous())
-
-    Lp <- as.array(L(p))                     # L(p)
-    Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
-
-    Sp <- as.array(S(p)) # S(p)
-    Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
+    r      <- g(p) - b
+    Jp_rp  <- Jp_r(p)
+    Lp     <- L(p)
+    Jp_Lp  <- Jp_L(p)
+    Sp     <- S(p)
+    Jp_Sp  <- Jp_S(p)
+    W_mat  <- W
 
     S_inv_solve <- make_S_inv_solver(Sp)
-    W_mat <- if (!is.null(W)) as.array(W) else NULL
-
-    S_inv_rp <- S_inv_solve(r)
-    H_wnn <- matrix(0, nrow = J, ncol = J)
+    S_inv_rp    <- S_inv_solve(r)
+    H_wnn       <- matrix(0, nrow = J, ncol = J)
 
     for (j in seq_len(J)) {
-      Jp_rp_j <- Jp_rp[, j]
-      Jp_Sp_j <- Jp_Sp[, , j]
-      Jp_Lp_j <- Jp_Lp[, , j]
+      Jp_rp_j   <- Jp_rp[, j]
+      Jp_Sp_j   <- Jp_Sp[, , j]
+      Jp_Lp_j   <- Jp_Lp[, , j]
       Jp_Lp_j_W <- if (!is.null(W_mat)) Jp_Lp_j %*% W_mat else Jp_Lp_j
-
-      shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
+      shar_      <- S_inv_solve(Jp_Sp_j)
 
       for (i in j:J) {
-
-        Jp_Sp_i <- Jp_Sp[, , i]  # ∂ᵢS(p)
-        Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
-        Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
-
-        term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
-
-        # p1 = ∂ⱼL · W · ∂ᵢLᵀ
-        p1 <- Jp_Lp_j_W %*% t(Jp_Lp_i)
-        Hp_Sp_ji <- WEIGHT * (p1 + t(p1))  # ∂ᵢ∂ⱼS(p)
-
+        Jp_Sp_i  <- Jp_Sp[, , i]
+        Jp_Lp_i  <- Jp_Lp[, , i]
+        Jp_rp_i  <- Jp_rp[, i]
+        term     <- Jp_Sp_i %*% shar_
+        p1       <- Jp_Lp_j_W %*% t(Jp_Lp_i)
+        Hp_Sp_ji <- WEIGHT * (p1 + t(p1))
         inv_factor <- S_inv_solve(Jp_rp_i)
-
         prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
-        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
+        prt2 <-  as.numeric(t(Jp_rp_j) %*% inv_factor)
         prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
         prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
-        prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
-
+        prt5 <-  2.0 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
         logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
 
         Hij <- 0.5 * (2 * (prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
-
         H_wnn[j, i] <- Hij
-
-        if (i != j) {
-          H_wnn[i, j] <- Hij
-        }
+        if (i != j) H_wnn[i, j] <- Hij
       }
     }
-    return(H_wnn)
+    H_wnn
   }
 }
 
 # --- Block-diagonal stacking helpers for multiple interpolants ---
-# Each L_m(p) has shape K_m*D x mp1*D.  The block-diagonal assembly gives
-# shape (K_total*D) x (M * mp1*D), so that L_block @ L_block^T is block-
-# diagonal with blocks S_1, ..., S_M — no cross-covariance between interpolants.
 
-# Assemble a constant block-diagonal tensor from a list of L0 matrices.
+# Assemble a constant block-diagonal matrix from a list of L0 matrices.
 # @keywords internal
-build_L0_block <- function(L0_list, K_list, D, mp1, device) {
-  M <- length(L0_list); K_total <- sum(K_list)
-  out <- torch::torch_zeros(c(K_total * D, M * mp1 * D),
-                            dtype = torch::torch_float64(), device = device)
-  k_off <- 0L; m_off <- 0L
+build_L0_block <- function(L0_list, K_list, D, mp1) {
+  M       <- length(L0_list)
+  K_total <- sum(K_list)
+  out     <- matrix(0, K_total * D, M * mp1 * D)
+  k_off   <- 0L; m_off <- 0L
   for (i in seq_along(L0_list)) {
     k_i <- K_list[i] * D; m_i <- mp1 * D
     out[(k_off + 1):(k_off + k_i), (m_off + 1):(m_off + m_i)] <- L0_list[[i]]
@@ -418,14 +387,14 @@ build_L0_block <- function(L0_list, K_list, D, mp1, device) {
   out
 }
 
-# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) tensor.
+# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) matrix.
 # @keywords internal
-build_L_block <- function(L_fns, K_list, D, mp1, device) {
-  M <- length(L_fns); K_total <- sum(K_list)
+build_L_block <- function(L_fns, K_list, D, mp1) {
+  M       <- length(L_fns)
+  K_total <- sum(K_list)
   function(p) {
-    mats <- lapply(L_fns, function(lf) lf(p))
-    out  <- torch::torch_zeros(c(K_total * D, M * mp1 * D),
-                               dtype = torch::torch_float64(), device = device)
+    mats  <- lapply(L_fns, function(lf) lf(p))
+    out   <- matrix(0, K_total * D, M * mp1 * D)
     k_off <- 0L; m_off <- 0L
     for (i in seq_along(mats)) {
       k_i <- K_list[i] * D; m_i <- mp1 * D
@@ -436,14 +405,14 @@ build_L_block <- function(L_fns, K_list, D, mp1, device) {
   }
 }
 
-# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) x J tensor.
+# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) x J array.
 # @keywords internal
-build_Jp_L_block <- function(Jp_L_fns, K_list, D, mp1, J, device) {
-  M <- length(Jp_L_fns); K_total <- sum(K_list)
+build_Jp_L_block <- function(Jp_L_fns, K_list, D, mp1, J) {
+  M       <- length(Jp_L_fns)
+  K_total <- sum(K_list)
   function(p) {
-    mats <- lapply(Jp_L_fns, function(jf) jf(p))
-    out  <- torch::torch_zeros(c(K_total * D, M * mp1 * D, J),
-                               dtype = torch::torch_float64(), device = device)
+    mats  <- lapply(Jp_L_fns, function(jf) jf(p))
+    out   <- array(0, c(K_total * D, M * mp1 * D, J))
     k_off <- 0L; m_off <- 0L
     for (i in seq_along(mats)) {
       k_i <- K_list[i] * D; m_i <- mp1 * D
@@ -454,14 +423,14 @@ build_Jp_L_block <- function(Jp_L_fns, K_list, D, mp1, J, device) {
   }
 }
 
-# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) x J x J tensor.
+# Returns p -> block-diagonal (K_total*D) x (M*mp1*D) x J x J array.
 # @keywords internal
-build_Hp_L_block <- function(Hp_L_fns, K_list, D, mp1, J, device) {
-  M <- length(Hp_L_fns); K_total <- sum(K_list)
+build_Hp_L_block <- function(Hp_L_fns, K_list, D, mp1, J) {
+  M       <- length(Hp_L_fns)
+  K_total <- sum(K_list)
   function(p) {
-    mats <- lapply(Hp_L_fns, function(hf) hf(p))
-    out  <- torch::torch_zeros(c(K_total * D, M * mp1 * D, J, J),
-                               dtype = torch::torch_float64(), device = device)
+    mats  <- lapply(Hp_L_fns, function(hf) hf(p))
+    out   <- array(0, c(K_total * D, M * mp1 * D, J, J))
     k_off <- 0L; m_off <- 0L
     for (i in seq_along(mats)) {
       k_i <- K_list[i] * D; m_i <- mp1 * D
@@ -474,19 +443,18 @@ build_Hp_L_block <- function(Hp_L_fns, K_list, D, mp1, J, device) {
 
 # Robust solver for applying the inverse of S(p) to a vector or matrix
 make_S_inv_solver <- function(Sp) {
-  cholF <- NULL
-  qrF <- NULL
+  cholF            <- NULL
+  qrF              <- NULL
   use_regularization <- FALSE
-  diag_reg <- NULL
+  diag_reg_mat     <- NULL
 
   cholF <- tryCatch(chol(Sp), error = function(e) NULL)
 
   if (is.null(cholF)) {
     qrF <- tryCatch(qr(Sp), error = function(e) NULL)
-
     if (is.null(qrF)) {
       use_regularization <- TRUE
-      diag_reg <- 1e-12 * diag(nrow(Sp))
+      diag_reg_mat       <- 1e-12 * diag(nrow(Sp))
     }
   }
 
@@ -496,7 +464,7 @@ make_S_inv_solver <- function(Sp) {
     } else if (!is.null(qrF)) {
       return(solve(qrF, x))
     } else {
-      return(solve(Sp + diag_reg, x))
+      return(solve(Sp + diag_reg_mat, x))
     }
   }
 }

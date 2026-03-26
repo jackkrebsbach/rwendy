@@ -14,10 +14,8 @@ brew   install cmake gmp mpfr libmpc                    ## Mac OS
 ## R dependencies 
 
 ```r
-install.packages(c("symengine", "trust", "stats", "numbers", "torch", "minpack.lm", "deSolve"))
+install.packages(c("symengine", "trust", "stats", "numbers", "minpack.lm", "deSolve"))
 ```
-
-If you are having trouble installing the library *torch* you can follow [this guide.](https://cran.r-project.org/web/packages/torch/vignettes/installation.html)
 
 
 To install WENDy run the following. Note that if the github repository is private you will have to set your github credentials.

@@ -8,15 +8,6 @@ NULL
 #' Check for required suggested packages
 #' @keywords internal
 check_suggested_packages <- function() {
-
-  if (!requireNamespace("torch", quietly = TRUE)) {
-    stop("Package 'torch' is required but not installed.\n",
-         "Please install it manually with:\n",
-         "  install.packages('torch')\n",
-         "  torch::install_torch()",
-         call. = FALSE)
-  }
-
   if (!requireNamespace("symengine", quietly = TRUE)) {
     stop("Package 'symengine' is required but not installed.\n",
          "Please install it manually with:\n",
@@ -33,7 +24,7 @@ check_suggested_packages <- function() {
 #'
 #' @param f A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 #'   where \code{u} is the state vector, \code{p} is the parameter vector,
-#'   and \code{t} is the time variable. 
+#'   and \code{t} is the time variable.
 #' @param p0 Numeric vector. Initial guess for the parameters. Used in MLE or nonlinear least squares solvers.
 #' @param U Numeric matrix. Rows represent observed states at time points in \code{tt}.
 #'   Columns correspond to state variables.
@@ -53,48 +44,46 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   check_suggested_packages()
 
-  noise_dist <- match.arg(noise_dist)
-  method <- match.arg(method)
-
   default_control <- list(
     optimize = TRUE,
     noise_sd = NA,
-    compute_svd = TRUE,
-    diag_reg = 10e-10,
     max_iterates = 200,
+    diag_reg = 10e-10,
+    test_fun_type = "MSG",  # Multi-scale Global (MSG) or Single-scale Local (SSL)
+    compute_svd = TRUE,
+    min_number_points = 256,
+    max_points_interp = 25,       # integer: only interpolate data when number of data points is less than this
+    interpolation_method = NULL,  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
+    fixed_radius = NULL,          # integer: fix the base test-function radius, bypassing auto-selection
+    use_interp_uncertainty = TRUE,# logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
     S = 1,  # Euler-Maclaurin series order expansion
     p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
-    test_fun_type = "MSG",  # Multi-scale Global (MSG) or Single-scale Local (SSL)
     radius_params = 2^(0:3),
     radius_min_time = 0.1,
     radius_max_time = 5.0,
     k_max = 200,
     max_test_fun_condition_number = 1e4,
-    min_test_fun_info_number = 0.95,
-    min_number_points = 256,            
-    max_points_interp = 25,           # integer: only interpolate data when number of data points is less than this
-    interpolation_method = NULL,  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
-    fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
-    use_interp_uncertainty = TRUE,               # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-    device = torch::torch_device("cpu") # If GPUs are available
+    min_test_fun_info_number = 0.95
   )
-  
+
   if(!is.null(control)) {
     control <- modifyList(default_control, control)
   } else {
     control <- default_control
   }
 
+  noise_dist <- match.arg(noise_dist)
+  method <- match.arg(method)
+
   if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt) # remove time points with zeros and take log of the data
     U <- data$U
     tt <- data$tt
   }
-  
+
   U_orig   <- U
   tt_orig  <- as.vector(tt)
 
-  device  <- control$device
   methods <- control$interpolation_method
 
   # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
@@ -142,7 +131,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     sqrt(sum((U_orig - U_fit)^2) / df)
   }
 
-  sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
+  sig <- estimated_sd  # numeric vector of length D (or scalar, expanded later per problem)
 
   if (is.null(control$interpolation_method) && nrow(U) > control$max_points_interp) {
     wendy_data <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
@@ -156,10 +145,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   D <- ncol(wendy_data[[1]]$U)
 
   wendy_problems <- lapply(wendy_data, function(d) {
-    build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control)
+    build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control)
   })
 
-  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty, device)
+  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty)
 
   p1 <- wendy_problems[[1]]
 
@@ -186,9 +175,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   res$V       <- p1$V
   res$V_prime <- p1$Vp
   res$min_radius    <- p1$min_radius
-  res$wendy_problems      <- wendy_problems         
-  res$wendy_data   <- wendy_data      
-  res$U             <- p1$U             
+  res$wendy_problems      <- wendy_problems
+  res$wendy_data   <- wendy_data
+  res$U             <- p1$U
   res$tt            <- wendy_data[[1]]$tt
   res$var           <- p1$var
   res$wendy_methods  <- names(wendy_data)
@@ -217,19 +206,19 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   data <- switch(method,
                      OLS = if(!lip){
-                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
+                        nols(g, b, L, Jp_r, p0, reg = 10e-10)
                       } else {
-                        ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
+                        ols(G, b, L)
                      }, # Ordinary Least Squares
                      IRLS = if(!lip){
-                          nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
+                          nirls(g, b, L, Jp_r, p0, W = W, max_its = control$max_iterates)
                         } else{
-                          irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
+                          irls(G, b, L, W = W, max_its = control$max_iterates)
                       }, # Iterative Reweighted Least Squares
                      MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) # Maximum Likelihood Estimation
                   )
   res$data <- data
-  res$phat <- data$p 
+  res$phat <- data$p
 
   return(res)
 }

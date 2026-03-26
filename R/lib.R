@@ -60,8 +60,8 @@ summary.wendy <- function(object, ...) {
     # cov(p̂) = (GᵀG)⁻¹ GᵀS(p̂)G (GᵀG)⁻¹
     # where G = Jp_r(p̂) is the Jacobian of the residual
     # and S(p̂) is the covariance of the weak residual
-    G <- as.array(object$Jp_r(phat)$contiguous())
-    Sp <- as.array(object$S(phat)$contiguous())
+    G  <- object$Jp_r(phat)
+    Sp <- object$S(phat)
 
     GTG <- t(G) %*% G
     quad <- t(G) %*% Sp %*% G

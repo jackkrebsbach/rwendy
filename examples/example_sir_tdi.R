@@ -20,7 +20,7 @@ t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.005
+nr <- 0.05
 noise_sd <- sqrt(nr)
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
@@ -41,10 +41,16 @@ points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))
 
 legend("topright", legend = c("Susceptible", "Infected", "Recovered"), col = c("black", "red", "blue"), lwd = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE", noise_dist = "lognormal")
+res <- solveWendy(f, p0, U, tt, method = "IRLS", noise_dist = "lognormal")
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = res$phat)
 
 lines(sol[, "time"], sol[, 2], col = "black", lwd = 2)
 lines(sol[, "time"], sol[, 3], col = "red", lwd = 2)
 lines(sol[, "time"], sol[, 4], col = "blue", lwd = 2)
+
+
+
+cat(paste0("pstar: [", toString(p_star), "]"))
+cat("\n")
+cat(paste0("phat:  [", toString(round(res$phat, digits = 3)), "]"))

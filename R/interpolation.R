@@ -28,8 +28,8 @@ poly_ls_degree <- function(method) {
   stop("Cannot parse polynomial degree from method: '", method, "'")
 }
 
-# Fit one interpolation model for a single state dimension (column).
-# Trains on (tt_obs, y) and predicts at tt_target.
+# Fit one interpolation or regression model 
+# Trains on (tt_obs, y) and predicts at tt_target
 # Returns list(fit, var):
 #   fit — numeric vector of length(tt_target), predicted values.
 #   var — numeric vector of length(tt_target), prediction-interval variance:
@@ -44,6 +44,7 @@ fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
     X      <- poly_design(tt_obs,    degree)
     df_obs <- as.data.frame(X[, -1L, drop = FALSE])
     colnames(df_obs) <- paste0("V", seq_len(ncol(df_obs)))
+
     X_new  <- poly_design(tt_target, degree)
     df_new <- as.data.frame(X_new[, -1L, drop = FALSE])
     colnames(df_new) <- colnames(df_obs)
@@ -92,12 +93,11 @@ fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
 # Returns list(U, var):
 #   U   — interpolated matrix, nrow = length(tt_target), ncol = D.
 #   var — numeric matrix of shape (length(tt_target), D), prediction-interval
-#         variance per time point per state dimension.  Falls back to 1 for
-#         exact interpolants that carry no residual model and sigma is not
-#         supplied.  Observed time-point rows are reset to 1.
+#         variance per time point per state dimension. 
 # sigma: optional scalar noise SD forwarded to fit_col for exact interpolants.
 # @keywords internal
 interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = TRUE, sigma = NULL, control) {
+  # Perform interpolation / regression per dimension
   cols <- lapply(seq_len(ncol(U)), function(d) {
     fit_col(U[, d], tt_vec, tt_target, method, sigma = sigma)
   })
@@ -152,7 +152,7 @@ interpolate_data <- function(U, tt, method, control, sigma = NULL) {
     tt     <- matrix(tt_new, ncol = 1)
   }
 
-  # Interpolation
+  # Interpolation / regression for imputing the data
   if (nrow(U) < control$min_number_points) {
     tt_vec   <- as.vector(tt)
     tt_dense <- tt_vec
@@ -164,6 +164,7 @@ interpolate_data <- function(U, tt, method, control, sigma = NULL) {
     tt <- matrix(tt_dense, ncol = 1)
   }
 
+  # Grab the variance of the imputed values
   result <- interpolate_to_grid(U_obs, tt_obs, as.vector(tt), method, substitute_data = FALSE, sigma = sigma, control=control)
   list(U = U, tt = tt, var = result$var)
 }

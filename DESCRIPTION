@@ -23,5 +23,4 @@ Imports:
     numbers,
     stats
 Suggests:
-    torch,
     symengine
