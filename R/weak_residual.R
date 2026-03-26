@@ -37,14 +37,15 @@ build_g_linear <- function(G) {
 }
 
 # ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual
-# einsum "km,mdj->kdj": result[k,d,j] = sum_m V[k,m] * Jp_F[m,d,j]
+# J_p returns (mp1 x D*J) with column c = ∂f_{c/J+1}/∂p_{c%J+1}
+# Reshape as [m, j, d]: Jp_F[m,j,d] = ∂f_d/∂p_j (p-index first, column-major convention)
 build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt) {
   function(p) {
     p_mat  <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input  <- rbind(p_mat, t(U), t(tt))
-    Jp_F   <- array(J_p(input), c(mp1, D, J))
-    result <- array(V %*% matrix(Jp_F, mp1, D * J), c(K, D, J))
-    matrix(result, K * D, J)
+    Jp_F   <- array(J_p(input), c(mp1, J, D))
+    result <- array(V %*% matrix(Jp_F, mp1, J * D), c(K, J, D))
+    matrix(aperm(result, c(1L, 3L, 2L)), K * D, J)
   }
 }
 
@@ -54,14 +55,15 @@ build_Jp_r_linear <- function(G) {
 }
 
 # ∇ₚ∇ₚr(p) ∈ ℝ^(K*D × J × J) Hessian of the weak residual
-# einsum "km,mdab->kdab": result[k,d,a,b] = sum_m V[k,m] * Hp_F[m,d,a,b]
+# J_pp returns (mp1 x D*J*J) with column c = ∂²f_{c/J/J+1}/(∂p_{(c/J)%J+1} ∂p_{c%J+1})
+# Reshape as [m, j2, j1, d]: Hp_F[m,j2,j1,d] = ∂²f_d/(∂p_j1 ∂p_j2)
 build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt) {
   function(p) {
     p_mat  <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input  <- rbind(p_mat, t(U), t(tt))
-    Hp_F   <- array(H_p(input), c(mp1, D, J, J))
-    result <- array(V %*% matrix(Hp_F, mp1, D * J * J), c(K, D, J, J))
-    array(result, c(K * D, J, J))
+    Hp_F   <- array(H_p(input), c(mp1, J, J, D))
+    result <- array(V %*% matrix(Hp_F, mp1, J * J * D), c(K, J, J, D))
+    array(aperm(result, c(1L, 4L, 3L, 2L)), c(K * D, J, J))
   }
 }
 
@@ -133,18 +135,21 @@ build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J) {
 }
 
 # ∇ₚL(p) Jacobian of the covariance factor
-# einsum "mabj,km,a->kambj": result[k,a,m,b,j] = H_F[m,a,b,j] * V[k,m] * sig[a]
+# J_up_sym has shape (J, D, D) in practice: J_up_sym[j,a,b] = ∂²f_a/(∂u_b ∂p_j)
+# After evaluation: H_F[m,j,a,b] = ∂²f_a/(∂u_b ∂p_j)
+# result[k,a,m,b,j] = H_F[m,j,a,b] * V[k,m] * sig[a]
 build_Jp_L <- function(U, tt, J_up, K, J, D, V, sig) {
   mp1 <- length(tt)
   function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    H_F   <- array(J_up(input), c(mp1, D, D, J))
+    # Reshape as [m, j, a, b]: p-derivative index is first (column-major convention)
+    H_F   <- array(J_up(input), c(mp1, J, D, D))
     Jp_L_ <- array(0, c(K, D, mp1, D, J))
     for (a in seq_len(D)) {
       for (b in seq_len(D)) {
-        # Use matrix() to guard against dimension dropping when J==1
-        sig_HF_ab <- sig[a] * matrix(H_F[, a, b, ], mp1, J)  # mp1 x J
+        # H_F[m, j, a, b] for all j: use dims 2=j, 3=a, 4=b
+        sig_HF_ab <- sig[a] * matrix(H_F[, , a, b], mp1, J)  # mp1 x J
         for (j in seq_len(J)) {
           Jp_L_[, a, , b, j] <- V * matrix(rep(sig_HF_ab[, j], each = K), K, mp1)
         }
@@ -178,19 +183,22 @@ build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J) {
 }
 
 # ∇ₚ∇ₚL(p) Hessian of the covariance factor
-# einsum "mabcd,km,a->kambcd": result[k,a,m,b,c,d] = T_F[m,a,b,c,d] * V[k,m] * sig[a]
+# J_upp_sym has shape (J,J,D,D): J_upp_sym[j1,j2,a,b] = ∂³f_a/(∂u_b ∂p_{j2} ∂p_{j1})
+# After evaluation: T_F[m,j1,j2,a,b] = ∂³f_a/(∂u_b ∂p_{j2} ∂p_{j1})
+# result[k,a,m,b,j1,j2] = T_F[m,j1,j2,a,b] * V[k,m] * sig[a]
 build_Hp_L <- function(U, tt, J_upp, K, J, D, V, sig) {
   mp1 <- length(tt)
   function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, t(U), t(tt))
-    T_F   <- array(J_upp(input), c(mp1, D, D, J, J))
+    # Reshape as [m, j1, j2, a, b]: p-derivative indices are first
+    T_F   <- array(J_upp(input), c(mp1, J, J, D, D))
     Hp_L_ <- array(0, c(K, D, mp1, D, J, J))
     for (a in seq_len(D)) {
       for (b in seq_len(D)) {
         for (j1 in seq_len(J)) {
           for (j2 in seq_len(J)) {
-            sig_TF <- sig[a] * T_F[, a, b, j1, j2]  # mp1 vector
+            sig_TF <- sig[a] * T_F[, j1, j2, a, b]  # mp1 vector
             Hp_L_[, a, , b, j1, j2] <- V * matrix(rep(sig_TF, each = K), K, mp1)
           }
         }

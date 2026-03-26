@@ -1,8 +1,9 @@
 
 # %%
-library(wendy)
 library(deSolve)
 library(plotly)
+
+invisible(devtools::load_all())
 
 f <- function(u, p, t) {
   du1 <- p[1] * (u[2] - u[1])
@@ -12,10 +13,12 @@ f <- function(u, p, t) {
    c(du1, du2, du3)
 }
 
+set.seed(8675309)
+
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 1024
+npoints <- 256 
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -34,7 +37,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, lip = FALSE, method = "IRLS", control = list(test_fun_type = "MSG"))
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", control = list(test_fun_type = "MSG"))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 

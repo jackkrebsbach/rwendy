@@ -38,7 +38,4 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 plot(U[,1],U[,2], cex = 0.5)
 points(sol_hat[,2], sol_hat[,3], cex = 0.5, col = "red")
 
-print(norm(res$phat - p_star, type = "2") / norm(p_star, type = "2"))
-
-print(as.numeric(res$sig))
-print(noise_sd)
+# print(norm(res$phat - p_star, type = "2") / norm(p_star, type = "2"))

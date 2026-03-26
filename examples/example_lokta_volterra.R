@@ -1,7 +1,9 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
+
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   u1 <- p[1] * u[1] + p[2] * u[1] * u[2]
@@ -36,3 +38,5 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(U[,1],U[,2], cex = 0.5)
 points(sol_hat[,2], sol_hat[,3], cex = 0.5, col = "red")
+
+print(res$phat)
