@@ -288,7 +288,9 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, 
       # Precompute ∂ⱼL · W once per outer iteration
       Jp_Lp_j_W <- if (!is.null(W)) torch::torch_mm(Jp_Lp_j, W) else Jp_Lp_j
 
-      shar_ <- S_inv_solve(Jp_Sp_j)  # S⁻¹∂ⱼS: (KD, KD)
+      shar_          <- S_inv_solve(Jp_Sp_j)                        # S⁻¹∂ⱼS: (KD, KD)
+      S_inv_rp_j     <- S_inv_solve(Jp_rp_j)                        # S⁻¹∂ⱼr: (KD,)
+      Jp_Sp_j_S_invr <- torch::torch_matmul(Jp_Sp_j, S_inv_r)      # (∂ⱼS)(S⁻¹r): (KD,)
 
       for (i in j:J) {
         Jp_Sp_i  <- Jp_Sp[, , i]$contiguous()   # (KD, KD)
@@ -307,9 +309,9 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, 
         inv_factor <- S_inv_solve(Jp_rp_i)  # (KD,)
 
         prt0 <- as.numeric(Hp_rp_ji$dot(S_inv_r))
-        prt1 <- -1.0 * as.numeric(S_inv_solve(Jp_rp_j)$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
+        prt1 <- -1.0 * as.numeric(S_inv_rp_j$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
         prt2 <- as.numeric(Jp_rp_j$dot(inv_factor))
-        prt3 <- -2.0 * as.numeric(inv_factor$dot(torch::torch_matmul(Jp_Sp_j, S_inv_r)))
+        prt3 <- -2.0 * as.numeric(inv_factor$dot(Jp_Sp_j_S_invr))
         prt4 <- -1.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r)))
         prt5 <- 2.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(term, S_inv_r)))
 
@@ -352,7 +354,9 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_
       Jp_Lp_j   <- Jp_Lp[, , j]$contiguous()   # (KD, mp1*D)
       Jp_Lp_j_W <- if (!is.null(W)) torch::torch_mm(Jp_Lp_j, W) else Jp_Lp_j
 
-      shar_ <- S_inv_solve(Jp_Sp_j)  # S⁻¹∂ⱼS: (KD, KD)
+      shar_          <- S_inv_solve(Jp_Sp_j)                        # S⁻¹∂ⱼS: (KD, KD)
+      S_inv_rp_j     <- S_inv_solve(Jp_rp_j)                        # S⁻¹∂ⱼr: (KD,)
+      Jp_Sp_j_S_invr <- torch::torch_matmul(Jp_Sp_j, S_inv_r)      # (∂ⱼS)(S⁻¹r): (KD,)
 
       for (i in j:J) {
         Jp_Sp_i <- Jp_Sp[, , i]$contiguous()   # (KD, KD)
@@ -367,9 +371,9 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_
 
         inv_factor <- S_inv_solve(Jp_rp_i)  # (KD,)
 
-        prt1 <- -1.0 * as.numeric(S_inv_solve(Jp_rp_j)$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
+        prt1 <- -1.0 * as.numeric(S_inv_rp_j$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
         prt2 <- as.numeric(Jp_rp_j$dot(inv_factor))
-        prt3 <- -2.0 * as.numeric(inv_factor$dot(torch::torch_matmul(Jp_Sp_j, S_inv_r)))
+        prt3 <- -2.0 * as.numeric(inv_factor$dot(Jp_Sp_j_S_invr))
         prt4 <- -1.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r)))
         prt5 <- 2.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(term, S_inv_r)))
 
