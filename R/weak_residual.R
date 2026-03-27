@@ -218,42 +218,40 @@ build_J_S <- function(L, Jp_L, J, K, D, W = NULL, diag_reg = 1e-10){
 build_wnll <- function(S, g, b, K, D){
   constant_term <- 0.5 * K * D * log(2 * pi)
   function(p){
-    Sp <- as.array(S(p))
-    r <- as.array(g(p) - b)
-    cholF <- chol(Sp)
-    log_det <- 2 * sum(log(diag(cholF)))
-    S_invr <- backsolve(cholF, forwardsolve(t(cholF), r))
-    mdist <- (r %*% S_invr)[1,1]
+    Sp    <- S(p)
+    r     <- g(p) - b
+    cholL <- torch::linalg_cholesky(Sp)
+    log_det <- 2.0 * as.numeric(torch::torch_diag(cholL)$log()$sum())
+    S_invr  <- torch::torch_cholesky_solve(r$unsqueeze(-1L), cholL, upper = FALSE)$squeeze(-1L)
+    mdist   <- as.numeric(r$dot(S_invr))
     return(0.5 * (mdist + log_det) + constant_term)
   }
 }
 
-# Jacobian of the weak form negative log likelihood 
+# Jacobian of the weak form negative log likelihood
 build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   function(p){
-    Sp <- as.array(S(p))
+    Sp   <- S(p)
+    J_Sp <- Jp_S(p)   # (KD, KD, J)
+    J_rp <- Jp_r(p)   # (KD, J)
+    r    <- g(p) - b  # (KD,)
 
-    J_Sp <- as.array(Jp_S(p)$contiguous())
-    J_rp <- as.array(Jp_r(p)$contiguous())
-
-    r <- as.array(g(p) - b)
-
-    cholF <- chol(Sp)
-    S_inv_rp <- backsolve(cholF, forwardsolve(t(cholF), r))
+    cholL   <- torch::linalg_cholesky(Sp)
+    S_inv_r <- torch::torch_cholesky_solve(r$unsqueeze(-1L), cholL, upper = FALSE)$squeeze(-1L)
 
     gradient <- numeric(J)
 
-    for(j in seq(J)){
-      J_S_j <- J_Sp[, , j]
-      J_r_j <- J_rp[, j]
+    for(j in seq_len(J)){
+      J_S_j <- J_Sp[, , j]$contiguous()  # (KD, KD)
+      J_r_j <- J_rp[, j]                  # (KD,)
 
-      tmp <- J_S_j %*% S_inv_rp
+      tmp  <- torch::torch_matmul(J_S_j, S_inv_r)  # (∂ⱼS)(S⁻¹r): (KD,)
+      prt0 <- 2.0 * as.numeric(J_r_j$dot(S_inv_r))
+      prt1 <- -1.0 * as.numeric(S_inv_r$dot(tmp))
 
-      prt0 <- 2.0 * (J_r_j %*% S_inv_rp)[1,1]
-      prt1 <- -1.0 * (S_inv_rp %*% tmp)[1,1]
-
-      fact <- backsolve(cholF, forwardsolve(t(cholF), J_S_j))
-      logDetPart <- sum(diag(fact))
+      # tr(S⁻¹ ∂ⱼS)
+      J_S_j_sol  <- torch::torch_cholesky_solve(J_S_j, cholL, upper = FALSE)
+      logDetPart <- as.numeric(torch::torch_diag(J_S_j_sol)$sum())
 
       gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
     }
@@ -262,65 +260,63 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
   }
 }
 
-# Hessian of the weak form negative log likelihood 
+# Hessian of the weak form negative log likelihood
 build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, diag_reg = 1e-10) {
   WEIGHT <- 1.0 - diag_reg
   function(p) {
-    r <- as.array(g(p) - b)
+    r      <- g(p) - b   # (KD,)
+    Jp_rp  <- Jp_r(p)    # (KD, J)
+    Hp_rp  <- Hp_r(p)    # (KD, J, J)
+    Lp     <- L(p)        # (KD, mp1*D)
+    Jp_Lp  <- Jp_L(p)    # (KD, mp1*D, J)
+    Hp_Lp  <- Hp_L(p)    # (KD, mp1*D, J, J)
+    Sp     <- S(p)        # (KD, KD)
+    Jp_Sp  <- Jp_S(p)    # (KD, KD, J)
 
-    Jp_rp <- as.array(Jp_r(p)$contiguous())
-    Hp_rp <- as.array(Hp_r(p)$contiguous())
-
-    Lp <- as.array(L(p))                     # L(p)
-    Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
-    Hp_Lp <- as.array(Hp_L(p)$contiguous())  # ∇ₚ∇ₚL(p)
-    W_mat <- if (!is.null(W)) as.array(W) else NULL
     # Precompute W Lᵀ once (used in p2 = ∂ᵢ∂ⱼL · W · Lᵀ)
-    LpW_t <- if (!is.null(W_mat)) W_mat %*% t(Lp) else t(Lp)
-
-    Sp <- as.array(S(p)) # S(p)
-    Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
+    LpW_t <- if (!is.null(W)) torch::torch_mm(W, Lp$t()$contiguous()) else Lp$t()$contiguous()
 
     S_inv_solve <- make_S_inv_solver(Sp)
+    S_inv_r     <- S_inv_solve(r)  # (KD,)
 
-    S_inv_rp <- S_inv_solve(r)
     H_wnn <- matrix(0, nrow = J, ncol = J)
 
     for (j in seq_len(J)) {
-      Jp_rp_j <- Jp_rp[, j]
-      Jp_Sp_j <- Jp_Sp[, , j]
-      Jp_Lp_j <- Jp_Lp[, , j]
+      Jp_rp_j   <- Jp_rp[, j]
+      Jp_Sp_j   <- Jp_Sp[, , j]$contiguous()   # (KD, KD)
+      Jp_Lp_j   <- Jp_Lp[, , j]$contiguous()   # (KD, mp1*D)
       # Precompute ∂ⱼL · W once per outer iteration
-      Jp_Lp_j_W <- if (!is.null(W_mat)) Jp_Lp_j %*% W_mat else Jp_Lp_j
+      Jp_Lp_j_W <- if (!is.null(W)) torch::torch_mm(Jp_Lp_j, W) else Jp_Lp_j
 
-      shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
+      shar_ <- S_inv_solve(Jp_Sp_j)  # S⁻¹∂ⱼS: (KD, KD)
 
       for (i in j:J) {
-        Jp_Sp_i <- Jp_Sp[, , i]  # ∂ᵢS(p)
-        Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
-        Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
+        Jp_Sp_i  <- Jp_Sp[, , i]$contiguous()   # (KD, KD)
+        Jp_Lp_i  <- Jp_Lp[, , i]$contiguous()   # (KD, mp1*D)
+        Jp_rp_i  <- Jp_rp[, i]                    # (KD,)
 
-        term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
+        term     <- torch::torch_mm(Jp_Sp_i, shar_)  # ∂ᵢS S⁻¹∂ⱼS: (KD, KD)
 
-        Hp_Lp_ji <- Hp_Lp[, , j, i] # ∂ᵢ∂ⱼS(p)
+        Hp_Lp_ji <- Hp_Lp[, , j, i]$contiguous()  # (KD, mp1*D)
         # p1 = ∂ⱼL · W · ∂ᵢLᵀ,  p2 = ∂ᵢ∂ⱼL · W · Lᵀ
-        p1 <- Jp_Lp_j_W %*% t(Jp_Lp_i)
-        p2 <- Hp_Lp_ji %*% LpW_t
-        Hp_Sp_ji <- WEIGHT * (p1 + t(p1) + p2 + t(p2))  # ∂ᵢ∂ⱼS(p)
+        p1       <- torch::torch_mm(Jp_Lp_j_W, Jp_Lp_i$t()$contiguous())  # (KD, KD)
+        p2       <- torch::torch_mm(Hp_Lp_ji, LpW_t)                        # (KD, KD)
+        Hp_Sp_ji <- WEIGHT * (p1 + p1$t() + p2 + p2$t())
 
-        Hp_rp_ji <- Hp_rp[, j, i]  # ∂ᵢ∂ⱼ r(p)
+        Hp_rp_ji   <- Hp_rp[, j, i]  # (KD,)
+        inv_factor <- S_inv_solve(Jp_rp_i)  # (KD,)
 
-        prt0 <- as.numeric(t(Hp_rp_ji) %*% S_inv_rp)
-        prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
+        prt0 <- as.numeric(Hp_rp_ji$dot(S_inv_r))
+        prt1 <- -1.0 * as.numeric(S_inv_solve(Jp_rp_j)$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
+        prt2 <- as.numeric(Jp_rp_j$dot(inv_factor))
+        prt3 <- -2.0 * as.numeric(inv_factor$dot(torch::torch_matmul(Jp_Sp_j, S_inv_r)))
+        prt4 <- -1.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r)))
+        prt5 <- 2.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(term, S_inv_r)))
 
-        inv_factor <- S_inv_solve(Jp_rp_i)
-        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
-
-        prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
-        prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
-        prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
-
-        logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
+        logDetTerm <- as.numeric(
+          -1.0 * torch::torch_diag(S_inv_solve(term))$sum() +
+                 torch::torch_diag(S_inv_solve(Hp_Sp_ji))$sum()
+        )
 
         Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
@@ -339,51 +335,48 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, 
 build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_reg = 1e-10) {
   WEIGHT <- 1.0 - diag_reg
   function(p) {
-
-    r <- as.array(g(p) - b)
-    Jp_rp <- as.array(Jp_r(p)$contiguous())
-
-    Lp <- as.array(L(p))                     # L(p)
-    Jp_Lp <- as.array(Jp_L(p)$contiguous())  # ∇ₚL(p)
-
-    Sp <- as.array(S(p)) # S(p)
-    Jp_Sp <- as.array(Jp_S(p)$contiguous()) # ∇ₚS(p)
+    r      <- g(p) - b   # (KD,)
+    Jp_rp  <- Jp_r(p)    # (KD, J)
+    Jp_Lp  <- Jp_L(p)    # (KD, mp1*D, J)
+    Sp     <- S(p)        # (KD, KD)
+    Jp_Sp  <- Jp_S(p)    # (KD, KD, J)
 
     S_inv_solve <- make_S_inv_solver(Sp)
-    W_mat <- if (!is.null(W)) as.array(W) else NULL
+    S_inv_r     <- S_inv_solve(r)  # (KD,)
 
-    S_inv_rp <- S_inv_solve(r)
     H_wnn <- matrix(0, nrow = J, ncol = J)
 
     for (j in seq_len(J)) {
-      Jp_rp_j <- Jp_rp[, j]
-      Jp_Sp_j <- Jp_Sp[, , j]
-      Jp_Lp_j <- Jp_Lp[, , j]
-      Jp_Lp_j_W <- if (!is.null(W_mat)) Jp_Lp_j %*% W_mat else Jp_Lp_j
+      Jp_rp_j   <- Jp_rp[, j]
+      Jp_Sp_j   <- Jp_Sp[, , j]$contiguous()   # (KD, KD)
+      Jp_Lp_j   <- Jp_Lp[, , j]$contiguous()   # (KD, mp1*D)
+      Jp_Lp_j_W <- if (!is.null(W)) torch::torch_mm(Jp_Lp_j, W) else Jp_Lp_j
 
-      shar_ <- S_inv_solve(Jp_Sp_j) # S⁻¹∂ⱼS
+      shar_ <- S_inv_solve(Jp_Sp_j)  # S⁻¹∂ⱼS: (KD, KD)
 
       for (i in j:J) {
+        Jp_Sp_i <- Jp_Sp[, , i]$contiguous()   # (KD, KD)
+        Jp_Lp_i <- Jp_Lp[, , i]$contiguous()   # (KD, mp1*D)
+        Jp_rp_i <- Jp_rp[, i]                    # (KD,)
 
-        Jp_Sp_i <- Jp_Sp[, , i]  # ∂ᵢS(p)
-        Jp_Lp_i <- Jp_Lp[, , i]  # ∂ᵢL(p)
-        Jp_rp_i <- Jp_rp[, i]    # ∂ᵢr(p)
+        term <- torch::torch_mm(Jp_Sp_i, shar_)  # ∂ᵢS S⁻¹∂ⱼS: (KD, KD)
 
-        term <- Jp_Sp_i %*% shar_ # ∂ᵢSS⁻¹∂ⱼS
+        # p1 = ∂ⱼL · W · ∂ᵢLᵀ (Hp_L = 0 in linear case, so no p2 term)
+        p1       <- torch::torch_mm(Jp_Lp_j_W, Jp_Lp_i$t()$contiguous())  # (KD, KD)
+        Hp_Sp_ji <- WEIGHT * (p1 + p1$t())
 
-        # p1 = ∂ⱼL · W · ∂ᵢLᵀ
-        p1 <- Jp_Lp_j_W %*% t(Jp_Lp_i)
-        Hp_Sp_ji <- WEIGHT * (p1 + t(p1))  # ∂ᵢ∂ⱼS(p)
+        inv_factor <- S_inv_solve(Jp_rp_i)  # (KD,)
 
-        inv_factor <- S_inv_solve(Jp_rp_i)
+        prt1 <- -1.0 * as.numeric(S_inv_solve(Jp_rp_j)$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
+        prt2 <- as.numeric(Jp_rp_j$dot(inv_factor))
+        prt3 <- -2.0 * as.numeric(inv_factor$dot(torch::torch_matmul(Jp_Sp_j, S_inv_r)))
+        prt4 <- -1.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r)))
+        prt5 <- 2.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(term, S_inv_r)))
 
-        prt1 <- -1.0 * as.numeric(t(S_inv_solve(Jp_rp_j)) %*% (Jp_Sp_i %*% S_inv_rp))
-        prt2 <- as.numeric(t(Jp_rp_j) %*% inv_factor)
-        prt3 <- -2.0 * as.numeric(t(inv_factor) %*% (Jp_Sp_j %*% S_inv_rp))
-        prt4 <- -1.0 * as.numeric(t(S_inv_rp) %*% (Hp_Sp_ji %*% S_inv_rp))
-        prt5 <- 2 * as.numeric(t(S_inv_rp) %*% (term %*% S_inv_rp))
-
-        logDetTerm <- -1.0 * sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
+        logDetTerm <- as.numeric(
+          -1.0 * torch::torch_diag(S_inv_solve(term))$sum() +
+                 torch::torch_diag(S_inv_solve(Hp_Sp_ji))$sum()
+        )
 
         Hij <- 0.5 * (2 * (prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
@@ -472,31 +465,30 @@ build_Hp_L_block <- function(Hp_L_fns, K_list, D, mp1, J, device) {
   }
 }
 
-# Robust solver for applying the inverse of S(p) to a vector or matrix
+# Robust solver for applying the inverse of S(p) to a vector or matrix (torch)
+# Sp: torch tensor (n x n), positive (semi-)definite
+# Returns a closure that applies S⁻¹ to a 1D (n,) or 2D (n, m) torch tensor.
 make_S_inv_solver <- function(Sp) {
-  cholF <- NULL
-  qrF <- NULL
-  use_regularization <- FALSE
-  diag_reg <- NULL
+  cholL <- tryCatch(torch::linalg_cholesky(Sp), error = function(e) NULL)
 
-  cholF <- tryCatch(chol(Sp), error = function(e) NULL)
-
-  if (is.null(cholF)) {
-    qrF <- tryCatch(qr(Sp), error = function(e) NULL)
-
-    if (is.null(qrF)) {
-      use_regularization <- TRUE
-      diag_reg <- 1e-12 * diag(nrow(Sp))
+  if (!is.null(cholL)) {
+    function(x) {
+      squeezed <- (x$dim() == 1L)
+      if (squeezed) x <- x$unsqueeze(-1L)
+      z <- torch::torch_cholesky_solve(x$contiguous(), cholL, upper = FALSE)
+      if (squeezed) z <- z$squeeze(-1L)
+      z
     }
-  }
-
-  function(x) {
-    if (!is.null(cholF)) {
-      return(backsolve(cholF, forwardsolve(t(cholF), x)))
-    } else if (!is.null(qrF)) {
-      return(solve(qrF, x))
-    } else {
-      return(solve(Sp + diag_reg, x))
+  } else {
+    n      <- Sp$size(1)
+    reg    <- 1e-12 * torch::torch_eye(n, dtype = Sp$dtype, device = Sp$device)
+    Sp_reg <- (Sp + reg)$contiguous()
+    function(x) {
+      squeezed <- (x$dim() == 1L)
+      if (squeezed) x <- x$unsqueeze(-1L)
+      z <- torch::linalg_solve(Sp_reg, x$contiguous())
+      if (squeezed) z <- z$squeeze(-1L)
+      z
     }
   }
 }
