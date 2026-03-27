@@ -1,7 +1,9 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
+
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   u1 <- p[1] * u[1] + p[2] * u[1] * u[2]
