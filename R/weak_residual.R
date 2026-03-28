@@ -244,28 +244,25 @@ build_J_wnll <- function(S, Jp_S, Jp_r, g, b, J){
     J_Sp <- Jp_S(p)   # (KD, KD, J)
     J_rp <- Jp_r(p)   # (KD, J)
     r    <- g(p) - b  # (KD,)
+    KD   <- Sp$size(1L)
 
     cholL   <- torch::linalg_cholesky(Sp)
     S_inv_r <- torch::torch_cholesky_solve(r$unsqueeze(-1L), cholL, upper = FALSE)$squeeze(-1L)
 
-    gradient <- numeric(J)
+    # prt0: 2 * (∂ⱼr)ᵀ S⁻¹r  for all j → (J,)
+    prt0_all <- 2.0 * torch::torch_mv(J_rp$t()$contiguous(), S_inv_r)
 
-    for(j in seq_len(J)){
-      J_S_j <- J_Sp[, , j]$contiguous()  # (KD, KD)
-      J_r_j <- J_rp[, j]                  # (KD,)
+    # tmp_all: (∂ⱼS)(S⁻¹r) for all j → (KD, J)
+    tmp_all  <- torch::torch_einsum("klj,l->kj", list(J_Sp, S_inv_r))
+    # prt1: -(S⁻¹r)ᵀ tmp_j for all j → (J,)
+    prt1_all <- -1.0 * torch::torch_mv(tmp_all$t()$contiguous(), S_inv_r)
 
-      tmp  <- torch::torch_matmul(J_S_j, S_inv_r)  # (∂ⱼS)(S⁻¹r): (KD,)
-      prt0 <- 2.0 * as.numeric(J_r_j$dot(S_inv_r))
-      prt1 <- -1.0 * as.numeric(S_inv_r$dot(tmp))
+    # tr(S⁻¹ ∂ⱼS) for all j: solve KD × (KD*J) system, reshape, extract diagonals
+    J_Sp_2d    <- J_Sp$reshape(c(KD, KD * J))
+    J_S_sol_2d <- torch::torch_cholesky_solve(J_Sp_2d, cholL, upper = FALSE)
+    logDet_all <- torch::torch_einsum("iij->j", J_S_sol_2d$reshape(c(KD, KD, J)))
 
-      # tr(S⁻¹ ∂ⱼS)
-      J_S_j_sol  <- torch::torch_cholesky_solve(J_S_j, cholL, upper = FALSE)
-      logDetPart <- as.numeric(torch::torch_diag(J_S_j_sol)$sum())
-
-      gradient[j] <- 0.5 * (prt0 + prt1 + logDetPart)
-    }
-
-    return(gradient)
+    return(as.numeric(0.5 * (prt0_all + prt1_all + logDet_all)))
   }
 }
 
@@ -288,7 +285,7 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, 
     S_inv_solve <- make_S_inv_solver(Sp)
     S_inv_r     <- S_inv_solve(r)  # (KD,)
 
-    H_wnn <- matrix(0, nrow = J, ncol = J)
+    H_vals <- torch::torch_zeros(c(J, J), dtype = Sp$dtype, device = Sp$device)
 
     for (j in seq_len(J)) {
       Jp_rp_j   <- Jp_rp[, j]
@@ -317,28 +314,23 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, 
         Hp_rp_ji   <- Hp_rp[, j, i]  # (KD,)
         inv_factor <- S_inv_solve(Jp_rp_i)  # (KD,)
 
-        prt0 <- as.numeric(Hp_rp_ji$dot(S_inv_r))
-        prt1 <- -1.0 * as.numeric(S_inv_rp_j$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
-        prt2 <- as.numeric(Jp_rp_j$dot(inv_factor))
-        prt3 <- -2.0 * as.numeric(inv_factor$dot(Jp_Sp_j_S_invr))
-        prt4 <- -1.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r)))
-        prt5 <- 2.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(term, S_inv_r)))
+        prt0 <- Hp_rp_ji$dot(S_inv_r)
+        prt1 <- -1.0 * S_inv_rp_j$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r))
+        prt2 <- Jp_rp_j$dot(inv_factor)
+        prt3 <- -2.0 * inv_factor$dot(Jp_Sp_j_S_invr)
+        prt4 <- -1.0 * S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r))
+        prt5 <- 2.0 * S_inv_r$dot(torch::torch_matmul(term, S_inv_r))
 
-        logDetTerm <- as.numeric(
-          -1.0 * torch::torch_diag(S_inv_solve(term))$sum() +
-                 torch::torch_diag(S_inv_solve(Hp_Sp_ji))$sum()
-        )
+        logDetTerm <- -1.0 * torch::torch_diag(S_inv_solve(term))$sum() +
+                             torch::torch_diag(S_inv_solve(Hp_Sp_ji))$sum()
 
         Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
-        H_wnn[j, i] <- Hij
-
-        if (i != j) {
-          H_wnn[i, j] <- Hij
-        }
+        H_vals[j, i] <- Hij
+        if (i != j) H_vals[i, j] <- Hij
       }
     }
-    return(H_wnn)
+    return(as.matrix(H_vals$cpu()))
   }
 }
 
@@ -355,7 +347,7 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_
     S_inv_solve <- make_S_inv_solver(Sp)
     S_inv_r     <- S_inv_solve(r)  # (KD,)
 
-    H_wnn <- matrix(0, nrow = J, ncol = J)
+    H_vals <- torch::torch_zeros(c(J, J), dtype = Sp$dtype, device = Sp$device)
 
     for (j in seq_len(J)) {
       Jp_rp_j   <- Jp_rp[, j]
@@ -380,27 +372,22 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_
 
         inv_factor <- S_inv_solve(Jp_rp_i)  # (KD,)
 
-        prt1 <- -1.0 * as.numeric(S_inv_rp_j$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r)))
-        prt2 <- as.numeric(Jp_rp_j$dot(inv_factor))
-        prt3 <- -2.0 * as.numeric(inv_factor$dot(Jp_Sp_j_S_invr))
-        prt4 <- -1.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r)))
-        prt5 <- 2.0 * as.numeric(S_inv_r$dot(torch::torch_matmul(term, S_inv_r)))
+        prt1 <- -1.0 * S_inv_rp_j$dot(torch::torch_matmul(Jp_Sp_i, S_inv_r))
+        prt2 <- Jp_rp_j$dot(inv_factor)
+        prt3 <- -2.0 * inv_factor$dot(Jp_Sp_j_S_invr)
+        prt4 <- -1.0 * S_inv_r$dot(torch::torch_matmul(Hp_Sp_ji, S_inv_r))
+        prt5 <- 2.0 * S_inv_r$dot(torch::torch_matmul(term, S_inv_r))
 
-        logDetTerm <- as.numeric(
-          -1.0 * torch::torch_diag(S_inv_solve(term))$sum() +
-                 torch::torch_diag(S_inv_solve(Hp_Sp_ji))$sum()
-        )
+        logDetTerm <- -1.0 * torch::torch_diag(S_inv_solve(term))$sum() +
+                             torch::torch_diag(S_inv_solve(Hp_Sp_ji))$sum()
 
         Hij <- 0.5 * (2 * (prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
 
-        H_wnn[j, i] <- Hij
-
-        if (i != j) {
-          H_wnn[i, j] <- Hij
-        }
+        H_vals[j, i] <- Hij
+        if (i != j) H_vals[i, j] <- Hij
       }
     }
-    return(H_wnn)
+    return(as.matrix(H_vals$cpu()))
   }
 }
 
