@@ -1,8 +1,10 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
 library(plotly)
+
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   du1 <- p[1] * (u[2] - u[1])

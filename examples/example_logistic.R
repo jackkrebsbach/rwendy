@@ -13,7 +13,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 256
+npoints <- 10
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -35,7 +35,7 @@ tt <- sol[, 1, drop = FALSE]
 
 res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", noise_dist = "addgaussian",
                     control = list(use_interp_uncertainty = TRUE,
-                    interpolation_method = c("cubic_ls", "linear"))
+                    interpolation_method = c("cubic_ls"))
                  )
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
