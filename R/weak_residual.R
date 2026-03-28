@@ -3,9 +3,11 @@ build_F <- function(U, tt, f_, J, device = torch::torch_device("cpu")) {
   mp1   <- nrow(U)
   D     <- ncol(U)
   dtype <- torch::torch_float64()
+  tU    <- t(U)
+  ttt   <- matrix(tt, nrow = 1L)
   function(p) {
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
+    input <- rbind(p_mat, tU, ttt)
     Fp <- f_(input)
     return(torch::torch_tensor(Fp, dtype = dtype, device = device))
   }
@@ -48,9 +50,11 @@ build_g_linear <- function(G, device = torch::torch_device("cpu")) {
 # ∇ₚr(p) ∈ ℝ^(K*D × J) Jacobian of the weak residual
 build_Jp_r <- function(J_p, K, D, J, mp1, V, U, tt, device = torch::torch_device("cpu")){
   dtype <- torch::torch_float64()
+  tU    <- t(U)
+  ttt   <- matrix(tt, nrow = 1L)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
+    input <- rbind(p_mat, tU, ttt)
     J_p_eval <- torch::torch_tensor(J_p(input), dtype = dtype, device = device)
     Jp_F <- torch::torch_reshape(J_p_eval, c(mp1, D, J))
     Jp_r <- torch::torch_einsum("km,mdj->kdj", list(V, Jp_F))
@@ -66,9 +70,11 @@ build_Jp_r_linear <- function(G){
 # ∇ₚ∇ₚr(p) ∈ ℝ^(K*D × J × J) Hessian of the weak residual
 build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt, device = torch::torch_device("cpu")){
   dtype <- torch::torch_float64()
+  tU    <- t(U)
+  ttt   <- matrix(tt, nrow = 1L)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
+    input <- rbind(p_mat, tU, ttt)
     H_p_eval <- torch::torch_tensor(H_p(input), dtype = dtype, device = device)
     Hp_F <- torch::torch_reshape(H_p_eval, c(mp1, D, J, J))
     Hp_r <- torch::torch_einsum("km,mdab->kdab", list(V, Hp_F))
@@ -90,9 +96,11 @@ build_L <-function(U, tt, J_u, K, V, L0, sig, J, device = torch::torch_device("c
   D     <- ncol(U)
   mp1   <- length(tt)
   dtype <- torch::torch_float64()
+  tU    <- t(U)
+  ttt   <- matrix(tt, nrow = 1L)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
+    input <- rbind(p_mat, tU, ttt)
     J_F <- torch::torch_tensor(J_u(input), dtype = dtype, device = device)
     J_F <- torch::torch_reshape(J_F, c(mp1, D, D))
     L1 <- torch::torch_einsum('mab,km,a->kamb', list(J_F, V, sig))
@@ -140,9 +148,11 @@ build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J, device = torch::torch_d
 build_Jp_L <-function(U, tt, J_up, K, J, D, V, sig, device = torch::torch_device("cpu")){
   mp1   <- length(tt)
   dtype <- torch::torch_float64()
+  tU    <- t(U)
+  ttt   <- matrix(tt, nrow = 1L)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
+    input <- rbind(p_mat, tU, ttt)
     H_F <- torch::torch_tensor(J_up(input), dtype = dtype, device = device)
     H_F <- torch::torch_reshape(H_F, c(mp1, D, D, J))
     J_ <- torch::torch_einsum("mabj,km,a->kambj", list(H_F, V, sig))
@@ -183,9 +193,11 @@ build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J, device = torch::torc
 build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig, device = torch::torch_device("cpu")){
   mp1   <- length(tt)
   dtype <- torch::torch_float64()
+  tU    <- t(U)
+  ttt   <- matrix(tt, nrow = 1L)
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, t(U), t(tt))
+    input <- rbind(p_mat, tU, ttt)
     T_F <- torch::torch_tensor(J_upp(input), dtype = dtype, device = device)
     T_F <- torch::torch_reshape(T_F, c(mp1, D, D, J, J))
     H_ <- torch::torch_einsum("mabcd,km,a->kambcd", list(T_F, V, sig))
@@ -196,16 +208,17 @@ build_Hp_L <-function(U, tt, J_upp, K, J, D, V, sig, device = torch::torch_devic
 
 # S(p) is the covariance matrix of the weak residual
 build_S <- function(L, W = NULL, diag_reg = 10e-10) {
+  WEIGHT    <- 1.0 - diag_reg
+  eye_cache <- NULL
   function(p) {
     Lp <- L(p)
     Lpt <- torch::torch_transpose(Lp, 1, 2)
     S_ <- if (!is.null(W)) torch::torch_matmul(Lp, torch::torch_matmul(W, Lpt))
           else              torch::torch_matmul(Lp, Lpt)
-    WEIGHT <- 1.0 - diag_reg
-    n <- S_$size(1)
-    eye <- diag_reg * torch::torch_eye(n, dtype = S_$dtype, device = S_$device)
-    S <- WEIGHT * S_ + eye
-    return(S)
+    if (is.null(eye_cache)) {
+      eye_cache <<- diag_reg * torch::torch_eye(S_$size(1L), dtype = S_$dtype, device = S_$device)
+    }
+    return(WEIGHT * S_ + eye_cache)
   }
 }
 
