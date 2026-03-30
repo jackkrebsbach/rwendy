@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 256
+npoints <- 501
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -36,24 +36,29 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE", control = list(test_fun_type = "MSG"))
+time <- system.time({
+  res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS", control = list(test_fun_type = "MSG"))
+})
 
-sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
+print(time)
+print(res$phat)
 
-plot_ly(
- x = sol[, 2],
- y = sol[, 3],
- z = sol[, 4],
- type = 'scatter3d',
- mode = 'marker',
- marker = list(color = 'blue', size = 3),
- name = "data"
-) |>
- add_trace(
-   x = sol_hat[, 1],
-   y = sol_hat[, 2],
-   z = sol_hat[, 3],
-   mode = 'marker',
-   marker = list(color = 'red', size = 3),
-   name = "fit"
- )
+# sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
+
+# plot_ly(
+#  x = sol[, 2],
+#  y = sol[, 3],
+#  z = sol[, 4],
+#  type = 'scatter3d',
+#  mode = 'marker',
+#  marker = list(color = 'blue', size = 3),
+#  name = "data"
+# ) |>
+#  add_trace(
+#    x = sol_hat[, 1],
+#    y = sol_hat[, 2],
+#    z = sol_hat[, 3],
+#    mode = 'marker',
+#    marker = list(color = 'red', size = 3),
+#    name = "fit"
+#  )
