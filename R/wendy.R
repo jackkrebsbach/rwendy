@@ -108,6 +108,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
                    )
 
   J_u_sym   <- compute_symbolic_jacobian(f_expr, u_expr)
+  J_t_sym   <- compute_symbolic_jacobian(f_expr, t_expr)
   J_up_sym  <- compute_symbolic_jacobian(J_u_sym, p_expr)
   J_p_sym   <- compute_symbolic_jacobian(f_expr, p_expr)
   J_pp_sym  <- compute_symbolic_jacobian(J_p_sym, p_expr)
@@ -117,6 +118,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
 
   # Callable functions of p, u, and t
   f_    <- build_fn(f_expr,    vars)  # f(p,u,t)
+  J_t   <- build_fn(J_t_sym, vars)    # ∇ₜ f(p,u,t)
   J_u   <- build_fn(J_u_sym,   vars)  # ∇ᵤf(p,u,t)
   J_up  <- build_fn(J_up_sym,  vars)  # ∇ₚ∇ᵤf(p,u,t)
   J_p   <- build_fn(J_p_sym,   vars)  # ∇ₚf(p,u,t)
