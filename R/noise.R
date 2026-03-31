@@ -1,28 +1,3 @@
-
-convolve1d_inner <- function(signal, kernel) {
-  signal_len <- length(signal)
-  kernel_len <- length(kernel)
-
-  output_len <- signal_len - kernel_len + 1
-
-  if (output_len <= 0) {
-    stop("Signal too short for convolution with this kernel")
-  }
-
-  result <- numeric(output_len)
-
-  for (i in 1:output_len) {
-     sum <- 0
-     for(j in 1:kernel_len){
-       sum <- sum +  signal[i + j - 1] * kernel[j];
-     }
-    result[i] <- sum
-  }
-
-  return(result)
-}
-
-
 # https://faculty.washington.edu/rjl/fdmbook/matlab/fdcoeffF.m
 fdcoeffF <- function(k, xbar, x) {
   n <- length(x)
@@ -79,7 +54,7 @@ estimate_std <- function(U, k = 6) {
 
     filter <- filter / sqrt(sum(filter^2))
 
-    convolved <- convolve1d_inner(f, filter)
+    convolved <- stats::convolve(f, filter, type = "filter")
     squared <- convolved^2
     mean_squared <- mean(squared)
 
