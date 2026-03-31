@@ -123,13 +123,32 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
     radius <- radii[i]
     V_r <- build_test_function_matrix(phi, tt, radius)
     K <- nrow(V_r)
+    
+    G <- array(0, dim = c(K, Mp1, D))
+    for (k in 1:K) {
+      for (d in 1:D) {
+        G[k, , d] <- V_r[k, ] * U[, d]
+      }
+    }
+
+    GT <- aperm(G, c(1, 3, 2))
+
+    GT_reshaped <- matrix(GT, nrow = K * D, ncol = Mp1)
+
+    f_hat_G <- apply(GT_reshaped, 1, fft)
+
+    if (is.matrix(f_hat_G)) {
+      f_hat_G_imag <- Im(f_hat_G[IX,])
+    } else {
+      f_hat_G_imag <- Im(f_hat_G[[IX]])
+    }
 
     # GT_reshaped[(k-1)*D + d, m] = V_r[k, m] * U[m, d]
-    GT_reshaped <- V_r[rep(seq_len(K), each = D), ] *
-                   t(U)[rep(seq_len(D), K), ]
+    # GT_reshaped <- V_r[rep(seq_len(K), each = D), ] *
+    #                t(U)[rep(seq_len(D), K), ]
 
     # mvfft operates on columns of an Mp1 x (K*D) matrix
-    f_hat_G_imag <- Im(mvfft(t(GT_reshaped))[IX, ])
+    # f_hat_G_imag <- Im(mvfft(t(GT_reshaped))[IX, ])
 
     errors[i] <- sqrt(sum(f_hat_G_imag^2))
   }

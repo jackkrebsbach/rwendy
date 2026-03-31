@@ -79,6 +79,8 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
       U = U, tt = tt, var = var,
       # Test-function tensors and dimensions
       V = V, Vp = Vp, K = K, D = D, mp1 = mp1, J = J, min_radius = tf$min_radius,
+      # Minimum radius selection
+       min_radius_errors = tf$min_radius_errors, min_radius_radii = tf$min_radius_radii,
       # Residual components
       F_ = F_, g = g, g0 = g0, b = b, G = G,
       Jp_r = Jp_r, Hp_r = Hp_r,
