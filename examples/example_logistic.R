@@ -20,7 +20,7 @@ t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.25
+nr <- 0.05
 U_vec <- as.vector(sol[,-1])
 # Additive Gaussian Noise
 noise_sd <- nr * sqrt(mean(U_vec^2))

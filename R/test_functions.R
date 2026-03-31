@@ -97,15 +97,7 @@ build_test_function_matrix <- function(test_function, tt, radius, order = 0) {
 }
 
 build_full_test_function_matrix <- function(test_function, tt, radii, order = 0) {
-  test_matrices <- vector("list", length(radii))
-
-  for (i in seq_along(radii)) {
-    test_matrices[[i]] <- build_test_function_matrix(test_function, tt, radii[i], order)
-  }
-
-  V_full <- do.call(rbind, test_matrices)
-
-  return(V_full)
+  do.call(rbind, lapply(radii, function(r) build_test_function_matrix(test_function, tt, r, order)))
 }
 
 find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, sub_sample_rate = 2) {
