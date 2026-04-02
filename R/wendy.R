@@ -73,7 +73,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     min_test_fun_info_number = 0.95,
     min_number_points = 256,            
     max_points_interp = 25,           # integer: only interpolate data when number of data points is less than this
-    interpolation_method = NULL,  # "spline", "linear", "cubic", "cubic_ls", "loess", or "kernel"
+    interpolation_method = NULL,  # "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
     use_interp_uncertainty = TRUE,               # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
     device = torch::torch_device("cpu") # If GPUs are available
@@ -102,9 +102,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
 
+  f_orig_expr <- f(u_expr, p_expr, t_expr)
   f_expr <- switch(noise_dist,
-                    lognormal = lognormal_transform(f(u_expr, p_expr, t_expr)),
-                    f(u_expr, p_expr, t_expr)
+                    lognormal = lognormal_transform(f_orig_expr),
+                    f_orig_expr
                    )
 
   J_u_sym   <- compute_symbolic_jacobian(f_expr, u_expr)
@@ -125,10 +126,11 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
   J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
 
-  # When nrow(U) < max_points_interp  we interpolate the sparse data
+  # When nrow(U) < max_points_interp  we interpolate the sparse data.
   if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
-    max_order   <- detect_max_state_order(f_expr, u_expr)
-    control$interpolation_method <- paste0("poly_ls_", max_order + 1L)
+    max_order   <- detect_max_state_order(f_orig_expr, u_expr)
+    interp_degree <- if (noise_dist == "lognormal") max_order else max_order + 1L
+    control$interpolation_method <- paste0("poly_ls_", interp_degree)
   }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
@@ -137,7 +139,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     estimate_std(U, k = 6)
   } else {
     # Standard SD estimation unreliable for sparse data; use poly LS residuals
-    degree               <- detect_max_state_order(f_expr, u_expr) + 1L
+    degree               <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
     degree_interpolation <- paste0("poly_ls_", degree)
     U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control = control)$U
     df    <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance

@@ -9,22 +9,11 @@ poly_design <- function(tt, degree) {
   do.call(cbind, lapply(0:degree, function(k) tt^k))
 }
 
-# Parse the polynomial degree from a method string.
-# Supports named forms:  "linear_ls"    -> 1
-#                        "quadratic_ls" -> 2
-#                        "cubic_ls"     -> 3
-#                        "quartic_ls"   -> 4
-#                        "quintic_ls"   -> 5
-# and a numeric suffix:  "poly_ls_N"    -> N  (any positive integer)
+# Parse the polynomial degree from a method string of the form "poly_ls_N".
 # @keywords internal
 poly_ls_degree <- function(method) {
-  named <- c(linear = 1L, quadratic = 2L, cubic = 3L, quartic = 4L, quintic = 5L, sextic = 6L, septic = 7L, octic = 8L, nonic = 9L, decic = 10L)
   m <- regmatches(method, regexpr("^poly_ls_(\\d+)$", method))
-  if (length(m) == 1L) {
-    return(as.integer(sub("^poly_ls_", "", m)))
-  }
-  prefix <- sub("_ls$", "", method)
-  if (prefix %in% names(named)) return(named[[prefix]])
+  if (length(m) == 1L) return(as.integer(sub("^poly_ls_", "", m)))
   stop("Cannot parse polynomial degree from method: '", method, "'")
 }
 
@@ -33,13 +22,13 @@ poly_ls_degree <- function(method) {
 # Returns list(fit, var):
 #   fit — numeric vector of length(tt_target), predicted values.
 #   var — numeric vector of length(tt_target), prediction-interval variance:
-#         - model-based methods (*_ls, loess, spline): se.fit^2 + residual.scale^2
+#         - model-based methods (poly_ls_N, loess, spline): se.fit^2 + residual.scale^2
 #         - linear: sigma^2 * (1 + (1-t)^2 + t^2) when sigma is supplied, else NA
 #         - cubic, kernel: NA (no residual model available)
 # @keywords internal
 fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
 
-  if (grepl("_ls$", method) || grepl("^poly_ls_\\d+$", method)) {
+  if (grepl("^poly_ls_\\d+$", method)) {
     degree <- poly_ls_degree(method)
     X      <- poly_design(tt_obs,    degree)
     df_obs <- as.data.frame(X[, -1L, drop = FALSE])
@@ -56,7 +45,7 @@ fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
 
   } else if (method == "spline") {
     fit    <- smooth.spline(tt_obs, y)
-    yhat   <- fit$y          
+    yhat   <- fit$y
     sigma2 <- sum((y - yhat)^2) / max(length(y) - fit$df, 1)
     list(fit = predict(fit, tt_target)$y, var = rep(sigma2, length(tt_target)))
 
@@ -95,25 +84,39 @@ fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
 #         variance per time point per state dimension.  Falls back to 1 for
 #         exact interpolants that carry no residual model and sigma is not
 #         supplied.  Observed time-point rows are reset to 1.
-# sigma: optional scalar noise SD forwarded to fit_col for exact interpolants.
+# sigma: optional noise SD vector (length D) or scalar forwarded to fit_col.
+#        Each dimension d uses sigma[d] (or sigma if scalar) as its nugget/scale.
 # @keywords internal
 interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = TRUE, sigma = NULL, control) {
-  cols <- lapply(seq_len(ncol(U)), function(d) {
-    fit_col(U[, d], tt_vec, tt_target, method, sigma = sigma)
+  D <- ncol(U)
+  sigma_for <- function(d) {
+    if (!is.null(sigma) && length(sigma) >= d) sigma[[d]] else sigma
+  }
+
+  cols <- lapply(seq_len(D), function(d) {
+    fit_col(U[, d], tt_vec, tt_target, method, sigma = sigma_for(d))
   })
   U_new   <- do.call(cbind, lapply(cols, `[[`, "fit"))
   var_mat <- do.call(cbind, lapply(cols, `[[`, "var"))
 
   if (!is.matrix(var_mat)) {
-    var_mat <- matrix(var_mat, nrow = length(tt_target), ncol = ncol(U))
+    var_mat <- matrix(var_mat, nrow = length(tt_target), ncol = D)
   }
 
-  var_mat[is.na(var_mat)] <- if (!is.null(sigma)) sigma^2 else 1
+  # Fill NAs per column with the per-dimension sigma^2 (or 1 if unavailable)
+  for (d in seq_len(D)) {
+    s_d <- sigma_for(d)
+    na_idx <- is.na(var_mat[, d])
+    var_mat[na_idx, d] <- if (!is.null(s_d)) s_d^2 else 1
+  }
 
-  var_mat <- matrix(
-    if (isTRUE(control$use_interp_uncertainty) && !is.null(sigma)) var_mat / sigma^2 else var_mat,
-    nrow = length(tt_target), ncol = ncol(U)
-  )
+  # Normalise per column by sigma_d^2 when weighting by interpolation uncertainty
+  if (isTRUE(control$use_interp_uncertainty) && !is.null(sigma)) {
+    for (d in seq_len(D)) {
+      s_d <- sigma_for(d)
+      var_mat[, d] <- var_mat[, d] / s_d^2
+    }
+  }
 
   tol <- sqrt(.Machine$double.eps)
   for (i in seq_along(tt_vec)) {
@@ -121,12 +124,11 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
     if (length(j) == 1L) var_mat[j, ] <- 1.0  # observed: no added uncertainty
   }
 
-  if (!is.matrix(U_new)){
-    U_new <- matrix(U_new, nrow = length(tt_target), ncol = ncol(U))
+  if (!is.matrix(U_new)) {
+    U_new <- matrix(U_new, nrow = length(tt_target), ncol = D)
   }
 
   if (substitute_data) {
-    tol <- sqrt(.Machine$double.eps)
     for (i in seq_along(tt_vec)) {
       j <- which(abs(tt_target - tt_vec[i]) < tol)
       if (length(j) == 1L) U_new[j, ] <- U[i, ]
