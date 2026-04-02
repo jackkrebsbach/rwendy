@@ -13,19 +13,20 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 10
+npoints <- 14
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.5
+nr <- 0.55
 U_vec <- as.vector(sol[,-1])
 # Additive Gaussian Noise
 # noise_sd <- nr * sqrt(mean(U_vec^2))
 # noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 
+# set.seed(8675309)
 # Multiplicative Lognormal Noise
 noise_sd <- nr
 noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
@@ -33,7 +34,8 @@ noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS", noise_dist = "lognormal")
+res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS",
+                  noise_dist = "lognormal")
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
 sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)
@@ -44,13 +46,13 @@ sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = 
 interp_colors <- c("purple", "darkorange", "forestgreen", "deeppink", "cyan4")
 problem_names <- names(res$wendy_data)
 
-plot(tt, U, cex = 1, xlab = "Time", ylab=  "u₁", col="black")
+plot(tt, log(U), cex = 1, xlab = "Time", ylab=  "u₁", col="black")
 for(i in seq_along(res$wendy_problems)){
   prob <- res$wendy_problems[[i]]
-  points(prob$tt, exp(prob$U), cex = 0.75, col = interp_colors[i])
+  points(prob$tt, prob$U, cex = 0.75, col = interp_colors[i])
 }
-lines(t_eval2, sol_hat[,2], cex = 0.25, col = "#1f77b4")
-lines(t_eval_dense, sol_true[,2], cex = 0.5, col = "red")
+lines(t_eval2, log(sol_hat[,2]), cex = 0.25, col = "#1f77b4")
+lines(t_eval_dense, log(sol_true[,2]), cex = 0.5, col = "red")
 title(paste0("nr: ", nr,
             "\n n: ", npoints,
             "\n p̂: ", round(res$phat[1],3), " ", round(res$phat[2], 3)
@@ -67,4 +69,4 @@ legend(
 )
 
 # plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
-# print(res$phat)
+print(res$phat)

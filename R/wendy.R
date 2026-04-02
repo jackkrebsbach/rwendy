@@ -126,12 +126,6 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
   J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
 
-  # When nrow(U) < max_points_interp  we interpolate the sparse data.
-  if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
-    max_order   <- detect_max_state_order(f_orig_expr, u_expr)
-    interp_degree <- if (noise_dist == "lognormal") max_order else max_order + 1L
-    control$interpolation_method <- paste0("poly_ls_", interp_degree)
-  }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
     control$noise_sd
@@ -145,8 +139,23 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     df    <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
     sqrt(sum((U_orig - U_fit)^2) / df)
   }
-
+  
   sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
+
+  # When nrow(U) < max_points_interp  we interpolate the sparse data.
+  # If the noise-to-signal ratio is low (<= 0.1) use linear interpolation —
+  # the observations are already accurate enough that smoothing between them suffices.
+  # For higher noise levels, polynomial LS averages out the noise.
+  if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
+    nsr <- min(estimated_sd / apply(U, 2, sd))
+    if (nsr <= 0.1) {
+      control$interpolation_method <- "linear"
+    } else {
+      max_order     <- detect_max_state_order(f_orig_expr, u_expr)
+      interp_degree <- if (noise_dist == "lognormal") max_order else max_order + 1L
+      control$interpolation_method <- paste0("poly_ls_", interp_degree)
+    }
+  }
 
   if (is.null(control$interpolation_method) && nrow(U) > control$max_points_interp) {
     wendy_data <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
