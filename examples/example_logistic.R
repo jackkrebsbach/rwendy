@@ -13,14 +13,14 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.5, 0.5);
-npoints <- 14
+npoints <- 10
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.55
+nr <- 0.5
 U_vec <- as.vector(sol[,-1])
 # Additive Gaussian Noise
 # noise_sd <- nr * sqrt(mean(U_vec^2))
@@ -34,8 +34,11 @@ noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "IRLS",
-                  noise_dist = "lognormal")
+time <- system.time({
+  res <- solveWendy(f, U, tt, method = "IRLS", noise_dist = "lognormal")
+})
+
+print(time)
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
 sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)

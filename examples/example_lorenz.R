@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 100
+npoints <- 512
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -25,7 +25,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.5
+nr <- 0.1
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 set.seed(8675309)
@@ -38,13 +38,10 @@ U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 time <- system.time({
-  res <- solveWendy(f, p0, U, tt, lip = TRUE, method = "MLE",
-   control = list(test_fun_type = "MSG",
-                  max_points_interp = 80,
-                  interpolation_method = "linear"
-  ))
+  res <- solveWendy(f, U, tt, method = "IRLS")
 })
 
+print(time)
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 

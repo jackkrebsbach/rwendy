@@ -34,7 +34,7 @@ check_suggested_packages <- function() {
 #' @param f A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 #'   where \code{u} is the state vector, \code{p} is the parameter vector,
 #'   and \code{t} is the time variable. 
-#' @param p0 Numeric vector. Initial guess for the parameters. Used in MLE or nonlinear least squares solvers.
+#' @param p0 Numeric vector or matrix. Initial guess for the parameters for when. Used in MLE or nonlinear least squares solvers.
 #' @param U Numeric matrix. Rows represent observed states at time points in \code{tt}.
 #'   Columns correspond to state variables.
 #' @param tt Numeric vector. Time points corresponding to the rows of \code{U}.
@@ -49,7 +49,7 @@ check_suggested_packages <- function() {
 #'
 #'
 #' @export
-solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS"), control = NULL){
+solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS"), control = NULL){
 
   check_suggested_packages()
 
@@ -76,7 +76,7 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     interpolation_method = NULL,  # "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
     use_interp_uncertainty = TRUE,               # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-    device = torch::torch_device("cpu") # If GPUs are available
+    device = torch::torch_device("cpu") # If GPUs are available use cuda (this speed up is most appropriate for high dimensional data)
   )
   
   if(!is.null(control)) {
@@ -98,8 +98,9 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   methods <- control$interpolation_method
 
   # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
+  J      <- detect_n_params(f)
   u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
-  p_expr <- do.call(c, lapply(1:length(p0), function(i) symengine::S(paste0("p", i))))
+  p_expr <- do.call(c, lapply(seq_len(J), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
 
   f_orig_expr <- f(u_expr, p_expr, t_expr)
@@ -114,6 +115,10 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   J_p_sym   <- compute_symbolic_jacobian(f_expr, p_expr)
   J_pp_sym  <- compute_symbolic_jacobian(J_p_sym, p_expr)
   J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p_expr)
+
+  # A function is linear/affine in p iff all second-order mixed partials
+  # ∂²f / ∂pᵢ ∂pⱼ are identically zero.
+  lip <- all(as.character(symengine::Vector(array(J_pp_sym))) == "0")
 
   vars <- c(p_expr, u_expr, t_expr)
 
@@ -143,9 +148,11 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
 
   # When nrow(U) < max_points_interp  we interpolate the sparse data.
-  # If the noise-to-signal ratio is low (<= 0.1) use linear interpolation —
-  # the observations are already accurate enough that smoothing between them suffices.
-  # For higher noise levels, polynomial LS averages out the noise.
+  # Degree rationale: Gaussian uses max_order+1 because integrating a degree-d RHS
+  # raises the trajectory degree by 1. For lognormal the log transform reduces the
+  # effective degree by 1, so max_order suffices. In both cases, if the
+  # noise-to-signal ratio is low (<= 0.1) the observations are clean enough that
+  # linear interpolation between them suffices.
   if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
     nsr <- min(estimated_sd / apply(U, 2, sd))
     if (nsr <= 0.1) {
@@ -157,15 +164,13 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
     }
   }
 
-  if (is.null(control$interpolation_method) && nrow(U) > control$max_points_interp) {
+  if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
     wendy_data <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
   } else {
     methods <- control$interpolation_method
     wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
   }
 
-  # Problem parameters
-  J <- length(p0)
   D <- ncol(wendy_data[[1]]$U)
 
   wendy_problems <- lapply(wendy_data, function(d) {
@@ -227,6 +232,14 @@ solveWendy <- function(f, p0, U, tt, lip = FALSE, noise_dist = c("addgaussian", 
   wnll   <- system$wnll
   J_wnll <- system$J_wnll
   H_wnll <- system$H_wnll
+  
+
+  # If linear in parameters we do a starting guess with weak ordinary least squares
+  if(lip & is.null(p0)){
+    p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
+  } else if(!lip & is.null(p0)){
+    stop("Problem is nonlinear in parameters, an initial guess must be supplied.")
+  }
 
   data <- switch(method,
                      OLS = if(!lip){
