@@ -1,3 +1,16 @@
+# Detect the number of parameters by scanning f's body for param[N] references,
+# where param is the name of the second argument of f (the parameter vector).
+# Returns the maximum index found, i.e. the number of parameters.
+# @keywords internal
+detect_n_params <- function(f) {
+  param_name <- names(formals(f))[[2]]
+  body_str   <- paste(deparse(body(f)), collapse = " ")
+  pattern    <- paste0(param_name, "\\[\\d+\\]")
+  hits       <- regmatches(body_str, gregexpr(pattern, body_str))[[1]]
+  if (length(hits) == 0L) return(0L)
+  max(as.integer(regmatches(hits, gregexpr("\\d+", hits))))
+}
+
 # Detect the maximum polynomial degree of state variables in the symbolic RHS.
 # Parses the string representation of f_expr and looks for u_i^N patterns.
 # Returns an integer >= 1.
