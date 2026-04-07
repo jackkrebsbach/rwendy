@@ -2,6 +2,7 @@
 #' @importFrom utils modifyList tail
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm nls.lm.control
+#' @importFrom FME modCost modFit
 #' @importFrom numbers mGCD bernoulli_numbers
 NULL
 
@@ -49,7 +50,7 @@ check_suggested_packages <- function() {
 #'
 #'
 #' @export
-solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS"), control = NULL){
+solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
 
   check_suggested_packages()
 
@@ -233,26 +234,45 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   J_wnll <- system$J_wnll
   H_wnll <- system$H_wnll
   
-
-  # If linear in parameters we do a starting guess with weak ordinary least squares
-  if(lip & is.null(p0)){
-    p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
-  } else if(!lip & is.null(p0)){
-    stop("Problem is nonlinear in parameters, an initial guess must be supplied.")
+  # Output error needs an initial guess
+  if(is.null(p0) & method == "OE"){
+    stop("Output Error Nonlinear optimization selected, an initial guess, p0, is required")
   }
+  # If linear in parameters we do a starting guess with weak ordinary least squares
+  if(!lip & is.null(p0)){
+    stop("Problem is nonlinear in parameters, an initial guess must be supplied p0")
+  } 
 
   data <- switch(method,
+                     # Ordinary Least Squares
                      OLS = if(!lip){
                         nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
                       } else {
                         ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
-                     }, # Ordinary Least Squares
+                     }, 
+                     # Iterative Reweighted Least Squares
                      IRLS = if(!lip){
                           nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
                         } else{
                           irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
-                      }, # Iterative Reweighted Least Squares
-                     MLE =  mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) # Maximum Likelihood Estimation
+                      }, 
+                     # Maximum Likelihood Estimation
+                     MLE = { 
+                        if(lip & is.null(p0)){
+                          p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
+                        } 
+                       mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
+                     },
+                     # Output Error
+                       OE = output_error(f, U, tt, p0),
+                     # Hybrid MLE + OE
+                     HYBRID = {
+                        if(lip & is.null(p0)){
+                          p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
+                        } 
+                       data <- mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
+                       output_error(f, U, tt, data$p)
+                     }
                   )
   res$data <- data
   res$phat <- data$p 

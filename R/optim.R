@@ -167,9 +167,75 @@ mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
   
   return(data)
 
+  # Extracting estimated parameters from various packages
+  # trust.optim -> data$solution = phat
+  # trust::trust -> data$argument = phat
+  # trust.optim(p0, wnll, J_wnll, method = "BFGS") 
 }
 
-# Extracting estimated parameters from various packages
-# trust.optim -> data$solution = phat
-# trust::trust -> data$argument = phat
-# trust.optim(p0, wnll, J_wnll, method = "BFGS") 
+
+# Output Error
+output_error <- function(f, U, tt, p0, use_bounds = FALSE, u0_range_factor = 10.0, lower = NULL, upper = NULL) {
+  D  <- ncol(U) 
+  J  <- length(p0)
+  u0_init <- as.vector(U[1, ])
+
+  obs <- data.frame(time = tt)
+  for (d in seq_len(D)) obs[[paste0("x", d)]] <- U[, d]
+
+  p_lower <- if (!is.null(lower)) lower else rep(-Inf, J)
+  p_upper <- if (!is.null(upper)) upper else rep(Inf, J)
+
+  if (use_bounds) {
+      U_mat     <- as.matrix(U)
+      u0_scale  <- apply(U_mat, 2, function(col) diff(range(col)) + 1e-6)
+      u0_lower  <- u0_init - u0_range_factor * u0_scale
+      u0_upper  <- u0_init + u0_range_factor * u0_scale
+    } else {
+      u0_lower <- rep(-Inf, D)
+      u0_upper <- rep(Inf, D)
+  }
+  theta0 <- c(p0, u0_init)
+  lower  <- c(p_lower, u0_lower)
+  upper  <- c(p_upper, u0_upper)
+
+  modelODE <- function(t, state, parms) list(as.vector(f(state, parms, t)))
+
+  modelRun <- function(theta) {
+    parms <- theta[1:J]
+    u0    <-  theta[(J + 1):(J + D)]
+    
+    sol <- tryCatch({
+      capture.output(
+        result <- suppressWarnings(
+          deSolve::ode(y = u0, times = tt, func = modelODE, parms = parms)
+        ),
+        type = "output"
+      )
+      result
+    }, error = function(e) NULL)
+
+    if (is.null(sol) || nrow(sol) != length(tt)) return(NULL)
+      out <- as.data.frame(sol)
+      colnames(out) <- c("time", paste0("x", seq_len(D)))
+      out
+  }
+
+  costFn <- function(theta) {
+    out <- modelRun(theta)
+    if (is.null(out)) {
+      bad_model      <- obs
+      bad_model[, -1] <- 1e6
+      return(FME::modCost(model = bad_model, obs = obs))  
+    }
+    FME::modCost(model = out, obs = obs)         
+  }
+
+  fit <- tryCatch({
+      FME::modFit(f = costFn, p = theta0, method = "Marq", lower = lower, upper = upper)
+  }, error = function(e) e)
+
+  data <- fit
+
+  return(list(p = data$par[1:J], u0 = data$par[(J+1):(J+D)], data = data))
+}
