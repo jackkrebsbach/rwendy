@@ -245,7 +245,7 @@ output_error <- function(f, U, tt, p0, use_bounds = FALSE, u0_range_factor = 10.
 
 # Equation Error initial guess for linear-in-parameters ODEs.
 # Smooths U with splines, approximates du/dt at midpoints, solves J_p(u,t) p = du/dt.
-dm_init_linear <- function(U, tt, f_, J_p, J, D) {
+ee_linear <- function(U, tt, f_, J_p, J, D) {
   tt       <- as.vector(tt)
   t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
   U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
@@ -264,7 +264,7 @@ dm_init_linear <- function(U, tt, f_, J_p, J, D) {
 
 # Equation Error initial guess for nonlinear-in-parameters ODEs.
 # Minimizes ||f(u_mid, p, t_mid) - du/dt||^2 via Levenberg-Marquardt.
-dm_init_nonlinear <- function(U, tt, f_, J_p, J, D) {
+ee_nonlinear <- function(U, tt, f_, J_p, J, D) {
   tt       <- as.vector(tt)
   t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
   U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
