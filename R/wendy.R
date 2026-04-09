@@ -263,6 +263,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
                         if(lip & is.null(p0)){
                           p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
                         } 
+                       print(p0)
                        mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
                      },
                      # Output Error

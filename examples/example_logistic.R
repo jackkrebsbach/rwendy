@@ -10,10 +10,10 @@ f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
 }
 
-p_star <- c(1, 1);
+p_star <- c(2.25, 7);
 u0 <- c(0.01);
 p0 <- c(0.75, 0.75);
-npoints <- 256
+npoints <- 128
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -21,20 +21,21 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # set.seed(8675309)
-nr <- 0.15
+nr <- 0.05
 U_vec <- as.vector(sol[,-1])
+
 # Additive Gaussian Noise
-# noise_sd <- nr * sqrt(mean(U_vec^2))
-# noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
+noise_sd <- nr * sqrt(mean(U_vec^2))
+noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 
 # Multiplicative Lognormal Noise
-noise_sd <- nr
-noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
+# noise_sd <- nr
+# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "lognormal")
+res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian")
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
 sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)
