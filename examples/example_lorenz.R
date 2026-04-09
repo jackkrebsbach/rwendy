@@ -37,7 +37,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "MLE")
+res <- solveWendy(f, U, tt, method = "IRLS")
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 
@@ -61,4 +61,4 @@ plot_ly(
 
 # plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
 
-print(res$phat)
+# print(res$phat)
