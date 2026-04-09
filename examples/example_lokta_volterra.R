@@ -32,8 +32,8 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-control <- list(radius_max_time = 2)
-res <- solveWendy(f, p0, U, tt, control = control, method = "MLE")
+control <- list(radius_max_time = 5)
+res <- solveWendy(f, U, tt, control = control, method = "MLE")
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(U[,1],U[,2], cex = 0.5)

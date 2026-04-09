@@ -234,26 +234,28 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   J_wnll <- system$J_wnll
   H_wnll <- system$H_wnll
   
-  # Output error needs an initial guess
-  if(is.null(p0) & method == "OE"){
-    stop("Output Error Nonlinear optimization selected, an initial guess, p0, is required")
+  # Compute initial guess via derivative matching when none is supplied (we always need an initial guess for OE)
+  if(lip & is.null(p0) & method == "OE"){
+    p0 <- dm_init_linear(U, tt, J_p, J, D)
+  } else if(is.null(p0) & !lip){
+    p0 <- dm_init_nonlinear(U, tt, f_, J_p, J, D)
   }
-  # If linear in parameters we do a starting guess with weak ordinary least squares
-  if(!lip & is.null(p0)){
-    stop("Problem is nonlinear in parameters, an initial guess must be supplied p0")
-  } 
-
+  
   data <- switch(method,
                      # Ordinary Least Squares
                      OLS = if(!lip){
+                       # Nonlinear in parameters
                         nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
                       } else {
+                        # linear in parameters
                         ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
                      }, 
                      # Iterative Reweighted Least Squares
                      IRLS = if(!lip){
+                          # Nonlinear in parameters
                           nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
                         } else{
+                          # Linear in parameters
                           irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
                       }, 
                      # Maximum Likelihood Estimation
@@ -264,7 +266,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
                        mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
                      },
                      # Output Error
-                       OE = output_error(f, U, tt, p0),
+                     OE = output_error(f, U, tt, p0),
                      # Hybrid MLE + OE
                      HYBRID = {
                         if(lip & is.null(p0)){

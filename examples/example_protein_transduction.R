@@ -1,7 +1,9 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
+
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   u1 <- p[1] * u[1] + p[2] * u[1] * u[3] + p[3] * u[4]
@@ -33,8 +35,8 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-control <- list(radius_max_time = 15)
-res <- solveWendy(f, p0, U, tt, control = control, method = "MLE")
+control <- list(radius_max_time = 5)
+res <- solveWendy(f, U, tt, control = control, method = "MLE")
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(tt, U[,1], cex = 0.5)

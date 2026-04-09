@@ -1,7 +1,9 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
+
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   du1 <- -p[1] * u[1] + p[3] * u[2] + u[3] * (p[1] * exp(-p[1] * p[2])) / (1 - exp(-p[1] * p[2]))
@@ -10,7 +12,7 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-npoints <- 256
+npoints <- 512  
 p_star = c(0.2, 1.5, 0.074, 0.113, 0.0024)
 p0 <- c(0.1, 2.5, 0.1, 0.1, 0.001)
 u0 <- c(1, 0, 0)
@@ -41,7 +43,7 @@ points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))
 
 legend("topright", legend = c("Susceptible", "Infected", "Recovered"), col = c("black", "red", "blue"), lwd = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE", noise_dist = "lognormal")
+res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "lognormal")
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = res$phat)
 

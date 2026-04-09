@@ -46,7 +46,7 @@ for(d in  seq(D)){
 
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE", noise_dist = "addgaussian",
+res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian",
         control = list(test_fun_type = "MSG", radius_min_time = 0.01, radius_max_time = 5, optimize = FALSE))
 
 cat("pstar:", p_star, "\nphat :", res$phat)

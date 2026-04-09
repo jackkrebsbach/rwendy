@@ -34,7 +34,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, p0, U, tt, method = "MLE")
+res <- solveWendy(f, U, tt, method = "MLE")
 
 p_hat <- res$phat
 
