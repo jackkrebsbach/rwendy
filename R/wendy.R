@@ -235,10 +235,13 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   H_wnll <- system$H_wnll
   
   # Compute initial guess via equation error when none is supplied (we always need an initial guess for OE)
-  if(lip & is.null(p0) & method == "OE"){
-    p0 <- ee_linear(U, tt, f_, J_p, J, D)
-  } else if(is.null(p0) & !lip){
-    p0 <- ee_nonlinear(U, tt, f_, J_p, J, D)
+  if(lip & is.null(p0) & method == "OE" || is.null(p0) & !lip){
+    ee_degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
+    if(lip){
+      p0 <- ee_linear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
+    } else {
+      p0 <- ee_nonlinear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
+    }
   }
   
   data <- switch(method,
@@ -278,6 +281,8 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
                   )
   res$data <- data
   res$phat <- data$p 
+  
+  print(p0)
 
   return(res)
 }

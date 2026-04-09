@@ -242,11 +242,19 @@ output_error <- function(f, U, tt, p0, use_bounds = FALSE, u0_range_factor = 10.
   return(list(p = data$par[1:J], u0 = data$par[(J+1):(J+D)], data = data))
 }
 
-
 # Equation Error initial guess for linear-in-parameters ODEs.
 # Smooths U with splines, approximates du/dt at midpoints, solves J_p(u,t) p = du/dt.
-ee_linear <- function(U, tt, f_, J_p, J, D) {
-  tt       <- as.vector(tt)
+ee_linear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, poly_degree = 3) {
+  tt <- as.vector(tt)
+  if (!is.null(sigma) && nrow(U) < max_points) {
+    nsr     <- min(sigma / apply(U, 2, sd))
+    tt_fine <- seq(min(tt), max(tt), length.out = max_points)
+    method  <- if (nsr <= 0.1) "linear" else paste0("poly_ls_", poly_degree)
+    U  <- do.call(cbind, lapply(seq_len(ncol(U)), function(d) {
+      fit_col(U[, d], tt, tt_fine, method, sigma = sigma)$fit
+    }))
+    tt <- tt_fine
+  }
   t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
   U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
   u_mid    <- (U_smooth[-nrow(U_smooth), , drop = FALSE] + U_smooth[-1, , drop = FALSE]) / 2
@@ -264,8 +272,17 @@ ee_linear <- function(U, tt, f_, J_p, J, D) {
 
 # Equation Error initial guess for nonlinear-in-parameters ODEs.
 # Minimizes ||f(u_mid, p, t_mid) - du/dt||^2 via Levenberg-Marquardt.
-ee_nonlinear <- function(U, tt, f_, J_p, J, D) {
-  tt       <- as.vector(tt)
+ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, poly_degree = 3) {
+  tt <- as.vector(tt)
+  if (!is.null(sigma) && nrow(U) < max_points) {
+    nsr     <- min(sigma / apply(U, 2, sd))
+    tt_fine <- seq(min(tt), max(tt), length.out = max_points)
+    method  <- if (nsr <= 0.1) "linear" else paste0("poly_ls_", poly_degree)
+    U  <- do.call(cbind, lapply(seq_len(ncol(U)), function(d) {
+      fit_col(U[, d], tt, tt_fine, method, sigma = sigma)$fit
+    }))
+    tt <- tt_fine
+  }
   t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
   U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
   u_mid    <- (U_smooth[-nrow(U_smooth), , drop = FALSE] + U_smooth[-1, , drop = FALSE]) / 2
