@@ -234,11 +234,11 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   J_wnll <- system$J_wnll
   H_wnll <- system$H_wnll
   
-  # Compute initial guess via derivative matching when none is supplied (we always need an initial guess for OE)
+  # Compute initial guess via equation error when none is supplied (we always need an initial guess for OE)
   if(lip & is.null(p0) & method == "OE"){
-    p0 <- dm_init_linear(U, tt, f_, J_p, J, D)
+    p0 <- ee_linear(U, tt, f_, J_p, J, D)
   } else if(is.null(p0) & !lip){
-    p0 <- dm_init_nonlinear(U, tt, f_, J_p, J, D)
+    p0 <- ee_nonlinear(U, tt, f_, J_p, J, D)
   }
   
   data <- switch(method,
