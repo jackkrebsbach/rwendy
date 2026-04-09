@@ -150,6 +150,8 @@ nols <- function(g, b, L, Jp_r, p0, reg = 1e-10){
   return(list(p = p, sw_p_value = sw_p_value))
 }
 
+
+
 # Maximum likelihood estimation for r(p) ~ N(0, S(p))
 mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
 
@@ -238,4 +240,46 @@ output_error <- function(f, U, tt, p0, use_bounds = FALSE, u0_range_factor = 10.
   data <- fit
 
   return(list(p = data$par[1:J], u0 = data$par[(J+1):(J+D)], data = data))
+}
+
+# Derivative matching initial guess for linear-in-parameters ODEs.
+# Smooths U with splines, approximates du/dt at midpoints, solves J_p(u,t) p = du/dt.
+dm_init_linear <- function(U, tt, J_p, J, D) {
+  tt       <- as.vector(tt)
+  t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
+  U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
+  u_mid    <- (U_smooth[-nrow(U_smooth), , drop = FALSE] + U_smooth[-1, , drop = FALSE]) / 2
+  dudt     <- (U_smooth[-1, , drop = FALSE] - U_smooth[-nrow(U_smooth), , drop = FALSE]) / diff(tt)
+  n_mid    <- nrow(u_mid)
+  input    <- rbind(matrix(0, nrow = J, ncol = n_mid), t(u_mid), matrix(t_mid, nrow = 1))
+  jp_raw   <- J_p(input)  # n_mid x (D*J), D-outer J-inner per row
+  A_mat    <- do.call(rbind, lapply(seq_len(n_mid), function(i) {
+    matrix(jp_raw[i, ], nrow = D, ncol = J, byrow = TRUE)
+  }))
+  lm.fit(A_mat, as.vector(t(dudt)))$coefficients
+}
+
+# Derivative matching initial guess for nonlinear-in-parameters ODEs.
+# Minimizes ||f(u_mid, p, t_mid) - du/dt||^2 via Levenberg-Marquardt.
+dm_init_nonlinear <- function(U, tt, f_, J_p, J, D) {
+  tt       <- as.vector(tt)
+  t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
+  U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
+  u_mid    <- (U_smooth[-nrow(U_smooth), , drop = FALSE] + U_smooth[-1, , drop = FALSE]) / 2
+  dudt     <- (U_smooth[-1, , drop = FALSE] - U_smooth[-nrow(U_smooth), , drop = FALSE]) / diff(tt)
+  n_mid    <- nrow(u_mid)
+  dm_residual <- function(p) {
+    p_mat <- matrix(rep(p, n_mid), nrow = J)
+    input <- rbind(p_mat, t(u_mid), matrix(t_mid, nrow = 1))
+    as.vector(t(f_(input) - dudt))
+  }
+  dm_jacobian <- function(p) {
+    p_mat  <- matrix(rep(p, n_mid), nrow = J)
+    input  <- rbind(p_mat, t(u_mid), matrix(t_mid, nrow = 1))
+    jp_raw <- J_p(input)  # n_mid x (D*J), D-outer J-inner per row
+    do.call(rbind, lapply(seq_len(n_mid), function(i) {
+      matrix(jp_raw[i, ], nrow = D, ncol = J, byrow = TRUE)
+    }))
+  }
+  nls.lm(rep(1, J), fn = dm_residual, jac = dm_jacobian)$par
 }

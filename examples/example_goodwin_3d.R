@@ -1,7 +1,10 @@
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
 library(plotly)
+
+
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   du1 <- p[1] / (2.15 + p[3] * u[3]^p[4]) - p[2] * u[1]
@@ -34,7 +37,7 @@ U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 control <- list(radius_max_time = 20)
-res <- solveWendy(f, p0, U, tt, method = "MLE", control = control)
+res <- solveWendy(f, U, tt, method = "IRLS", control = control)
 
 p_hat <- res$phat
 
