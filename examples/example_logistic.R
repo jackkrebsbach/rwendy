@@ -10,10 +10,10 @@ f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
 }
 
-p_star <- c(2.25, 7);
+p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.75, 0.75);
-npoints <- 128
+npoints <- 50
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -35,7 +35,7 @@ noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian")
+res <- solveWendy(f, U, tt, method = "OE", noise_dist = "addgaussian")
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
 sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)
