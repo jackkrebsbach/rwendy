@@ -14,7 +14,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.75, 0.75);
-npoints <- 20
+npoints <- 512
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -42,9 +42,12 @@ tt <- sol[, 1, drop = FALSE]
 # for(i in seq(length(radii))){
 #    r <- radii[i]
 
-res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian")
+time <- system.time({
+  res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian")
+})
 
 print(res$phat)
+print(time)
 #   print(res$phat)
 #   rel_err <- norm(res$phat - p_star, type = "2")/norm(p_star, type = "2")
 #   errs[i] <- rel_err

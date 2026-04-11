@@ -237,7 +237,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   attr(res, "method")     <- method
   attr(res, "noise_dist") <- noise_dist
   attr(res, "n_obs")      <- p1$mp1
-  attr(res, "n_params")   <- if (is.matrix(p0)) ncol(p0) else length(p0)
+  attr(res, "n_params")   <- J
   attr(res, "n_states")   <- D
 
   res$opt_ctx <- opt_ctx
