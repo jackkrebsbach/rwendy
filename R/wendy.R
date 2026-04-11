@@ -77,7 +77,8 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     interpolation_method = NULL,  # "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
     use_interp_uncertainty = TRUE,               # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-    device = torch::torch_device("cpu") # If GPUs are available use cuda (this speed up is most appropriate for high dimensional data)
+    device = torch::torch_device("cpu"), # If GPUs are available use cuda (this speed up is most appropriate for high dimensional data)
+    apply_fn = NULL    # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
   )
   
   if(!is.null(control)) {
@@ -213,76 +214,57 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   res$wendy_methods  <- names(wendy_data)
   res$W <- system$W
 
+  opt_ctx <- list(
+    system       = system,
+    method       = method,
+    f            = f,
+    U_orig       = U_orig,
+    tt_orig      = tt_orig,
+    lip          = lip,
+    f_orig_expr  = f_orig_expr,
+    u_expr       = u_expr,
+    estimated_sd = estimated_sd,
+    f_           = f_,
+    J_p          = J_p,
+    J            = J,
+    D            = D,
+    noise_dist   = noise_dist,
+    control      = control
+  )
+
   class(res) <- "wendy"
-  attr(res, "call") <- match.call()
-  attr(res, "method") <- method
+  attr(res, "call")       <- match.call()
+  attr(res, "method")     <- method
   attr(res, "noise_dist") <- noise_dist
-  attr(res, "n_obs") <- p1$mp1
-  attr(res, "n_params") <- length(p0)
-  attr(res, "n_states") <- D
+  attr(res, "n_obs")      <- p1$mp1
+  attr(res, "n_params")   <- J
+  attr(res, "n_states")   <- D
 
-  if(!control$optimize) return(res)
+  res$opt_ctx <- opt_ctx
 
-  g      <- system$g
-  b      <- system$b
-  G      <- system$G
-  L      <- system$L
-  W      <- system$W
-  Jp_r   <- system$Jp_r
-  S      <- system$S
-  wnll   <- system$wnll
-  J_wnll <- system$J_wnll
-  H_wnll <- system$H_wnll
-  
-  # Compute initial guess via equation error when none is supplied (we always need an initial guess for OE)
-  if(lip & is.null(p0) & method == "OE" || is.null(p0) & !lip){
-    ee_degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
-    if(lip){
-      p0 <- ee_linear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
-    } else {
-      p0 <- ee_nonlinear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
-    }
+  if (!control$optimize) return(res)
+
+  if (is.matrix(p0) && nrow(p0) > 1) {
+    # Multistart: run optimization from each row of p0
+    apply_fn <- control$apply_fn %||% lapply
+
+    all_results <- apply_fn(seq_len(nrow(p0)), function(i) {
+      .run_wendy_optimization(opt_ctx, p0[i, ])
+    })
+
+    objectives <- sapply(all_results, `[[`, "objective")
+    best       <- all_results[[which.min(objectives)]]
+
+    res$phat                  <- best$p
+    res$data                  <- best$data
+    res$multistart_results    <- all_results
+    res$multistart_objectives <- objectives
+  } else {
+    p0_vec <- if (is.matrix(p0)) p0[1, ] else p0
+    result  <- .run_wendy_optimization(opt_ctx, p0_vec)
+    res$phat <- result$p
+    res$data <- result$data
   }
-  
-  data <- switch(method,
-                     # Ordinary Least Squares
-                     OLS = if(!lip){
-                       # Nonlinear in parameters
-                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
-                      } else {
-                        # linear in parameters
-                        ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
-                     }, 
-                     # Iterative Reweighted Least Squares
-                     IRLS = if(!lip){
-                          # Nonlinear in parameters
-                          nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
-                        } else{
-                          # Linear in parameters
-                          irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
-                      }, 
-                     # Maximum Likelihood Estimation
-                     MLE = { 
-                        if(lip & is.null(p0)){
-                          p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
-                        } 
-                       mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
-                     },
-                     # Output Error
-                     OE = output_error(f, U, tt, p0),
-                     # Hybrid MLE + OE
-                     HYBRID = {
-                        if(lip & is.null(p0)){
-                          p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
-                        } 
-                       data <- mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
-                       output_error(f, U, tt, data$p)
-                     }
-                  )
-  res$data <- data
-  res$phat <- data$p 
-  
-  print(p0)
 
   return(res)
 }

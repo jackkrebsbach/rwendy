@@ -13,7 +13,7 @@ f <- function(u, p, t) {
 }
 
 nr <- 0.05
-npoints <- 50 
+npoints <- 70 
 p_star <- c(72, 1, 2, 1, 1)
 p0 <- c(50, 1.5, 2.4, 1.7, 0.5)
 
@@ -32,7 +32,7 @@ noise <- matrix(rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd), nro
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS")
+res <- solveWendy(f, U, tt, method = "MLE")
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[,-1]
 
