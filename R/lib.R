@@ -1,3 +1,6 @@
+# Null-coalescing operator: return lhs unless it is NULL, then return rhs
+`%||%` <- function(lhs, rhs) if (!is.null(lhs)) lhs else rhs
+
 #' Print method for wendy objects
 #'
 #' @param x A wendy object
