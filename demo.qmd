@@ -1,0 +1,389 @@
+---
+title: "wendy: Parameter Estimation for ODE Systems"
+subtitle: "Monotonic · Oscillatory · Chaotic"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r setup, include=FALSE}
+library(deSolve)
+devtools::load_all()
+
+# Shared helper: relative error
+rel_err <- function(phat, p_star) {
+  norm(phat - p_star, type = "2") / norm(p_star, type = "2")
+}
+
+# Shared helper: comparison table
+compare_table <- function(p_star, ols, irls) {
+  data.frame(
+    Parameter = paste0("p[", seq_along(p_star), "]"),
+    True      = round(p_star, 4),
+    OLS       = round(ols,    4),
+    IRLS      = round(irls,   4),
+    `Err OLS`  = round(abs(ols  - p_star), 4),
+    `Err IRLS` = round(abs(irls - p_star), 4),
+    check.names = FALSE
+  )
+}
+```
+
+## Overview
+
+**wendy** (Weak-form Estimation of Nonlinear Dynamics) estimates parameters of ODE systems from noisy time-series data using test-function integrals. This demo walks through three canonical systems that span the behavioural spectrum:
+
+| System          | Dynamics                     | States | Parameters |
+|-----------------|------------------------------|--------|------------|
+| Logistic        | Monotonic (sigmoidal growth) | 1      | 2          |
+| FitzHugh–Nagumo | Oscillatory (limit cycle)    | 2      | 6          |
+| Lorenz          | Chaotic (strange attractor)  | 3      | 3          |
+
+Each section: defines the ODE → generates noisy data → plots trajectories → compares **OLS** and **IRLS** parameter estimates.
+
+------------------------------------------------------------------------
+
+## 1 Logistic Growth *(monotonic)*
+
+### Model
+
+$$
+\dot{u}_1 = p_1 \, u_1 - p_2 \, u_1^2
+$$
+
+True parameters: $p^\star = (1,\; 1)$, initial condition $u_0 = 0.01$.
+
+```{r logistic-setup}
+f_logistic <- function(u, p, t) {
+  c(p[1] * u[1] - p[2] * u[1]^2)
+}
+
+p_star_log <- c(1, 1)
+u0_log     <- c(0.01)
+t_span_log <- c(0, 10)
+npoints_log <- 50
+t_eval_log  <- seq(t_span_log[1], t_span_log[2], length.out = npoints_log)
+
+modelODE_log <- function(tvec, state, parms) {
+  list(as.vector(f_logistic(state, parms, tvec)))
+}
+
+set.seed(42)
+sol_log <- deSolve::ode(y = u0_log, times = t_eval_log,
+                        func = modelODE_log, parms = p_star_log)
+
+nr_log    <- 0.05
+noise_sd_log <- nr_log * sqrt(mean(sol_log[, -1]^2))
+U_log <- matrix(sol_log[, 2] + rnorm(npoints_log, 0, noise_sd_log), ncol = 1)
+tt_log <- matrix(sol_log[, 1], ncol = 1)
+```
+
+### Trajectories
+
+```{r logistic-plot}
+t_dense <- seq(t_span_log[1], t_span_log[2], length.out = 256)
+sol_true_log <- deSolve::ode(y = u0_log, times = t_dense,
+                              func = modelODE_log, parms = p_star_log)
+
+plot(tt_log, U_log, pch = 16, cex = 0.8,
+     xlab = "Time", ylab = expression(u[1]),
+     main = "Logistic Growth — observed data & true trajectory",
+     ylim = range(c(U_log, sol_true_log[, 2])))
+lines(sol_true_log[, 1], sol_true_log[, 2], col = "steelblue", lwd = 2)
+legend("bottomright", legend = c("noisy data", "true trajectory"),
+       pch = c(16, NA), lty = c(NA, 1),
+       col = c("black", "steelblue"), bty = "n")
+```
+
+### Parameter Estimation
+
+```{r logistic-solve, cache=TRUE}
+res_log_ols  <- solveWendy(f_logistic, U_log, tt_log, method = "OLS")
+res_log_irls <- solveWendy(f_logistic, U_log, tt_log, method = "IRLS")
+```
+
+```{r logistic-compare}
+knitr::kable(
+  compare_table(p_star_log, res_log_ols$phat, res_log_irls$phat),
+  caption = "Logistic — OLS vs IRLS parameter estimates"
+)
+cat(sprintf("Relative error  OLS : %.4f\n", rel_err(res_log_ols$phat,  p_star_log)))
+cat(sprintf("Relative error  IRLS: %.4f\n", rel_err(res_log_irls$phat, p_star_log)))
+```
+
+```{r logistic-fit-plot}
+sol_ols_log  <- deSolve::ode(u0_log, t_dense, modelODE_log, res_log_ols$phat)
+sol_irls_log <- deSolve::ode(u0_log, t_dense, modelODE_log, res_log_irls$phat)
+
+plot(tt_log, U_log, pch = 16, cex = 0.8,
+     xlab = "Time", ylab = expression(u[1]),
+     main = "Logistic Growth — fitted trajectories")
+lines(sol_true_log[, 1], sol_true_log[, 2], col = "steelblue", lwd = 2)
+lines(sol_ols_log[, 1],  sol_ols_log[, 2],  col = "darkorange", lwd = 2, lty = 2)
+lines(sol_irls_log[, 1], sol_irls_log[, 2], col = "firebrick",  lwd = 2, lty = 3)
+legend("bottomright",
+       legend = c("noisy data", "true", "OLS", "IRLS"),
+       pch    = c(16, NA, NA, NA),
+       lty    = c(NA, 1, 2, 3),
+       col    = c("black", "steelblue", "darkorange", "firebrick"),
+       bty = "n")
+```
+
+------------------------------------------------------------------------
+
+## 2 FitzHugh–Nagumo *(oscillatory)*
+
+### Model
+
+$$
+\begin{aligned}
+\dot{u}_1 &= p_1 u_1 + p_2 u_1^3 + p_3 u_2 \\
+\dot{u}_2 &= p_4 u_1 + p_5 + p_6 u_2
+\end{aligned}
+$$
+
+True parameters: $p^\star = (3,\; -3,\; 3,\; -\tfrac{1}{3},\; \tfrac{17}{150},\; \tfrac{1}{15})$.
+
+```{r fhn-setup}
+f_fhn <- function(u, p, t) {
+  u1 <- p[1] * u[1] + p[2] * u[1]^3 + p[3] * u[2]
+  u2 <- p[4] * u[1] + p[5]           + p[6] * u[2]
+  c(u1, u2)
+}
+
+p_star_fhn <- c(3, -3, 3, -1/3, 17/150, 1/15)
+u0_fhn     <- c(0, 0.1)
+t_span_fhn <- c(0.001, 25)
+npoints_fhn <- 300
+t_eval_fhn  <- seq(t_span_fhn[1], t_span_fhn[2], length.out = npoints_fhn)
+
+modelODE_fhn <- function(tvec, state, parms) {
+  list(as.vector(f_fhn(state, parms, tvec)))
+}
+
+set.seed(42)
+sol_fhn <- deSolve::ode(y = u0_fhn, times = t_eval_fhn,
+                        func = modelODE_fhn, parms = p_star_fhn)
+
+nr_fhn   <- 0.3
+noise_sd_fhn <- sqrt(nr_fhn * norm(as.array(sol_fhn[, -1]), type = "2") / npoints_fhn)
+noise_fhn <- matrix(rnorm(nrow(sol_fhn) * 2, 0, noise_sd_fhn), nrow = nrow(sol_fhn))
+U_fhn <- sol_fhn[, -1] + noise_fhn
+tt_fhn <- matrix(sol_fhn[, 1], ncol = 1)
+```
+
+### Trajectories
+
+```{r fhn-plot}
+par(mfrow = c(1, 2))
+
+# Time series
+matplot(tt_fhn, U_fhn, type = "p", pch = 16, cex = 0.4,
+        col = c("black", "grey50"),
+        xlab = "Time", ylab = "State",
+        main = "FitzHugh–Nagumo — time series")
+matlines(sol_fhn[, 1], sol_fhn[, -1], lty = 1, lwd = 1.5,
+         col = c("steelblue", "tomato"))
+legend("topright", legend = c("u₁ data", "u₂ data", "u₁ true", "u₂ true"),
+       pch = c(16, 16, NA, NA), lty = c(NA, NA, 1, 1),
+       col = c("black", "grey50", "steelblue", "tomato"), bty = "n", cex = 0.8)
+
+# Phase portrait
+plot(U_fhn[, 1], U_fhn[, 2], pch = 16, cex = 0.4, col = "grey70",
+     xlab = expression(u[1]), ylab = expression(u[2]),
+     main = "Phase portrait")
+lines(sol_fhn[, 2], sol_fhn[, 3], col = "steelblue", lwd = 1.5)
+
+par(mfrow = c(1, 1))
+```
+
+### Parameter Estimation
+
+```{r fhn-solve, cache=TRUE}
+control_fhn <- list(radius_max_time = 10)
+res_fhn_ols  <- solveWendy(f_fhn, U_fhn, tt_fhn, control = control_fhn, method = "OLS")
+res_fhn_irls <- solveWendy(f_fhn, U_fhn, tt_fhn, control = control_fhn, method = "IRLS")
+```
+
+```{r fhn-compare}
+knitr::kable(
+  compare_table(p_star_fhn, res_fhn_ols$phat, res_fhn_irls$phat),
+  caption = "FitzHugh–Nagumo — OLS vs IRLS parameter estimates"
+)
+cat(sprintf("Relative error  OLS : %.4f\n", rel_err(res_fhn_ols$phat,  p_star_fhn)))
+cat(sprintf("Relative error  IRLS: %.4f\n", rel_err(res_fhn_irls$phat, p_star_fhn)))
+```
+
+```{r fhn-fit-plot}
+sol_ols_fhn  <- deSolve::ode(u0_fhn, t_eval_fhn, modelODE_fhn, res_fhn_ols$phat)
+sol_irls_fhn <- deSolve::ode(u0_fhn, t_eval_fhn, modelODE_fhn, res_fhn_irls$phat)
+
+par(mfrow = c(1, 2))
+
+# Phase portraits
+plot(sol_fhn[, 2], sol_fhn[, 3], type = "l", col = "steelblue", lwd = 2,
+     xlab = expression(u[1]), ylab = expression(u[2]),
+     main = "Phase portrait — fitted trajectories")
+lines(sol_ols_fhn[, 2],  sol_ols_fhn[, 3],  col = "darkorange", lwd = 2, lty = 2)
+lines(sol_irls_fhn[, 2], sol_irls_fhn[, 3], col = "firebrick",  lwd = 2, lty = 3)
+legend("topright", legend = c("true", "OLS", "IRLS"),
+       lty = 1:3, col = c("steelblue", "darkorange", "firebrick"),
+       bty = "n", cex = 0.8)
+
+# u1 time series
+plot(tt_fhn, U_fhn[, 1], pch = 16, cex = 0.4, col = "grey60",
+     xlab = "Time", ylab = expression(u[1]),
+     main = expression(u[1] ~ "time series"))
+lines(sol_fhn[, 1],     sol_fhn[, 2],     col = "steelblue",  lwd = 2)
+lines(sol_ols_fhn[, 1], sol_ols_fhn[, 2], col = "darkorange", lwd = 2, lty = 2)
+lines(sol_irls_fhn[,1], sol_irls_fhn[,2], col = "firebrick",  lwd = 2, lty = 3)
+
+par(mfrow = c(1, 1))
+```
+
+------------------------------------------------------------------------
+
+## 3 Lorenz System *(chaotic)*
+
+### Model
+
+$$
+\begin{aligned}
+\dot{u}_1 &= p_1 (u_2 - u_1) \\
+\dot{u}_2 &= u_1 (p_2 - u_3) - u_2 \\
+\dot{u}_3 &= u_1 u_2 - p_3 u_3
+\end{aligned}
+$$
+
+True parameters: $p^\star = (10,\; 28,\; 8/3)$ — the classic Lorenz attractor.
+
+```{r lorenz-setup}
+f_lorenz <- function(u, p, t) {
+  du1 <- p[1] * (u[2] - u[1])
+  du2 <- u[1] * (p[2] - u[3]) - u[2]
+  du3 <- u[1] * u[2] - p[3] * u[3]
+  c(du1, du2, du3)
+}
+
+p_star_lor <- c(10.0, 28.0, 8.0 / 3.0)
+u0_lor     <- c(-8, 10, 27)
+t_span_lor <- c(0, 10)
+npoints_lor <- 256
+t_eval_lor  <- seq(t_span_lor[1], t_span_lor[2], length.out = npoints_lor)
+
+modelODE_lor <- function(tvec, state, parms) {
+  list(as.vector(f_lorenz(state, parms, tvec)))
+}
+
+set.seed(8675309)
+sol_lor <- deSolve::ode(y = u0_lor, times = t_eval_lor,
+                        func = modelODE_lor, parms = p_star_lor)
+
+nr_lor    <- 0.1
+noise_sd_lor <- nr_lor * sqrt(mean(sol_lor[, -1]^2))
+noise_lor <- matrix(rnorm(nrow(sol_lor) * 3, 0, noise_sd_lor), nrow = nrow(sol_lor))
+U_lor  <- sol_lor[, -1] + noise_lor
+tt_lor <- matrix(sol_lor[, 1], ncol = 1)
+```
+
+### Trajectories
+
+```{r lorenz-plot}
+par(mfrow = c(2, 2))
+
+# Three projections of the attractor
+plot(sol_lor[, 2], sol_lor[, 3], type = "l", lwd = 0.5, col = "steelblue",
+     xlab = expression(u[1]), ylab = expression(u[2]), main = "x–y projection")
+points(U_lor[, 1], U_lor[, 2], pch = 16, cex = 0.2, col = adjustcolor("black", 0.4))
+
+plot(sol_lor[, 2], sol_lor[, 4], type = "l", lwd = 0.5, col = "steelblue",
+     xlab = expression(u[1]), ylab = expression(u[3]), main = "x–z projection")
+points(U_lor[, 1], U_lor[, 3], pch = 16, cex = 0.2, col = adjustcolor("black", 0.4))
+
+plot(sol_lor[, 3], sol_lor[, 4], type = "l", lwd = 0.5, col = "steelblue",
+     xlab = expression(u[2]), ylab = expression(u[3]), main = "y–z projection")
+points(U_lor[, 2], U_lor[, 3], pch = 16, cex = 0.2, col = adjustcolor("black", 0.4))
+
+# u1 time series
+plot(tt_lor, U_lor[, 1], type = "p", pch = 16, cex = 0.2,
+     col = adjustcolor("black", 0.4),
+     xlab = "Time", ylab = expression(u[1]), main = expression(u[1] ~ "vs time"))
+lines(sol_lor[, 1], sol_lor[, 2], col = "steelblue", lwd = 1)
+
+par(mfrow = c(1, 1))
+```
+
+### Parameter Estimation
+
+```{r lorenz-solve, cache=TRUE}
+res_lor_ols  <- solveWendy(f_lorenz, U_lor, tt_lor, method = "OLS")
+res_lor_irls <- solveWendy(f_lorenz, U_lor, tt_lor, method = "IRLS")
+```
+
+```{r lorenz-compare}
+knitr::kable(
+  compare_table(p_star_lor, res_lor_ols$phat, res_lor_irls$phat),
+  caption = "Lorenz — OLS vs IRLS parameter estimates"
+)
+cat(sprintf("Relative error  OLS : %.4f\n", rel_err(res_lor_ols$phat,  p_star_lor)))
+cat(sprintf("Relative error  IRLS: %.4f\n", rel_err(res_lor_irls$phat, p_star_lor)))
+```
+
+```{r lorenz-fit-plot}
+sol_ols_lor  <- deSolve::ode(u0_lor, t_eval_lor, modelODE_lor, res_lor_ols$phat)
+sol_irls_lor <- deSolve::ode(u0_lor, t_eval_lor, modelODE_lor, res_lor_irls$phat)
+
+par(mfrow = c(1, 2))
+
+# x–z phase portrait (butterfly wings most visible here)
+plot(sol_lor[, 2], sol_lor[, 4], type = "l", lwd = 0.8, col = "steelblue",
+     xlab = expression(u[1]), ylab = expression(u[3]),
+     main = "Lorenz attractor (x–z) — fitted trajectories")
+lines(sol_ols_lor[, 2],  sol_ols_lor[, 4],  col = "darkorange", lwd = 1, lty = 2)
+lines(sol_irls_lor[, 2], sol_irls_lor[, 4], col = "firebrick",  lwd = 1, lty = 3)
+legend("topright", legend = c("true", "OLS", "IRLS"),
+       lty = 1:3, col = c("steelblue", "darkorange", "firebrick"),
+       bty = "n", cex = 0.8)
+
+# u1 short-time series (chaos → trajectories diverge quickly)
+idx <- tt_lor[, 1] <= 4
+plot(tt_lor[idx], U_lor[idx, 1], pch = 16, cex = 0.4, col = "grey60",
+     xlab = "Time", ylab = expression(u[1]),
+     main = expression(u[1] ~ "short-time fit"))
+lines(sol_lor[idx, 1],     sol_lor[idx, 2],     col = "steelblue",  lwd = 2)
+lines(sol_ols_lor[idx, 1], sol_ols_lor[idx, 2], col = "darkorange", lwd = 2, lty = 2)
+lines(sol_irls_lor[idx,1], sol_irls_lor[idx,2], col = "firebrick",  lwd = 2, lty = 3)
+
+par(mfrow = c(1, 1))
+```
+
+------------------------------------------------------------------------
+
+## Summary
+
+```{r summary-table}
+summary_df <- data.frame(
+  System    = c("Logistic", "FitzHugh–Nagumo", "Lorenz"),
+  Dynamics  = c("Monotonic", "Oscillatory", "Chaotic"),
+  States    = c(1, 2, 3),
+  Params    = c(2, 6, 3),
+  `Rel Err OLS`  = c(
+    round(rel_err(res_log_ols$phat,  p_star_log), 4),
+    round(rel_err(res_fhn_ols$phat,  p_star_fhn), 4),
+    round(rel_err(res_lor_ols$phat,  p_star_lor), 4)
+  ),
+  `Rel Err IRLS` = c(
+    round(rel_err(res_log_irls$phat, p_star_log), 4),
+    round(rel_err(res_fhn_irls$phat, p_star_fhn), 4),
+    round(rel_err(res_lor_irls$phat, p_star_lor), 4)
+  ),
+  check.names = FALSE
+)
+knitr::kable(summary_df, caption = "Summary: relative parameter error across all systems")
+```

@@ -77,7 +77,8 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     interpolation_method = NULL,  # "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
     fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
     use_interp_uncertainty = TRUE,               # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-    device = torch::torch_device("cpu") # If GPUs are available use cuda (this speed up is most appropriate for high dimensional data)
+    device = torch::torch_device("cpu"), # If GPUs are available use cuda (this speed up is most appropriate for high dimensional data)
+    apply_fn = NULL    # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
   )
   
   if(!is.null(control)) {
@@ -213,15 +214,81 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   res$wendy_methods  <- names(wendy_data)
   res$W <- system$W
 
-  class(res) <- "wendy"
-  attr(res, "call") <- match.call()
-  attr(res, "method") <- method
-  attr(res, "noise_dist") <- noise_dist
-  attr(res, "n_obs") <- p1$mp1
-  attr(res, "n_params") <- length(p0)
-  attr(res, "n_states") <- D
+  # Optimization context stored on the object so optimizeWendy() can reuse the
+  # pre-built system without re-running the expensive setup.
+  opt_ctx <- list(
+    system       = system,
+    method       = method,
+    f            = f,
+    U_orig       = U_orig,
+    tt_orig      = tt_orig,
+    lip          = lip,
+    f_orig_expr  = f_orig_expr,
+    u_expr       = u_expr,
+    estimated_sd = estimated_sd,
+    f_           = f_,
+    J_p          = J_p,
+    J            = J,
+    D            = D,
+    noise_dist   = noise_dist,
+    control      = control
+  )
 
-  if(!control$optimize) return(res)
+  class(res) <- "wendy"
+  attr(res, "call")       <- match.call()
+  attr(res, "method")     <- method
+  attr(res, "noise_dist") <- noise_dist
+  attr(res, "n_obs")      <- p1$mp1
+  attr(res, "n_params")   <- if (is.matrix(p0)) ncol(p0) else length(p0)
+  attr(res, "n_states")   <- D
+
+  res$opt_ctx <- opt_ctx
+
+  if (!control$optimize) return(res)
+
+  if (is.matrix(p0) && nrow(p0) > 1) {
+    # Multistart: run optimization from each row of p0
+    apply_fn <- control$apply_fn %||% lapply
+
+    all_results <- apply_fn(seq_len(nrow(p0)), function(i) {
+      .run_wendy_optimization(opt_ctx, p0[i, ])
+    })
+
+    objectives <- sapply(all_results, `[[`, "objective")
+    best       <- all_results[[which.min(objectives)]]
+
+    res$phat                  <- best$p
+    res$data                  <- best$data
+    res$multistart_results    <- all_results
+    res$multistart_objectives <- objectives
+  } else {
+    p0_vec <- if (is.matrix(p0)) p0[1, ] else p0
+    result  <- .run_wendy_optimization(opt_ctx, p0_vec)
+    res$phat <- result$p
+    res$data <- result$data
+  }
+
+  return(res)
+}
+
+# Run a single optimization pass given a pre-built wendy system.
+# Returns list(p, data, objective) where objective = wnll(phat) for comparing starts.
+.run_wendy_optimization <- function(ctx, p0) {
+  system       <- ctx$system
+  method       <- ctx$method
+  f            <- ctx$f
+  U            <- ctx$U_orig
+  tt           <- ctx$tt_orig
+  lip          <- ctx$lip
+  f_orig_expr  <- ctx$f_orig_expr
+  u_expr       <- ctx$u_expr
+  estimated_sd <- ctx$estimated_sd
+  f_           <- ctx$f_
+  J_p          <- ctx$J_p
+  J            <- ctx$J
+  D            <- ctx$D
+  noise_dist   <- ctx$noise_dist
+  control      <- ctx$control
 
   g      <- system$g
   b      <- system$b
@@ -233,56 +300,108 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   wnll   <- system$wnll
   J_wnll <- system$J_wnll
   H_wnll <- system$H_wnll
-  
-  # Compute initial guess via equation error when none is supplied (we always need an initial guess for OE)
-  if(lip & is.null(p0) & method == "OE" || is.null(p0) & !lip){
+
+  # Compute p0 via equation error when none is supplied
+  if ((lip && is.null(p0) && method == "OE") || (is.null(p0) && !lip)) {
     ee_degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
-    if(lip){
-      p0 <- ee_linear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
+    p0 <- if (lip) {
+      ee_linear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
     } else {
-      p0 <- ee_nonlinear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
+      ee_nonlinear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
     }
   }
-  
-  data <- switch(method,
-                     # Ordinary Least Squares
-                     OLS = if(!lip){
-                       # Nonlinear in parameters
-                        nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
-                      } else {
-                        # linear in parameters
-                        ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
-                     }, 
-                     # Iterative Reweighted Least Squares
-                     IRLS = if(!lip){
-                          # Nonlinear in parameters
-                          nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
-                        } else{
-                          # Linear in parameters
-                          irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
-                      }, 
-                     # Maximum Likelihood Estimation
-                     MLE = { 
-                        if(lip & is.null(p0)){
-                          p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
-                        } 
-                       mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
-                     },
-                     # Output Error
-                     OE = output_error(f, U, tt, p0),
-                     # Hybrid MLE + OE
-                     HYBRID = {
-                        if(lip & is.null(p0)){
-                          p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
-                        } 
-                       data <- mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control) 
-                       output_error(f, U, tt, data$p)
-                     }
-                  )
-  res$data <- data
-  res$phat <- data$p 
-  
-  print(p0)
 
+  data <- switch(method,
+    OLS = if (!lip) {
+      nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
+    } else {
+      ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
+    },
+    IRLS = if (!lip) {
+      nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
+    } else {
+      irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
+    },
+    MLE = {
+      if (lip && is.null(p0)) {
+        p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
+      }
+      mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
+    },
+    OE = output_error(f, U, tt, p0),
+    HYBRID = {
+      if (lip && is.null(p0)) {
+        p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
+      }
+      mle_result <- mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
+      output_error(f, U, tt, mle_result$p)
+    }
+  )
+
+  phat <- data$p
+  objective <- tryCatch(wnll(phat), error = function(e) Inf)
+
+  list(p = phat, data = data, objective = objective)
+}
+
+#' Optimize a Pre-Built WENDy System
+#'
+#' Run parameter optimization on a \code{wendy} object that was built with
+#' \code{control = list(optimize = FALSE)}.  The expensive setup (symbolics,
+#' test functions, covariance assembly) is reused; only the optimizer runs.
+#'
+#' @param wendy_obj A \code{wendy} object returned by \code{solveWendy} with
+#'   \code{control$optimize = FALSE}.
+#' @param p0 Numeric vector (single start) or matrix (multistart, one row per
+#'   starting point).  \code{NULL} triggers automatic equation-error
+#'   initialisation (same as \code{solveWendy}).
+#' @param method Optimization method; defaults to the method stored in
+#'   \code{wendy_obj}.
+#' @param control Optional list of control parameters to override those stored
+#'   in \code{wendy_obj}.
+#'
+#' @return A \code{wendy} object with \code{$phat} and \code{$data} populated.
+#'   Multistart runs additionally attach \code{$multistart_results} and
+#'   \code{$multistart_objectives}.
+#' @export
+optimizeWendy <- function(wendy_obj, p0 = NULL,
+                          method  = attr(wendy_obj, "method"),
+                          control = list()) {
+  stored_control <- wendy_obj$opt_ctx$control %||% list()
+  merged_control <- modifyList(stored_control, control)
+
+  ctx <- wendy_obj$opt_ctx
+  if (is.null(ctx)) {
+    stop("wendy_obj does not contain an optimization context. ",
+         "Re-run solveWendy() with control = list(optimize = FALSE).",
+         call. = FALSE)
+  }
+  ctx$method  <- method
+  ctx$control <- merged_control
+
+  res <- wendy_obj
+
+  if (is.matrix(p0) && nrow(p0) > 1) {
+    apply_fn <- merged_control$apply_fn %||% lapply
+
+    all_results <- apply_fn(seq_len(nrow(p0)), function(i) {
+      .run_wendy_optimization(ctx, p0[i, ])
+    })
+
+    objectives <- sapply(all_results, `[[`, "objective")
+    best       <- all_results[[which.min(objectives)]]
+
+    res$phat                  <- best$p
+    res$data                  <- best$data
+    res$multistart_results    <- all_results
+    res$multistart_objectives <- objectives
+  } else {
+    p0_vec <- if (is.matrix(p0)) p0[1, ] else p0
+    result  <- .run_wendy_optimization(ctx, p0_vec)
+    res$phat <- result$p
+    res$data <- result$data
+  }
+
+  attr(res, "method") <- method
   return(res)
 }
