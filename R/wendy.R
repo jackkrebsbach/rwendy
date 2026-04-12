@@ -218,6 +218,8 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     f            = f,
     U_orig       = U_orig,
     tt_orig      = tt_orig,
+    U_processed  = U,          # for lognormal: log-transformed + filtered; else same as U_orig
+    tt_processed = as.vector(tt),
     lip          = lip,
     f_orig_expr  = f_orig_expr,
     u_expr       = u_expr,
