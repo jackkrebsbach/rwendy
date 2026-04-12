@@ -97,6 +97,8 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
 
     residuals <- weighted_residual(p, RT)
 
+    print("here")
+
     sw_test <- shapiro.test(residuals)
     p_val <- sw_test$p.value
     sw_pvalues[n] <- p_val

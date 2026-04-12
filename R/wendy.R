@@ -86,11 +86,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   U_orig   <- U
   tt_orig  <- as.vector(tt)
 
-  # Resolve data-dependent radius defaults after merging user overrides
-  dt     <- mean(diff(tt_orig))
-  mp1    <- length(tt_orig)
-  if (is.null(control$radius_min_time)) control$radius_min_time <- 2 * dt
-  if (is.null(control$radius_max_time)) control$radius_max_time <- floor((mp1 - 1) / 2) * dt
 
   if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt) # remove time points with zeros and take log of the data
@@ -159,7 +154,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   # linear interpolation between them suffices.
   if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
     nsr <- min(estimated_sd / apply(U, 2, sd))
-    if (nsr <= 0.1) {
+    if (nsr <= 0.15) {
       control$interpolation_method <- "linear"
     } else {
       max_order     <- detect_max_state_order(f_orig_expr, u_expr)
@@ -176,6 +171,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   }
 
   D <- ncol(wendy_data[[1]]$U)
+  
 
   wendy_problems <- lapply(wendy_data, function(d) {
     build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control)
