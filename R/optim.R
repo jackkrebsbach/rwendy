@@ -1,9 +1,9 @@
 # Iterative (weak) re-weighted least squares
-irls <- function(G, b, L, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- nrow(G)
   alphaIdm <- reg * diag(rep(1, dm))
   W_mat <- if (!is.null(W)) as.array(W) else NULL
-  p <- lm.fit(G, b)$coefficients
+  p <- if(is.null(p0)) lm.fit(G, b)$coefficients else p0
   n <- 0
   SW <- Inf
 
@@ -52,7 +52,7 @@ irls <- function(G, b, L, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, 
   return(list(
     p = p,
     iterations = n,
-    converged = (relative_change <= tau_FP || SW <= tau_SW),
+    converged = (relative_change <= tau_FP || SW <= tau_SW) && n < max_its,
     relative_change_n = relative_change,
     sw_pvalues = sw_pvalues,
     final_sw_pvalue = tail(sw_pvalues, n=1)
@@ -60,7 +60,7 @@ irls <- function(G, b, L, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, 
 }
 
 # Nonlinear iterative (weak) re-weighted least squares
-nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 1e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- length(b)
   alphaIdm <- reg * diag(rep(1, dm))
   W_mat <- if (!is.null(W)) as.array(W) else NULL
@@ -119,7 +119,7 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 1e-10, tau_FP = 1e-6, tau_S
   return(list(
     p = p,
     iterations = n,
-    converged = (relative_change <= tau_FP || SW <= tau_SW),
+    converged = (relative_change <= tau_FP || SW <= tau_SW) && n < max_its,
     relative_change_n = relative_change,
     sw_pvalues = sw_pvalues,
     final_sw_pvalue = tail(sw_pvalues, n=1)
@@ -127,7 +127,7 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 1e-10, tau_FP = 1e-6, tau_S
 }
 
 # Weak ordinary least squares
-ols <- function(G, b, L, reg = 1e-10){
+ols <- function(G, b, L, reg = 10e-10){
   p <- lm.fit(G, b)$coefficients
   residuals <- b - G %*% p
   sw_test <- shapiro.test(residuals)
@@ -136,7 +136,7 @@ ols <- function(G, b, L, reg = 1e-10){
 }
 
 # Weak ordinary nonlinear least squares
-nols <- function(g, b, L, Jp_r, p0, reg = 1e-10){
+nols <- function(g, b, L, Jp_r, p0, reg = 10e-10){
   residual <- function(p){
     as.array(g(p)$contiguous() - b)
   }
@@ -168,16 +168,10 @@ mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
   data$p <- phat
   
   return(data)
-
-  # Extracting estimated parameters from various packages
-  # trust.optim -> data$solution = phat
-  # trust::trust -> data$argument = phat
-  # trust.optim(p0, wnll, J_wnll, method = "BFGS") 
 }
 
-
-# Output Error
-output_error <- function(f, U, tt, p0, use_bounds = FALSE, u0_range_factor = 10.0, lower = NULL, upper = NULL) {
+# Output Error forward based nonlinear least squares
+output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
   D  <- ncol(U) 
   J  <- length(p0)
   u0_init <- as.vector(U[1, ])
@@ -188,15 +182,9 @@ output_error <- function(f, U, tt, p0, use_bounds = FALSE, u0_range_factor = 10.
   p_lower <- if (!is.null(lower)) lower else rep(-Inf, J)
   p_upper <- if (!is.null(upper)) upper else rep(Inf, J)
 
-  if (use_bounds) {
-      U_mat     <- as.matrix(U)
-      u0_scale  <- apply(U_mat, 2, function(col) diff(range(col)) + 1e-6)
-      u0_lower  <- u0_init - u0_range_factor * u0_scale
-      u0_upper  <- u0_init + u0_range_factor * u0_scale
-    } else {
-      u0_lower <- rep(-Inf, D)
-      u0_upper <- rep(Inf, D)
-  }
+  u0_lower <- rep(-Inf, D)
+  u0_upper <- rep(Inf, D)
+
   theta0 <- c(p0, u0_init)
   lower  <- c(p_lower, u0_lower)
   upper  <- c(p_upper, u0_upper)
@@ -237,9 +225,30 @@ output_error <- function(f, U, tt, p0, use_bounds = FALSE, u0_range_factor = 10.
       FME::modFit(f = costFn, p = theta0, method = "Marq", lower = lower, upper = upper)
   }, error = function(e) e)
 
-  data <- fit
+  n_theta <- J + D
 
-  return(list(p = data$par[1:J], u0 = data$par[(J+1):(J+D)], data = data))
+  if (inherits(fit, "error")) {
+    return(list(
+      p          = rep(NA, J),
+      u0         = rep(NA, D),
+      cov        = matrix(NA, nrow = n_theta, ncol = n_theta),
+      converged  = NA,
+      iterations = NA
+    ))
+  }
+
+  fit_summary <- suppressWarnings(summary(fit))
+  cov_scaled  <- fit_summary$cov.scaled
+  cov <- if (!is.null(cov_scaled) && !anyNA(cov_scaled)) cov_scaled else NULL
+  
+  return(list(
+    p          = fit$par[1:J],
+    u0         = fit$par[(J + 1):(J + D)],
+    cov        = cov,
+    converged  = fit$info %in% c(1L, 2L, 3L),
+    iterations = fit_summary$niter,
+    ssr        = fit$ssr
+  ))
 }
 
 # Equation Error initial guess for linear-in-parameters ODEs.
@@ -334,8 +343,10 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   J_wnll <- system$J_wnll
   H_wnll <- system$H_wnll
 
-  # Compute p0 via equation error when none is supplied
-  if ((lip && is.null(p0) && method == "OE") || (is.null(p0) && !lip)) {
+  # Compute p0 via equation error when none is supplied.
+  # Needed for: all nonlinear methods, and OE (no p0 fallback).
+  # Linear OLS/IRLS don't need p0; MLE+lip and HYBRID+lip have a fallbacks.
+  if (is.null(p0) && (!lip || method == "OE")) {
     ee_degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
     p0 <- if (lip) {
       ee_linear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
@@ -343,28 +354,40 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
       ee_nonlinear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
     }
   }
+  
+  # Convert from torch tensors to R arrays
+  b_cont <- as.array(b$contiguous())
+  G_cont <-  as.array(G$contiguous())
 
   data <- switch(method,
-    OLS = if (!lip) {
-      nols(g, as.array(b$contiguous()), L, Jp_r, p0, reg = 10e-10)
+    # Ordinary Least Squares on the weak residual
+    OLS = if (lip) {
+      ols(G_cont, b_cont, L)
     } else {
-      ols(as.array(G$contiguous()), as.array(b$contiguous()), L)
+      nols(g, b_cont, L, Jp_r, p0 = p0, reg = 10e-10)
     },
-    IRLS = if (!lip) {
-      nirls(g, as.array(b$contiguous()), L, Jp_r, p0, W = W, max_its = control$max_iterates)
+    # Iterative Reweighted Least Squares on the weak residual
+    IRLS = if (lip) {
+      if (is.null(p0)) {
+        p0 <- ols(G_cont, b_cont, L)$p
+      }
+      irls(G_cont, b_cont, L, p0 = p0, W = W, max_its = control$max_iterates)
     } else {
-      irls(as.array(G$contiguous()), as.array(b$contiguous()), L, W = W, max_its = control$max_iterates)
+      nirls(g, b_cont, L, Jp_r, p0 = p0, W = W, max_its = control$max_iterates)
     },
+    # Maximum Likelihood Estimation
     MLE = {
       if (lip && is.null(p0)) {
-        p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
+        p0 <- ols(G_cont, b_cont, L)$p
       }
       mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
     },
+    # Output Error
     OE = output_error(f, U, tt, p0),
+    # WENDy-MLE + OE
     HYBRID = {
       if (lip && is.null(p0)) {
-        p0 <- ols(as.array(G$contiguous()), as.array(b$contiguous()), L)$p
+        p0 <- ols(G_cont, b_cont, L)$p
       }
       mle_result <- mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
       output_error(f, U, tt, mle_result$p)
@@ -372,7 +395,11 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   )
 
   phat <- data$p
-  objective <- tryCatch(wnll(phat), error = function(e) Inf)
+  objective <- if (method %in% c("OE", "HYBRID")) {
+    data$ssr %||% Inf
+  } else {
+    tryCatch(wnll(phat), error = function(e) Inf)
+  }
 
   list(p = phat, data = data, objective = objective)
 }
@@ -422,11 +449,11 @@ optimizeWendy <- function(wendy_obj, p0 = NULL,
     })
 
     objectives <- sapply(all_results, `[[`, "objective")
-    best       <- all_results[[which.min(objectives)]]
+    best <- all_results[[which.min(objectives)]]
 
-    res$phat                  <- best$p
-    res$data                  <- best$data
-    res$multistart_results    <- all_results
+    res$phat <- best$p
+    res$data <- best$data
+    res$multistart_results <- all_results
     res$multistart_objectives <- objectives
   } else {
     p0_vec <- if (is.matrix(p0)) p0[1, ] else p0

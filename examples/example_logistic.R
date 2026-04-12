@@ -14,7 +14,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.75, 0.75);
-npoints <- 512
+npoints <- 256
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -41,13 +41,6 @@ tt <- sol[, 1, drop = FALSE]
 
 # for(i in seq(length(radii))){
 #    r <- radii[i]
-
-time <- system.time({
-  res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian")
-})
-
-print(res$phat)
-print(time)
 #   print(res$phat)
 #   rel_err <- norm(res$phat - p_star, type = "2")/norm(p_star, type = "2")
 #   errs[i] <- rel_err
@@ -111,7 +104,16 @@ print(time)
 # )
 
 # plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
-# print(res$phat)
-
 # print(time)
 # print(res$phat)
+
+# p0_multi <- matrix(data = c(1.5, 0.5, 0.5, 0.5, 0, 0.2), ncol = 2)
+
+res <- solveWendy(f, U, tt,  p0 = NULL, method = "IRLS", noise_dist = "addgaussian")
+# s <- summary(res)
+# print(s$phat)
+# print(s$param_cov)
+# print(res$multistart_results)
+# print(res$multistart_objectives)
+# print(sapply(res$multistart_results, `[[`, "objective"))
+print(res$phat)
