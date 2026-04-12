@@ -13,7 +13,7 @@ f <- function(u, p, t) {
 }
 
 nr <- 0.05
-npoints <- 70 
+npoints <- 256
 p_star <- c(72, 1, 2, 1, 1)
 p0 <- c(50, 1.5, 2.4, 1.7, 0.5)
 

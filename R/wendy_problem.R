@@ -66,7 +66,7 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
 
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig, device)
 
-  W <- if (isTRUE(control$use_interp_uncertainty)) {
+  W <- if (isTRUE(control$use_interp_uncertainty) && !is.null(var)) {
     var_vec <- c(t(var))
     torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
   } else {
@@ -154,7 +154,7 @@ build_wendy_system <- function(wendy_problems, lip, diag_reg, use_interp_uncerta
     Jp_L <- build_Jp_L_block(lapply(wendy_problems, `[[`, "Jp_L"), K_list, D, mp1, J, device)
     Hp_L <- build_Hp_L_block(lapply(wendy_problems, `[[`, "Hp_L"), K_list, D, mp1, J, device)
 
-    W <- if (isTRUE(use_interp_uncertainty)) {
+    W <- if (isTRUE(use_interp_uncertainty) && !is.null(wendy_problems[[1]]$W)) {
       var_vec <- unlist(lapply(wendy_problems, function(pr) c(t(pr$var))))
       torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
     } else {

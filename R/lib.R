@@ -56,47 +56,64 @@ summary.wendy <- function(object, ...) {
 
   summ$ode_system <- format_ode_system(object$f_sym)
 
+  method <- attr(object, "method")
+
   if(!is.null(object$phat)) {
     phat <- object$phat
 
-    # Compute parameter covariance using sandwich estimator:
-    # cov(p̂) = (GᵀG)⁻¹ GᵀS(p̂)G (GᵀG)⁻¹
-    # where G = Jp_r(p̂) is the Jacobian of the residual
-    # and S(p̂) is the covariance of the weak residual
-    G <- as.array(object$Jp_r(phat)$contiguous())
-    Sp <- as.array(object$S(phat)$contiguous())
+    if (method %in% c("OE", "HYBRID")) {
+      # OE / HYBRID: the final estimate comes from output_error, so use the
+      # scaled covariance from modFit, restricted to the parameter block
+      # (excluding fitted initial conditions).  For HYBRID, WENDy only
+      # provides the starting point; the OE estimator's curvature is reported.
+      J <- attr(object, "n_params")
+      param_cov <- if (!is.null(object$data$cov)) object$data$cov[1:J, 1:J] else NULL
+    } else {
+      # Compute parameter covariance using sandwich estimator:
+      # cov(p̂) = (GᵀG)⁻¹ GᵀS(p̂)G (GᵀG)⁻¹
+      # where G = Jp_r(p̂) is the Jacobian of the residual
+      # and S(p̂) is the covariance of the weak residual
+      G <- as.array(object$Jp_r(phat)$contiguous())
+      Sp <- as.array(object$S(phat)$contiguous())
 
-    GTG <- t(G) %*% G
-    quad <- t(G) %*% Sp %*% G
-    param_cov <- solve(GTG, t(solve(GTG, t(quad))))
+      GTG <- t(G) %*% G
+      quad <- t(G) %*% Sp %*% G
+      param_cov <- solve(GTG, t(solve(GTG, t(quad))))
+    }
 
-    std_errors <- sqrt(diag(param_cov))
+    std_errors <- if (!is.null(param_cov)) sqrt(diag(param_cov)) else rep(NA, length(phat))
 
     summ$param_cov <- param_cov
+    summ$phat <- phat
     summ$parameters <- data.frame(
-      Parameter = paste0("p", 1:length(phat)),
-      Estimate = as.numeric(phat),
+      Parameter = paste0("p", seq_along(phat)),
+      Estimate  = as.numeric(phat),
       Std.Error = std_errors
     )
   }
 
   if(!is.null(object$data)) {
-    summ$wnll_value <- as.numeric(object$wnll(object$phat))
+    if (method %in% c("OE", "HYBRID")) {
+      summ$convergence <- object$data$converged
+      summ$iterations  <- object$data$iterations
+    } else {
+      summ$wnll_value <- as.numeric(object$wnll(object$phat))
 
-    r <- object$g(object$phat) - object$b
-    summ$residuals <- list(
-      min = min(as.numeric(r)),
-      q1 = quantile(as.numeric(r), 0.25),
-      median = median(as.numeric(r)),
-      q3 = quantile(as.numeric(r), 0.75),
-      max = max(as.numeric(r))
-    )
+      r <- object$g(object$phat) - object$b
+      summ$residuals <- list(
+        min    = min(as.numeric(r)),
+        q1     = quantile(as.numeric(r), 0.25),
+        median = median(as.numeric(r)),
+        q3     = quantile(as.numeric(r), 0.75),
+        max    = max(as.numeric(r))
+      )
 
-    if(!is.null(object$data$convergence)) {
-      summ$convergence <- object$data$convergence
-    }
-    if(!is.null(object$data$iterations)) {
-      summ$iterations <- object$data$iterations
+      if (!is.null(object$data$convergence)) {
+        summ$convergence <- object$data$convergence
+      }
+      if (!is.null(object$data$iterations)) {
+        summ$iterations <- object$data$iterations
+      }
     }
   }
 
@@ -142,7 +159,17 @@ print.summary.wendy <- function(x, digits = 4, ...) {
     print(x$parameters, digits = digits, row.names = FALSE)
     cat("\n")
   }
-  
+
+  # Parameter covariance
+  if(!is.null(x$param_cov)) {
+    cat("Parameter Covariance:\n")
+    J <- nrow(x$param_cov)
+    rownames(x$param_cov) <- paste0("p", seq_len(J))
+    colnames(x$param_cov) <- paste0("p", seq_len(J))
+    print(round(x$param_cov, digits))
+    cat("\n")
+  }
+
   # Residuals
   if(!is.null(x$residuals)) {
     cat("Weak Residuals:\n")
@@ -161,8 +188,12 @@ print.summary.wendy <- function(x, digits = 4, ...) {
   
   # Convergence
   if(!is.null(x$convergence)) {
-    cat("\nConvergence:", ifelse(x$convergence == 0, "successful", 
-                                  paste("failed (code:", x$convergence, ")")), "\n")
+    conv_str <- if (is.logical(x$convergence)) {
+      ifelse(isTRUE(x$convergence), "successful", "failed")
+    } else {
+      ifelse(x$convergence == 0, "successful", paste("failed (code:", x$convergence, ")"))
+    }
+    cat("\nConvergence:", conv_str, "\n")
   }
   if(!is.null(x$iterations)) {
     cat("Iterations:", x$iterations, "\n")

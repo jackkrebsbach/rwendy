@@ -61,16 +61,16 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     optimize = TRUE,
     noise_sd = NA,
     compute_svd = TRUE,
-    diag_reg = 10e-10,
-    max_iterates = 200,
+    diag_reg = 10e-10, # Regularization for covariance of the weak residual for stability
+    max_iterates = 100, # Maximum number of iterates for WENDy-IRLS
     S = 1,  # Euler-Maclaurin series order expansion
     p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
     test_fun_type = "MSG",  # Multi-scale Global (MSG) or Single-scale Local (SSL)
-    radius_params = 2^(0:3),
-    radius_min_time = 0.1,
-    radius_max_time = 5.0,
-    k_max = 200,
-    max_test_fun_condition_number = 1e4,
+    radius_params = 2^(0:3), # Radius factors to use in the MSG test functions
+    radius_min_time = NULL,  #  User set restriction on test function radius
+    radius_max_time = NULL,  # User set restriction on test function radius
+    k_max = 200, # The max number of test functions
+    max_test_fun_condition_number = 1e4, 
     min_test_fun_info_number = 0.95,
     min_number_points = 256,            
     max_points_interp = 25,           # integer: only interpolate data when number of data points is less than this
@@ -81,20 +81,22 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     apply_fn = NULL    # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
   )
   
-  if(!is.null(control)) {
-    control <- modifyList(default_control, control)
-  } else {
-    control <- default_control
-  }
+  control <- if(!is.null(control)) modifyList(default_control, control) else default_control
+
+  U_orig   <- U
+  tt_orig  <- as.vector(tt)
+
+  # Resolve data-dependent radius defaults after merging user overrides
+  dt     <- mean(diff(tt_orig))
+  mp1    <- length(tt_orig)
+  if (is.null(control$radius_min_time)) control$radius_min_time <- 2 * dt
+  if (is.null(control$radius_max_time)) control$radius_max_time <- floor((mp1 - 1) / 2) * dt
 
   if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt) # remove time points with zeros and take log of the data
     U <- data$U
     tt <- data$tt
   }
-  
-  U_orig   <- U
-  tt_orig  <- as.vector(tt)
 
   device  <- control$device
   methods <- control$interpolation_method
@@ -167,7 +169,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   }
 
   if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
-    wendy_data <- list(none = list(U = U, tt = tt, var = matrix(1.0, nrow = nrow(U), ncol = ncol(U))))
+    wendy_data <- list(none = list(U = U, tt = tt, var = NULL))
   } else {
     methods <- control$interpolation_method
     wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
@@ -253,13 +255,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     })
 
     objectives <- sapply(all_results, `[[`, "objective")
-    best       <- all_results[[which.min(objectives)]]
+    best <- all_results[[which.min(objectives)]]
 
-    res$phat                  <- best$p
-    res$data                  <- best$data
-    res$multistart_results    <- all_results
+    res$phat <- best$p
+    res$data <- best$data
+    res$multistart_results <- all_results
     res$multistart_objectives <- objectives
   } else {
+    # Single optimization
     p0_vec <- if (is.matrix(p0)) p0[1, ] else p0
     result  <- .run_wendy_optimization(opt_ctx, p0_vec)
     res$phat <- result$p
