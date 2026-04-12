@@ -323,6 +323,8 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   f            <- ctx$f
   U            <- ctx$U_orig
   tt           <- ctx$tt_orig
+  U_processed  <- ctx$U_processed
+  tt_processed <- ctx$tt_processed
   lip          <- ctx$lip
   f_orig_expr  <- ctx$f_orig_expr
   u_expr       <- ctx$u_expr
@@ -385,14 +387,25 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
       mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
     },
     # Output Error
-    OE = output_error(f, U, tt, p0),
+    OE = if (noise_dist == "lognormal") {
+      # U_processed is log(y): solve dz/dt = f(exp(z),p,t)/exp(z), compare to log(obs)
+      f_log <- function(z, p, t) f(exp(z), p, t) / exp(z)
+      output_error(f_log, U_processed, tt_processed, p0)
+    } else {
+      output_error(f, U, tt, p0)
+    },
     # WENDy-MLE + OE
     HYBRID = {
       if (lip && is.null(p0)) {
         p0 <- ols(G_cont, b_cont, L)$p
       }
       mle_result <- mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
-      output_error(f, U, tt, mle_result$p)
+      if (noise_dist == "lognormal") {
+        f_log <- function(z, p, t) f(exp(z), p, t) / exp(z)
+        output_error(f_log, U_processed, tt_processed, mle_result$p)
+      } else {
+        output_error(f, U, tt, mle_result$p)
+      }
     }
   )
 
