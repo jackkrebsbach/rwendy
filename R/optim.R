@@ -97,8 +97,6 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
 
     residuals <- weighted_residual(p, RT)
 
-    print("here")
-
     sw_test <- shapiro.test(residuals)
     p_val <- sw_test$p.value
     sw_pvalues[n] <- p_val
@@ -364,9 +362,6 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
       ee_nonlinear(U_ee, tt_ee, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
     }
   }
-  
-  print("p0")
-  print(p0)
   
   # Convert from torch tensors to R arrays
   b_cont <- as.array(b$contiguous())
