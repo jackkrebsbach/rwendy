@@ -352,12 +352,21 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   # Linear OLS/IRLS don't need p0; MLE+lip and HYBRID+lip have a fallbacks.
   if (is.null(p0) && (!lip || method == "OE")) {
     ee_degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
+    # For lognormal, f_ operates on z = log(x), so EE must receive the
+    # log-transformed data (U_processed/tt_processed) so that u_mid and dudt
+    # are in the same coordinate system as f_.  For addgaussian, U_processed
+    # and tt_processed are identical to U_orig/tt_orig.
+    U_ee  <- U_processed
+    tt_ee <- tt_processed
     p0 <- if (lip) {
-      ee_linear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
+      ee_linear(U_ee, tt_ee, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
     } else {
-      ee_nonlinear(U, tt, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
+      ee_nonlinear(U_ee, tt_ee, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
     }
   }
+  
+  print("p0")
+  print(p0)
   
   # Convert from torch tensors to R arrays
   b_cont <- as.array(b$contiguous())

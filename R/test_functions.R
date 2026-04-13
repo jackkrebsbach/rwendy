@@ -155,19 +155,23 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   min_radius <- max(ceiling(radius_min_time / dt), 2)
   max_radius <- floor(radius_max_time / dt)
 
-  radius_min_max <- floor(max_radius / max(radii))
-
-  if (radius_min_max < min_radius) {
-    radius_min_max <- min_radius * 10
-  }
-
+  # Cap max_radius to what the interior of the data can support before anything
+  # else depends on it.  With n small (e.g. 32), the time-based max_radius can
+  # exceed the geometric maximum, and computing radius_min_max from the uncapped
+  # value lets the fallback push the radius search above what is feasible.
   max_radius_for_interior <- floor((mp1 - 2) / 2)
   if (max_radius > max_radius_for_interior) {
     max_radius <- max_radius_for_interior
   }
 
+  # Upper bound for the radius used as the base in find_min_radius_int_error.
+  # Chosen so that radius_params * radius_min_max stays below max_radius.
+  # Fallback is capped at max_radius (not min_radius * 10) so the search never
+  # returns a base radius that exceeds what the data can support.
+  radius_min_max <- floor(max_radius / max(radii))
+
   if (radius_min_max <= min_radius) {
-    radius_min_max <- min_radius * 10
+    radius_min_max <- min(min_radius * 10, max_radius)
   }
 
   # cat(sprintf("  Min radius: %d\n", min_radius))
