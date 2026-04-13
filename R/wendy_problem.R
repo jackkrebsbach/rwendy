@@ -21,7 +21,6 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   D   <- ncol(U)
   mp1 <- nrow(U)
 
-  # Resolve data-dependent radius defaults after merging user overrides
   if (is.null(control$radius_min_time)) control$radius_min_time <- 2 * dt
   if (is.null(control$radius_max_time)) control$radius_max_time <- floor((mp1 - 1) / 2) * dt
 

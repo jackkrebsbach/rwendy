@@ -14,15 +14,16 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.75, 0.75);
-npoints <- 10
+npoints <- 25
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-# set.seed(8675309)
-nr <- 0.05
+set.seed(86753)
+
+nr <- 0.5
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -109,6 +110,6 @@ tt <- sol[, 1, drop = FALSE]
 
 # p0_multi <- matrix(data = c(1.5, 0.5, 0.5, 0.5, 0, 0.2), ncol = 2)
 
-res <- solveWendy(f, U, tt, p0 = p_star, method = "OE", noise_dist = "lognormal")
+res <- solveWendy(f, U, tt, method = "OE", noise_dist = "lognormal")
 
 print(res$phat)
