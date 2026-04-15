@@ -366,6 +366,7 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   # Convert from torch tensors to R arrays
   b_cont <- as.array(b$contiguous())
   G_cont <-  as.array(G$contiguous())
+  
 
   data <- switch(method,
     # Ordinary Least Squares on the weak residual

@@ -23,7 +23,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # set.seed(86753)
 
-nr <- 0.25
+nr <- 0.2
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -110,7 +110,12 @@ tt <- sol[, 1, drop = FALSE]
 
 # p0_multi <- matrix(data = c(1.5, 0.5, 0.5, 0.5, 0, 0.2), ncol = 2)
 
-res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "lognormal")
+res <- solveWendy(f, U, tt, p0 = c(0.5, 0.5), method = "OE", noise_dist = "lognormal")
 sum <- summary(res)
 cov <- solve(res$H_wnll(res$phat))
+
 print(res$phat)
+# print("Standard deviation from hessian")
+# print(sqrt(diag(cov)))
+# print("Standard deviation from wendy estimator")
+# print(sqrt(diag(sum$param_cov)))

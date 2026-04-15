@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 100
+npoints <- 64
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -38,7 +38,7 @@ U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 time <- system.time({
-  res <- solveWendy(f, U, tt, method = "MLE")
+  res <- solveWendy(f, U, tt, method = "IRLS")
 })
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
@@ -65,4 +65,4 @@ print(time)
 
 # plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
 
-# print(res$phat)
+print(res$phat)
