@@ -14,7 +14,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.01);
 p0 <- c(0.75, 0.75);
-npoints <- 128
+npoints <- 1024
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -115,6 +115,8 @@ sum <- summary(res)
 cov <- solve(res$H_wnll(res$phat))
 
 print(res$phat)
+
+plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
 # print("Standard deviation from hessian")
 # print(sqrt(diag(cov)))
 # print("Standard deviation from wendy estimator")
