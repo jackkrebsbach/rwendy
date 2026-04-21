@@ -32,9 +32,11 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-control <- list(radius_max_time = 5)
-res <- solveWendy(f, U, tt, control = control, method = "IRLS")
-sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
+res <- solveWendy(f, U, tt, method = "IRLS")
+# sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
-plot(U[,1],U[,2], cex = 0.5)
-points(sol_hat[,2], sol_hat[,3], cex = 0.5, col = "red")
+# plot(U[,1],U[,2], cex = 0.5)
+# points(sol_hat[,2], sol_hat[,3], cex = 0.5, col = "red")
+
+plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
+abline(v = res$wendy_problems[[1]]$min_radius, col = "red")

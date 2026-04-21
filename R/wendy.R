@@ -86,7 +86,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   U_orig   <- U
   tt_orig  <- as.vector(tt)
 
-
   if(noise_dist == "lognormal"){
     data <- preprocess_data(U, tt) # remove time points with zeros and take log of the data
     U <- data$U

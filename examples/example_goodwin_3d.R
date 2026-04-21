@@ -13,7 +13,7 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-npoints <- 512
+npoints <- 32
 p_star <- c(3.4884, 0.0969, 1, 10, 0.0969, 0.0581, 0.0969, 0.0775)
 p0 <- c(3, 0.1, 4, 12, 0.1, 0.1, 0.1, 0.1)
 u0 <- c(0.3617, 0.9137, 1.393)
@@ -36,28 +36,29 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-control <- list(radius_max_time = 20)
+control <- list(optimize = FALSE)
 res <- solveWendy(f, U, tt, method = "IRLS", control = control)
 
-p_hat <- res$phat
+# p_hat <- res$phat
 
-sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_hat)[,-1]
+# sol_hat <- deSolve::ode(u0, t_eval, modelODE, p_hat)[,-1]
 
-plot_ly(
-  x = sol[, 2],
-  y = sol[, 3],
-  z = sol[, 4],
-  type = 'scatter3d',
-  mode = 'marker',
-  marker = list(color = 'blue', size = 3),
-  name = "data"
-) |>
-  add_trace(
-    x = sol_hat[, 1],
-    y = sol_hat[, 2],
-    z = sol_hat[, 3],
-    mode = 'lines',
-    marker = list(color = 'red', size = 3),
-    name = "fit"
-  )
+# plot_ly(
+#   x = sol[, 2],
+#   y = sol[, 3],
+#   z = sol[, 4],
+#   type = 'scatter3d',
+#   mode = 'marker',
+#   marker = list(color = 'blue', size = 3),
+#   name = "data"
+# ) |>
+#   add_trace(
+#     x = sol_hat[, 1],
+#     y = sol_hat[, 2],
+#     z = sol_hat[, 3],
+#     mode = 'lines',
+#     marker = list(color = 'red', size = 3),
+#     name = "fit"
+#   )
 
+plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)

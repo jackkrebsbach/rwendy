@@ -32,12 +32,15 @@ noise <- matrix(rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd), nro
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "MLE")
+res <- solveWendy(f, U, tt, method = "IRLS")
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[,-1]
 
-plot(U[, c(1, 2)], cex = 0.5)
-points(sol_hat[, c(1, 2)], cex = 0.5, col = "red")
-
-print(res$phat)
-print(p_star)
+# plot(U[, c(1, 2)], cex = 0.5)
+# points(sol_hat[, c(1, 2)], cex = 0.5, col = "red")
+ 
+# print(res$phat)
+# print(p_star)
+  
+plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
+abline(v = res$wendy_problems[[1]]$min_radius, col = "red")

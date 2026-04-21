@@ -109,17 +109,19 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 
   errors <- numeric(length(radii))
 
-  IX <- floor((Mp1 - 1) / sub_sample_rate)
+  IX <- floor((Mp1 - 1) / sub_sample_rate) + 1
+  T_span <- as.numeric(tail(tt, 1) - tt[1])
 
   for (i in seq_along(radii)) {
     radius <- radii[i]
     V_r <- build_test_function_matrix(phi, tt, radius)
+    K <- nrow(V_r)
     GT <- do.call(rbind, lapply(seq_len(D), function(d) sweep(V_r, 2, U[, d], `*`)))
     f_hat_G_imag <- Im(mvfft(t(GT))[IX, ])
-    errors[i] <- sqrt(sum(f_hat_G_imag^2))
+    errors[i] <- (4 * pi / sqrt(T_span)) * sqrt(sum(f_hat_G_imag^2) / K)
   }
 
-  log_errors <- log(errors)
+  log_errors <- log(errors / max(errors)) - 1
   ix <- get_corner_index(log_errors)
 
   return(list(index = ix, errors = errors, radii = radii))
@@ -164,19 +166,8 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
     max_radius <- max_radius_for_interior
   }
 
-  # Upper bound for the radius used as the base in find_min_radius_int_error.
-  # Chosen so that radius_params * radius_min_max stays below max_radius.
-  # Fallback is capped at max_radius (not min_radius * 10) so the search never
-  # returns a base radius that exceeds what the data can support.
-  radius_min_max <- floor(max_radius / max(radii))
-
-  if (radius_min_max <= min_radius) {
-    radius_min_max <- min(min_radius * 10, max_radius)
-  }
-
   # cat(sprintf("  Min radius: %d\n", min_radius))
   # cat(sprintf("  Max radius: %d\n", max_radius))
-  # cat(sprintf("  Minmax radius: %d\n", radius_min_max))
 
   if (!is.null(test_function_params$fixed_radius)) {
     min_radius_int_error <- test_function_params$fixed_radius
@@ -184,7 +175,7 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
     min_radius_radii     <- NA
     min_radius_ix        <- NA
   } else {
-    result               <- find_min_radius_int_error(U, tt, min_radius, radius_min_max,
+    result               <- find_min_radius_int_error(U, tt, min_radius, max_radius,
                                                       num_radii = 100, sub_sample_rate = 2)
     min_radius_int_error <- result$radii[result$index]
     min_radius_errors    <- result$errors
@@ -289,11 +280,8 @@ find_last <- function(arr, pred) {
 
 get_corner_index <- function(y, xx_in = NULL) {
   N <- length(y)
-  M <- N - 1
 
-  if (M <= 0) { return(1) }
-
-  E <- numeric(N)
+  if (N <= 2) { return(1) }
 
   if (is.null(xx_in)) {
     x <- 1:N
@@ -301,25 +289,17 @@ get_corner_index <- function(y, xx_in = NULL) {
     x <- xx_in
   }
 
-  for (k in 2:(M)) {
-    x0 <- x[1]
-    xk <- x[k]
-    xM <- x[N]
+  x0 <- x[1]; y0 <- y[1]
+  xM <- x[N]; yM <- y[N]
 
-    y0 <- y[1]
+  E <- numeric(N - 2)
+
+  for (k in 2:(N-1)) {
+    xk <- x[k]
     yk <- y[k]
-    yM <- y[N]
 
     slope1 <- (yk - y0) / (xk - x0)
-    slope2 <- (yM - yk) / (xM - xk)
-
-    L1 <- function(x_val) {
-      slope1 * (x_val - x0) + y0
-    }
-
-    L2 <- function(x_val) {
-      slope2 * (x_val - xk) + yk
-    }
+    L1 <- function(x_val) slope1 * (x_val - x0) + y0
 
     sum1 <- 0.0
     for (m in 1:k) {
@@ -327,20 +307,19 @@ get_corner_index <- function(y, xx_in = NULL) {
       sum1 <- sum1 + err^2
     }
 
+    slope2 <- (yM - yk) / (xM - xk)
+    L2 <- function(x_val) slope2 * (x_val - xk) + yk
+
     sum2 <- 0.0
     for (m in k:N) {
       err <- (L2(x[m]) - y[m]) / y[m]
       sum2 <- sum2 + err^2
     }
 
-    E[k] <- sqrt(sum1 + sum2)
+    E[k - 1] <- sqrt(sum1 + sum2)
   }
 
-  # Don't want to choose the first or last index
-  E[1] <-  1e300
-  E[N] <-  1e300
-
-  return(which.min(E))
+  return(which.min(E) + 1)
 }
 
 endpoint_derivative_finite_difference_approx <- function(f, dt, l, mu){

@@ -10,7 +10,6 @@
 em_correction <- function(
   test_fun_0, test_fun_der_0, J_u, J_t, f_, u_0
 ){
-  
   # ∂f/∂t 
 
 }

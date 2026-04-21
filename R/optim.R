@@ -128,11 +128,9 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
 
 # Weak ordinary least squares
 ols <- function(G, b, L, reg = 10e-10){
-  p <- lm.fit(G, b)$coefficients
-  residuals <- b - G %*% p
-  sw_test <- shapiro.test(residuals)
-  sw_p_value <- sw_test$p.value
-  return(list(p = p, sw_p_value = sw_p_value))
+  J <- ncol(G)
+  p <- solve(crossprod(G) + reg * diag(J), crossprod(G, b))
+  return(list(p = as.vector(p)))
 }
 
 # Weak ordinary nonlinear least squares
@@ -144,13 +142,8 @@ nols <- function(g, b, L, Jp_r, p0, reg = 10e-10){
     as.array(Jp_r(p)$contiguous())
   }
   p <- nls.lm(p0, lower = NULL, upper = NULL, residual, residual_jacobian)$par
-  residuals <- b - as.array(g(p)$contiguous())
-  sw_test <- shapiro.test(residuals)
-  sw_p_value <- sw_test$p.value
-  return(list(p = p, sw_p_value = sw_p_value))
+  return(list(p = p))
 }
-
-
 
 # Maximum likelihood estimation for r(p) ~ N(0, S(p))
 mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
