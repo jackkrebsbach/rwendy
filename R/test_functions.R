@@ -117,11 +117,12 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
     V_r <- build_test_function_matrix(phi, tt, radius)
     K <- nrow(V_r)
     GT <- do.call(rbind, lapply(seq_len(D), function(d) sweep(V_r, 2, U[, d], `*`)))
-    f_hat_G_imag <- Im(mvfft(t(GT))[IX, ])
-    errors[i] <- (4 * pi / sqrt(T_span)) * sqrt(sum(f_hat_G_imag^2) / K)
+    f_hat_G_imag <- Im(mvfft(t(GT))[IX, ]) 
+    errors[i] <- (floor((Mp1 - 1) / sub_sample_rate) / sqrt(T_span)) * sqrt(sum(f_hat_G_imag^2) / K)
+
   }
 
-  log_errors <- log(errors / max(errors)) - 1
+  log_errors <- log(errors)
   ix <- get_corner_index(log_errors)
 
   return(list(index = ix, errors = errors, radii = radii))
@@ -132,16 +133,26 @@ build_full_test_function_matrices_ssl <- function(U, tt, test_function_params) {
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
-  radius_c <- if (!is.null(test_function_params$fixed_radius)) {
-    test_function_params$fixed_radius
+  if (!is.null(test_function_params$fixed_radius)) {
+    radius_c <- test_function_params$fixed_radius
+    rc_errors <- NULL
+    rc_radii <- NULL
   } else {
-    compute_r_c_hat(U, tt, test_function_params$S, test_function_params$p)
+    data <- compute_r_c_hat(
+      U,
+      tt,
+      test_function_params$S,
+      test_function_params$p
+    )
+    radius_c <- data$rc
+    rc_errors <- data$ehat
+    rc_radii <- data$radii
   }
 
   V  <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 0)
   Vp <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 1)
 
-  return(list(V = V, V_prime = Vp, min_radius = radius_c))
+  return(list(V = V, V_prime = Vp, radius_c = radius_c, rc_errors = rc_errors, rc_radii = rc_radii))
 
 }
 
@@ -450,8 +461,7 @@ compute_r_c_hat <- function(U, tt, S, p){
 
   ix <- get_corner_index(log(ehat))
   
-  r_c <- radii[ix]
-  
+  rc <- radii[ix]
 
-  return(radii[ix])
+  return(list(rc = rc, ehat = ehat, radii = radii))
 }

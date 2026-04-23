@@ -62,3 +62,4 @@ res <- solveWendy(f, U, tt, method = "IRLS", control = control)
 #   )
 
 plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
+abline(v = res$wendy_problems[[1]]$min_radius, col = "red")

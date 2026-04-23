@@ -203,11 +203,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   res$V       <- p1$V
   res$V_prime <- p1$Vp
   res$min_radius    <- p1$min_radius
-  res$wendy_problems      <- wendy_problems         
+  res$rc <- p1$rc
+  res$rc_errors <- p1$rc_errors
+  res$rc_radii <- p1$rc_radii
+  res$wendy_problems <- wendy_problems         
   res$wendy_data   <- wendy_data      
-  res$U             <- p1$U             
-  res$tt            <- wendy_data[[1]]$tt
-  res$var           <- p1$var
+  res$U <- p1$U             
+  res$tt <- wendy_data[[1]]$tt
+  res$var <- p1$var
   res$wendy_methods  <- names(wendy_data)
   res$W <- system$W
 
