@@ -14,7 +14,7 @@ f <- function(u, p, t) {
 p_star <- c(3, -3, 3, -1/3, 17/150, 1/15);
 u0 <- c(0,0.1);
 p0 <- c(1,-1, 1, -0.2, 0.01, 0.01);
-npoints <- 128
+npoints <- 256
 t_span <- c(0.001, 25);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -22,7 +22,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.05
+nr <- 0.1
 noise_sd <- sqrt(nr * norm(as.array(sol[,-1]), type = "2") / npoints)
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
@@ -40,5 +40,5 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 print(norm(res$phat - p_star, type = "2") / norm(p_star, type = "2"))
 
-plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
+plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors, log = "y")
 abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
