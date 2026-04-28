@@ -27,12 +27,12 @@ nr <- 0.05
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
-noise_sd <- nr * sqrt(mean(U_vec^2))
-noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
+# noise_sd <- nr * sqrt(mean(U_vec^2))
+# noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 
 # Multiplicative Lognormal Noise
-# noise_sd <- nr
-# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
+noise_sd <- nr
+noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
@@ -111,14 +111,11 @@ tt <- sol[, 1, drop = FALSE]
 # p0_multi <- matrix(data = c(1.5, 0.5, 0.5, 0.5, 0, 0.2), ncol = 2)
 
 time <- system.time({
-  res <- solveWendy(f, U, tt, method = "IRLS", noise_dist = "addgaussian", control = list(test_fun_type = "SSL"))
+  res <- solveWendy(f, U, tt, method = "OE", noise_dist = "lognormal", control = list(test_fun_type = "MSG"))
 })
 
-print(time)
-print(res$phat)
-
-plot(res$rc_radii, log(res$rc_errors))
-abline(v = res$rc, col = "red")
+# plot(res$rc_radii, log(res$rc_errors))
+# abline(v = res$rc, col = "red")
 
 # plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
 # abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
@@ -126,3 +123,6 @@ abline(v = res$rc, col = "red")
 # print(sqrt(diag(cov)))
 # print("Standard deviation from wendy estimator")
 # print(sqrt(diag(sum$param_cov)))
+
+print(time)
+print(res$phat)

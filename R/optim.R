@@ -340,7 +340,7 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
 
   # Compute p0 via equation error when none is supplied.
   # Needed for: all nonlinear methods, and OE (no p0 fallback).
-  # Linear OLS/IRLS don't need p0; MLE+lip and HYBRID+lip have a fallbacks.
+  # Linear OLS/IRLS don't need p0; MLE+lip and HYBRID+lip  use OLS to initialize
   if (is.null(p0) && (!lip || method == "OE")) {
     ee_degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
     # For lognormal, f_ operates on z = log(x), so EE must receive the
@@ -356,10 +356,11 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
     }
   }
   
-  # Convert from torch tensors to R arrays
-  b_cont <- as.array(b$contiguous())
-  G_cont <-  as.array(G$contiguous())
-  
+  # Convert from torch tensors to R arrays (not needed for OE)
+  if (method != "OE") {
+    b_cont <- as.array(b$contiguous())
+    G_cont <- as.array(G$contiguous())
+  }
 
   data <- switch(method,
     # Ordinary Least Squares on the weak residual

@@ -102,17 +102,10 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   t_expr <- symengine::S("t")
 
   f_orig_expr <- f(u_expr, p_expr, t_expr)
-  f_expr <- switch(noise_dist,
-                    lognormal = lognormal_transform(f_orig_expr),
-                    f_orig_expr
-                   )
+  f_expr <- switch(noise_dist, lognormal = lognormal_transform(f_orig_expr), f_orig_expr)
 
-  J_u_sym   <- compute_symbolic_jacobian(f_expr, u_expr)
-  J_t_sym   <- compute_symbolic_jacobian(f_expr, c(t_expr))
-  J_up_sym  <- compute_symbolic_jacobian(J_u_sym, p_expr)
-  J_p_sym   <- compute_symbolic_jacobian(f_expr, p_expr)
-  J_pp_sym  <- compute_symbolic_jacobian(J_p_sym, p_expr)
-  J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p_expr)
+  J_p_sym  <- compute_symbolic_jacobian(f_expr, p_expr)
+  J_pp_sym <- compute_symbolic_jacobian(J_p_sym, p_expr)
 
   # A function is linear/affine in p iff all second-order mixed partials
   # ∂²f / ∂pᵢ ∂pⱼ are identically zero.
@@ -120,15 +113,22 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
   vars <- c(p_expr, u_expr, t_expr)
 
-  # Callable functions of p, u, and t
-  f_    <- build_fn(f_expr,    vars)  # f(p,u,t)
-  J_t   <- build_fn(J_t_sym, vars)    # ∇ₜf(p,u,t)
-  J_u   <- build_fn(J_u_sym,   vars)  # ∇ᵤf(p,u,t)
-  J_up  <- build_fn(J_up_sym,  vars)  # ∇ₚ∇ᵤf(p,u,t)
-  J_p   <- build_fn(J_p_sym,   vars)  # ∇ₚf(p,u,t)
-  J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
-  J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
+  # Callable functions needed by all methods
+  f_ <- build_fn(f_expr,   vars)  # f(p,u,t)
+  J_p <- build_fn(J_p_sym, vars)  # ∇ₚf(p,u,t)
 
+  if (method != "OE") {
+    J_u_sym   <- compute_symbolic_jacobian(f_expr, u_expr)
+    J_t_sym   <- compute_symbolic_jacobian(f_expr, c(t_expr))
+    J_up_sym  <- compute_symbolic_jacobian(J_u_sym, p_expr)
+    J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p_expr)
+
+    J_t   <- build_fn(J_t_sym,   vars)  # ∇ₜf(p,u,t)
+    J_u   <- build_fn(J_u_sym,   vars)  # ∇ᵤf(p,u,t)
+    J_up  <- build_fn(J_up_sym,  vars)  # ∇ₚ∇ᵤf(p,u,t)
+    J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
+    J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
+  }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
     control$noise_sd
@@ -142,80 +142,82 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     df    <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
     sqrt(sum((U_orig - U_fit)^2) / df)
   }
-  
-  sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
 
-  # When nrow(U) < max_points_interp  we interpolate the sparse data.
-  # Degree rationale: Gaussian uses max_order+1 because integrating a degree-d RHS
-  # raises the trajectory degree by 1. For lognormal the log transform reduces the
-  # effective degree by 1, so max_order suffices. In both cases, if the
-  # noise-to-signal ratio is low (<= 0.1) the observations are clean enough that
-  # linear interpolation between them suffices.
-  if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
-    nsr <- min(estimated_sd / apply(U, 2, sd))
-    if (nsr <= 0.15) {
-      control$interpolation_method <- "linear"
-    } else {
-      max_order     <- detect_max_state_order(f_orig_expr, u_expr)
-      interp_degree <- if (noise_dist == "lognormal") max_order else max_order + 1L
-      control$interpolation_method <- paste0("poly_ls_", interp_degree)
-    }
-  }
-
-  if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
-    wendy_data <- list(none = list(U = U, tt = tt, var = NULL))
-  } else {
-    methods <- control$interpolation_method
-    wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
-  }
-
-  D <- ncol(wendy_data[[1]]$U)
-  
-
-  wendy_problems <- lapply(wendy_data, function(d) {
-    build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control)
-  })
-
-  system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty, device)
-
-  p1 <- wendy_problems[[1]]
-
+  D <- ncol(U)
   res <- list()
 
-  res$wnll    <- system$wnll
-  res$J_wnll  <- system$J_wnll
-  res$H_wnll  <- system$H_wnll
-  res$g       <- system$g
-  res$g0      <- p1$g0
-  res$G       <- system$G
-  res$b       <- system$b
-  res$f       <- f_
-  res$J_p     <- J_p
-  res$J_u     <- J_u
-  res$J_upp   <- J_upp
-  res$S       <- system$S
-  res$Jp_S    <- system$Jp_S
-  res$Jp_r    <- system$Jp_r
-  res$F_      <- p1$F_
-  res$f_sym   <- f_expr
-  res$L       <- system$L
-  res$sig     <- sig
-  res$V       <- p1$V
-  res$V_prime <- p1$Vp
-  res$min_radius    <- p1$min_radius
-  res$rc <- p1$rc
-  res$rc_errors <- p1$rc_errors
-  res$rc_radii <- p1$rc_radii
-  res$wendy_problems <- wendy_problems         
-  res$wendy_data   <- wendy_data      
-  res$U <- p1$U             
-  res$tt <- wendy_data[[1]]$tt
-  res$var <- p1$var
-  res$wendy_methods  <- names(wendy_data)
-  res$W <- system$W
+  if (method != "OE") {
+    sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
+
+    # When nrow(U) < max_points_interp we interpolate the sparse data.
+    # Degree rationale: Gaussian uses max_order+1 because integrating a degree-d RHS
+    # raises the trajectory degree by 1. For lognormal the log transform reduces the
+    # effective degree by 1, so max_order suffices. In both cases, if the
+    # noise-to-signal ratio is low (<= 0.1) the observations are clean enough that
+    # linear interpolation between them suffices.
+    if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
+      nsr <- min(estimated_sd / apply(U, 2, sd))
+      if (nsr <= 0.15) {
+        control$interpolation_method <- "linear"
+      } else {
+        max_order     <- detect_max_state_order(f_orig_expr, u_expr)
+        interp_degree <- if (noise_dist == "lognormal") max_order else max_order + 1L
+        control$interpolation_method <- paste0("poly_ls_", interp_degree)
+      }
+    }
+
+    if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
+      wendy_data <- list(none = list(U = U, tt = tt, var = NULL))
+    } else {
+      methods <- control$interpolation_method
+      wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
+    }
+
+    D <- ncol(wendy_data[[1]]$U)
+
+    wendy_problems <- lapply(wendy_data, function(d) {
+      build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control)
+    })
+
+    system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty, device)
+
+    p1 <- wendy_problems[[1]]
+
+    res$wnll    <- system$wnll
+    res$J_wnll  <- system$J_wnll
+    res$H_wnll  <- system$H_wnll
+    res$g       <- system$g
+    res$g0      <- p1$g0
+    res$G       <- system$G
+    res$b       <- system$b
+    res$f       <- f_
+    res$J_p     <- J_p
+    res$J_u     <- J_u
+    res$J_upp   <- J_upp
+    res$S       <- system$S
+    res$Jp_S    <- system$Jp_S
+    res$Jp_r    <- system$Jp_r
+    res$F_      <- p1$F_
+    res$f_sym   <- f_expr
+    res$L       <- system$L
+    res$sig     <- sig
+    res$V       <- p1$V
+    res$V_prime <- p1$Vp
+    res$min_radius  <- p1$min_radius
+    res$rc          <- p1$rc
+    res$rc_errors   <- p1$rc_errors
+    res$rc_radii    <- p1$rc_radii
+    res$wendy_problems <- wendy_problems
+    res$wendy_data     <- wendy_data
+    res$U              <- p1$U
+    res$tt             <- wendy_data[[1]]$tt
+    res$var            <- p1$var
+    res$wendy_methods  <- names(wendy_data)
+    res$W              <- system$W
+  }
 
   opt_ctx <- list(
-    system       = system,
+    system       = if (method != "OE") system else NULL,
     method       = method,
     f            = f,
     U_orig       = U_orig,
@@ -235,12 +237,12 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   )
 
   class(res) <- "wendy"
-  attr(res, "call")       <- match.call()
-  attr(res, "method")     <- method
+  attr(res, "call") <- match.call()
+  attr(res, "method") <- method
   attr(res, "noise_dist") <- noise_dist
-  attr(res, "n_obs")      <- p1$mp1
-  attr(res, "n_params")   <- J
-  attr(res, "n_states")   <- D
+  attr(res, "n_obs") <- length(tt)
+  attr(res, "n_params") <- J
+  attr(res, "n_states") <- D
 
   res$opt_ctx <- opt_ctx
 
