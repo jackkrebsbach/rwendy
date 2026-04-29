@@ -111,14 +111,14 @@ tt <- sol[, 1, drop = FALSE]
 # p0_multi <- matrix(data = c(1.5, 0.5, 0.5, 0.5, 0, 0.2), ncol = 2)
 
 time <- system.time({
-  res <- solveWendy(f, U, tt, method = "OE", noise_dist = "lognormal", control = list(test_fun_type = "MSG"))
+  res <- solveWendy(f, U, tt, method = "IRLS", noise_dist = "lognormal", control = list(test_fun_type = "MSG"))
 })
 
 # plot(res$rc_radii, log(res$rc_errors))
 # abline(v = res$rc, col = "red")
 
-# plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
-# abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
+plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
+abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
 # print("Standard deviation from hessian")
 # print(sqrt(diag(cov)))
 # print("Standard deviation from wendy estimator")
