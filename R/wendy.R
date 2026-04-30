@@ -96,7 +96,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   methods <- control$interpolation_method
 
   # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
-  J      <- detect_n_params(f)
+  J <- detect_n_params(f)
   u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
   p_expr <- do.call(c, lapply(seq_len(J), function(i) symengine::S(paste0("p", i))))
   t_expr <- symengine::S("t")
@@ -270,6 +270,10 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     res$phat <- result$p
     res$data <- result$data
   }
+  
+  u0hat <- estimate_u0(U, f_, J_u, J_t, tt, res$phat, control)
+  
+  res$u0hat <- u0hat
 
   return(res)
 }

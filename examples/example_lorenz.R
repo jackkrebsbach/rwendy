@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 1000
+npoints <- 500
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -39,11 +39,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-time <- system.time({
-  res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "SSL"))
-})
-
-print(time)
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "MSG"))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 
@@ -69,3 +65,7 @@ plot_ly(
 # abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
 
 print(res$phat)
+print(res$u0hat)
+
+cat(rel_err(res$u0hat, u0), "\n")
+cat(rel_err(U[1,], u0))

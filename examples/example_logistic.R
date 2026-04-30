@@ -12,7 +12,7 @@ f <- function(u, p, t) {
 }
 
 p_star <- c(1, 1);
-u0 <- c(0.01);
+u0 <- c(0.1);
 p0 <- c(0.75, 0.75);
 npoints <- 501
 t_span <- c(0.0, 10);
@@ -23,16 +23,16 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # set.seed(86753)
 
-nr <- 0.05
+nr <- 0.025
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
-# noise_sd <- nr * sqrt(mean(U_vec^2))
-# noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
+noise_sd <- nr * sqrt(mean(U_vec^2))
+noise <- sol[, 2] + rnorm(npoints, mean = 0, sd = noise_sd)
 
 # Multiplicative Lognormal Noise
-noise_sd <- nr
-noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
+# noise_sd <- nr
+# noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
@@ -116,9 +116,8 @@ time <- system.time({
 
 # plot(res$rc_radii, log(res$rc_errors))
 # abline(v = res$rc, col = "red")
-
-plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
-abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
+# plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
+# abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
 # print("Standard deviation from hessian")
 # print(sqrt(diag(cov)))
 # print("Standard deviation from wendy estimator")
@@ -126,3 +125,4 @@ abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
 
 print(time)
 print(res$phat)
+print(res$u0hat)
