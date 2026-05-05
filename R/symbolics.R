@@ -69,6 +69,20 @@ build_fn <- function(expr_array, vars) {
   }
 }
 
+# Total time derivative of a symbolic vector g(u(t), t) along the trajectory u'=f.
+# Returns a vector of symbolic expressions of the same length as g_sym.
+compute_symbolic_total_time_deriv <- function(g_sym, u_expr, f_expr, t_expr) {
+  g_flat <- as.vector(g_sym)
+  f_flat <- as.vector(f_expr)
+  u_flat <- as.vector(u_expr)
+  do.call(c, lapply(g_flat, function(g_i) {
+    total <- symengine::D(g_i, t_expr)
+    for (k in seq_along(f_flat))
+      total <- total + symengine::D(g_i, u_flat[[k]]) * f_flat[[k]]
+    total
+  }))
+}
+
 lognormal_transform <- function(f_sym){
   D <- length(f_sym)
   u <- do.call(c, lapply(1:D, function(i) symengine::S(paste0("u", i))))

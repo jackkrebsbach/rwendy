@@ -252,3 +252,8 @@ coef.wendy <- function(object, ...) {
 residuals.wendy <- function(object, ...) {
   as.numeric(object$g(object$phat) - object$b)
 }
+
+
+rel_err <- function(x,y){
+  norm(x - y, type = "2") / norm(y, type = "2")
+}
