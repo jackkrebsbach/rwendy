@@ -1,5 +1,4 @@
 
-
 # estimate_u0 <- function(U, f_, J_u, J_t, tt, p, test_function_params){
 #   # Dimension of system
 #   mp1 <- nrow(U)
@@ -115,10 +114,10 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
   lin <- seq(-r, r, length.out = diameter)
   xx <- lin[2:(diameter-1)]
 
-  ph     <- test_function_derivative(psi, radius_c, dt, order = 0)
-  php    <- test_function_derivative(psi, radius_c, dt, order = 1)
-  phpp   <- test_function_derivative(psi, radius_c, dt, order = 2)
-  phppp  <- test_function_derivative(psi, radius_c, dt, order = 3)
+  ph <- test_function_derivative(psi, radius_c, dt, order = 0)
+  php <- test_function_derivative(psi, radius_c, dt, order = 1)
+  phpp <- test_function_derivative(psi, radius_c, dt, order = 2)
+  phppp <- test_function_derivative(psi, radius_c, dt, order = 3)
   phpppp <- test_function_derivative(psi, radius_c, dt, order = 4)
 
   phxx     <- ph(xx)
@@ -135,9 +134,9 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
 
   n_bl <- max(1L, floor(radius_c / 5))
   step <- max(1L, floor(radius_c / n_bl) - 2)
-  l    <- length(phi_rows$phi0)
+  l <- length(phi_rows$phi0)
 
-  # Build V matrices from phi_rows — one matrix per derivative order
+  # Build test function derivative matrices
   make_V <- function(row_vals) {
     V <- matrix(0, nrow = n_bl, ncol = mp1)
     for (i in seq_len(n_bl)) {
@@ -149,7 +148,7 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
     V
   }
 
-  Vs <- lapply(phi_rows, make_V)  # Vs$phi0, Vs$phi1, ..., Vs$phi4
+  Vs <- lapply(phi_rows, make_V)
 
   B        <- Vs$phi0[, 1]
   Q        <- diag(c(0.5, rep(1, mp1 - 2), 0.5) * dt)
@@ -160,29 +159,23 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
   u00      <- solve(crossprod(B), t(B) %*% residual)
 
   # g derivative at t0 — takes named list of phi scalars and f-derivative quantities
-  # Extensible: add higher orders by extending phi_scalars and f_derivs
-  #
-  # g     = φ  f + φ′ u
-  # g′    = φ″ u + 2φ′ ḟ        + φ  f̈  (where ḟ = df/dt total, etc.)
-  #                                        wait — see below, we use Leibniz pattern:
-  # g^(n) = Σ_{k=0}^{n} C(n,k) φ^(k+1) f^(n-k)  +  φ^(n+1) u
-  #         (from product rule on φf, plus derivative of φ′u term)
-  #
-  # So the pattern is purely binomial — store f_derivs as a list and index by order
+  # g^(n) = Σ_{k=0}^{n} C(n,k) φ^(k+1) f^(n-k)  +  φ^(n+1) u (from product rule on φf, plus derivative of φ′u term)
   g_deriv_at_t0 <- function(phi_scalars, f_derivs, u0_vec, order) {
     # phi_scalars[[k+1]] = φ^(k);  f_derivs[[m+1]] = d^m f/dt^m
-    #
     # g = φF + φ'u  =>  g^(n) via Leibniz on each term:
     #   d^n[φF]/dt^n  = Σ_{k=0}^n C(n,k) φ^(k) F^(n-k)
-    #   d^n[φ'u]/dt^n = φ^(n+1)u + Σ_{k=0}^{n-1} C(n,k) φ^(k+1) F^(n-k-1)
-    #                   (using u^(0)=u, u^(m)=F^(m-1) for m≥1)
-    n      <- order
+    #   d^n[φ'u]/dt^n = φ^(n+1)u + Σ_{k=0}^{n-1} C(n,k) φ^(k+1) F^(n-k-1) (using u^(0)=u, u^(m)=F^(m-1) for m≥1)
+    n  <- order
     result <- phi_scalars[[n + 2]] * u0_vec          # φ^(n+1)·u
-    for (k in seq(0, n))                              # d^n[φF]/dt^n
+    for (k in seq(0, n)) {
+      # d^n[φF]/dt^n
       result <- result + choose(n, k) * phi_scalars[[k + 1]] * f_derivs[[n - k + 1]]
-    if (n >= 1)                                       # remaining d^n[φ'u]/dt^n terms
-      for (k in seq(0, n - 1))
+    }
+    if (n >= 1) { # remaining d^n[φ'u]/dt^n terms
+      for (k in seq(0, n - 1)){
         result <- result + choose(n, k) * phi_scalars[[k + 2]] * f_derivs[[n - k]]
+      }
+    }
     result
   }
 
@@ -192,7 +185,6 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
   for (iter in seq_len(3)) {
     input <- c(p, un0, t0)
 
-    # f_derivs[[k+1]] = d^k f/dt^k at t0, evaluated symbolically
     f_derivs <- list(
       as.vector(f_(input)),
       as.vector(dF_dt_(input)),
@@ -209,8 +201,7 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
     gprime0  <- make_g_deriv(1)
     g3prime0 <- make_g_deriv(3)
 
-    un0 <- solve(crossprod(B),
-                 t(B) %*% (residual - dt^2/12 * gprime0 + dt^4/720 * g3prime0))
+    un0 <- solve(crossprod(B), t(B) %*% (residual - dt^2/12 * gprime0 + dt^4/720 * g3prime0))
   }
 
   return(as.numeric(un0))
@@ -227,7 +218,7 @@ estimate_U_star <- function(U, f_, J_u, J_t, tt, p, test_function_params, sigma 
   noise_sd <- mean(noise_sd)   # collapse to scalar if estimate_std returns per-column vector
   R_mat    <- noise_sd^2 * I_D
 
-  # Process noise: small so the filter trusts the ODE model
+  # Process noise: small so the filter trusts the ODE model (maybe based on the covariance estiamtes of p^\star)
   Q_mat <- (noise_sd * 1e-3)^2 * I_D
 
   u0 <- U[1,]
@@ -241,9 +232,9 @@ estimate_U_star <- function(U, f_, J_u, J_t, tt, p, test_function_params, sigma 
   P_filt[1,,] <- (I_D - K0) %*% P0
 
   # Storage for smoother
-  u_pred      <- matrix(0, mp1, D)
-  P_pred      <- array(0,  c(mp1, D, D))
-  F_store     <- array(0,  c(mp1 - 1L, D, D))  # linearised transition Jacobians
+  u_pred <- matrix(0, mp1, D)
+  P_pred <- array(0,  c(mp1, D, D))
+  F_store <- array(0,  c(mp1 - 1L, D, D))  # linearised transition Jacobians
 
   # Forward Pass Extend Kalman Filter 
   for (k in seq_len(mp1 - 1L)) {
@@ -284,9 +275,9 @@ estimate_U_star <- function(U, f_, J_u, J_t, tt, p, test_function_params, sigma 
     Fk   <- F_store[k,,]
 
     # Smoother gain
-    Gk             <- Pk %*% t(Fk) %*% solve(Pp)
-    u_smooth[k, ]  <- u_filt[k, ] + Gk %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
-    P_smooth[k,,]  <- Pk           + Gk %*% (P_smooth[k + 1L,,] - Pp) %*% t(Gk)
+    Gk <- Pk %*% t(Fk) %*% solve(Pp)
+    u_smooth[k, ] <- u_filt[k, ] + Gk %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
+    P_smooth[k,,] <- Pk           + Gk %*% (P_smooth[k + 1L,,] - Pp) %*% t(Gk)
   }
 
   list(
