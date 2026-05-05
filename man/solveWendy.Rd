@@ -6,12 +6,11 @@
 \usage{
 solveWendy(
   f,
-  p0,
   U,
   tt,
-  lip = FALSE,
+  p0 = NULL,
   noise_dist = c("addgaussian", "lognormal"),
-  method = c("IRLS", "MLE", "OLS"),
+  method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"),
   control = NULL
 )
 }
@@ -20,12 +19,12 @@ solveWendy(
 where \code{u} is the state vector, \code{p} is the parameter vector,
 and \code{t} is the time variable.}
 
-\item{p0}{Numeric vector. Initial guess for the parameters. Used in MLE or nonlinear least squares solvers.}
-
 \item{U}{Numeric matrix. Rows represent observed states at time points in \code{tt}.
 Columns correspond to state variables.}
 
 \item{tt}{Numeric vector. Time points corresponding to the rows of \code{U}.}
+
+\item{p0}{Numeric vector or matrix. Initial guess for the parameters for when. Used in MLE or nonlinear least squares solvers.}
 
 \item{method}{String "MLE" | "IRLS" | "OLS" \code{U}.}
 }
