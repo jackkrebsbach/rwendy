@@ -59,12 +59,15 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
   default_control <- list(
     optimize = TRUE,
+    estimate_u0 = TRUE,
+    estimate_U_star = TRUE,
     noise_sd = NA,
     compute_svd = TRUE,
     diag_reg = 10e-10, # Regularization for covariance of the weak residual for stability
     max_iterates = 100, # Maximum number of iterates for WENDy-IRLS
     S = 1,  # Euler-Maclaurin series order expansion
     p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
+    test_fun = "psi", # or phi 𝚿(t; r, p) Piecewise polynomial test function or 𝜱(t; r, n) = exp(η/ [(1 - (t/r)²)]₊) 𝐂^{∞} Bump test function
     test_fun_type = "MSG",  # Multi-scale Global (MSG) or Single-scale Local (SSL)
     radius_params = 2^(0:3), # Radius factors to use in the MSG test functions
     radius_min_time = NULL,  #  User set restriction on test function radius
@@ -128,6 +131,13 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     J_up  <- build_fn(J_up_sym,  vars)  # ∇ₚ∇ᵤf(p,u,t)
     J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
     J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
+
+    dF_sym   <- compute_symbolic_total_time_deriv(f_expr,  u_expr, f_expr, t_expr)
+    d2F_sym  <- compute_symbolic_total_time_deriv(dF_sym,  u_expr, f_expr, t_expr)
+    d3F_sym  <- compute_symbolic_total_time_deriv(d2F_sym, u_expr, f_expr, t_expr)
+    dF_dt_   <- build_fn(dF_sym,  vars)  # d f/dt   (total, along trajectory)
+    d2F_dt2_ <- build_fn(d2F_sym, vars)  # d²f/dt²  (total)
+    d3F_dt3_ <- build_fn(d3F_sym, vars)  # d³f/dt³  (total)
   }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
@@ -271,9 +281,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     res$data <- result$data
   }
   
-  u0hat <- estimate_u0(U, f_, J_u, J_t, tt, res$phat, control)
+  u0hat <- if(control$estimate_u0) estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
+  state <- if(control$estimate_U_star) estimate_U_star(U, f_, J_u, J_t, tt, res$phat, control, sigma = sig)
+
+  # wendy_state_filtered <- estimate_U_star_wendy_filter(U, tt, f, f_, res$V_prime, res$phat, wendy_control = NULL, max_iter = 1, tol = 1e-6)
   
   res$u0hat <- u0hat
+  res$state <- state
+  # res$wendy_filter_data <- wendy_state_filtered
 
   return(res)
 }

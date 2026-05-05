@@ -1,15 +1,15 @@
-# 𝐂^{∞} Bump test function
-# 𝜱(t; r, n) = exp(η/ [(1 - (t/r)²)]₊)
-phi <- function(t, r, eta = 9) {
-  exp(-eta / (1 - (t / r)^2))
-}
-
-# Piecewise polynomial test function -
+# Piecewise polynomial test function 
 # Advantageous because we have access to analytic form of Fourier coefficients
 # 𝛹(t; r, p) = [(1- (t/r)²)]ᵖ₊
 psi <- function(t, r, p = 16){
   (1 - ( t / r)^2)^p
 } 
+
+# 𝐂^{∞} Bump test function
+# 𝜱(t; r, n) = exp(η/ [(1 - (t/r)²)]₊)
+phi <- function(t, r, eta = 9) {
+  exp(-eta / (1 - (t / r)^2))
+}
 
 # Fourier coefficient of 𝛹(t; r, p)  r = dt * radius
 psi_hat <- function(freqs, radius, dt, T, C, p = 16){
@@ -26,7 +26,7 @@ psi_hat <- function(freqs, radius, dt, T, C, p = 16){
     
    psih[1:(n_max + 1)] <- coeffs
    n_neg <- length(psih) - n_max - 1
-  psih[(n_max + 2):length(psih)] <- rev(coeffs[2:(n_neg + 1)])
+   psih[(n_max + 2):length(psih)] <- rev(coeffs[2:(n_neg + 1)])
    
    return(psih)
 }
@@ -105,7 +105,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   D <- ncol(U)
 
   step <- max(1, ceiling((radius_max - radius_min) / num_radii))
-  radii <- seq(radius_min, radius_max - 1, by = 1)
+  radii <- seq(radius_min, radius_max - 1, by = step)
 
   errors <- numeric(length(radii))
 
@@ -114,7 +114,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 
   for (i in seq_along(radii)) {
     radius <- radii[i]
-    V_r <- build_test_function_matrix(phi, tt, radius)
+    V_r <- build_test_function_matrix(psi, tt, radius)
     K <- nrow(V_r)
     GT <- do.call(rbind, lapply(seq_len(D), function(d) sweep(V_r, 2, U[, d], `*`)))
     f_hat_G_imag <- Im(mvfft(t(GT))[IX, ]) 
@@ -156,7 +156,7 @@ build_full_test_function_matrices_ssl <- function(U, tt, test_function_params) {
 }
 
 build_full_test_function_matrices_msg <- function(U, tt, test_function_params, compute_svd = TRUE) {
-  #cat("<< Building test matrices >>\n")
+  # cat("<< Building test matrices >>\n")
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
@@ -185,16 +185,31 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
     min_radius_radii     <- NA
     min_radius_ix        <- NA
   } else {
-    result               <- find_min_radius_int_error(U, tt, min_radius, max_radius,
-                                                      num_radii = 100, sub_sample_rate = 2)
-    min_radius_int_error <- result$radii[result$index]
+    # For Phi
+    # result               <- find_min_radius_int_error(U, tt, min_radius, max_radius,
+    #                                                   num_radii = 100, sub_sample_rate = 2)
+    # min_radius_int_error <- result$radii[result$index]
+    # min_radius_errors    <- result$errors
+    # min_radius_radii     <- result$radii
+    # min_radius_ix        <- result$index
+    
+    # For Psi
+    result <- compute_r_c_hat(
+      U,
+      tt,
+      test_function_params$S,
+      test_function_params$p
+    )
+    min_radius_int_error <- result$rc
     min_radius_errors    <- result$errors
     min_radius_radii     <- result$radii
-    min_radius_ix        <- result$index
+    min_radius_ix        <- result$ix
+
   }
+
   min_radius <- min_radius_int_error
 
-  #cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
+  # cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
 
   radii <- test_function_params$radius_params * min_radius_int_error
 
@@ -204,10 +219,10 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
     radii_filtered <- max_radius
   }
 
-  #cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
+  # cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
 
-  V_ <- build_full_test_function_matrix(phi, tt, radii_filtered, order = 0)
-  V_prime_ <- build_full_test_function_matrix(phi, tt, radii_filtered, order = 1)
+  V_ <- build_full_test_function_matrix(psi, tt, radii_filtered, order = 0)
+  V_prime_ <- build_full_test_function_matrix(psi, tt, radii_filtered, order = 1)
 
   if (!compute_svd) {
     return(list(
@@ -222,7 +237,9 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   }
 
   k_full <- nrow(V_)
-  #cat(sprintf("  K Full: %d\n", k_full))
+
+  # cat(sprintf("  K Full: %d\n", k_full))
+  # cat(sprintf(" Computing SVD"))
 
   SVD <- svd(V_)
   U_svd <- SVD$u
@@ -241,6 +258,7 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   k1 <- find_last(condition_numbers, function(x) {
     x < test_function_params$max_test_fun_condition_number
   })
+
   k2 <- find_last(info_numbers, function(x) {
     x < test_function_params$min_test_fun_info_number
   })
@@ -254,14 +272,14 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   # cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
   # cat(sprintf("  K is: %d\n", K))
 
-  V_final <- Vt[1:K, , drop = FALSE]
+  V_final <- Vt[1:K, , drop = FALSE] * dt
 
   # cat("  Calculating Vprime\n")
 
   U_T <- t(U_svd)[1:K, , drop = FALSE]
   UV <- U_T %*% V_prime_
   inv_s <- 1.0 / singular_values[1:K]
-  V_prime_final <- UV * inv_s
+  V_prime_final <- UV * inv_s * dt
 
   return(list(
     V = V_final,
@@ -462,5 +480,5 @@ compute_r_c_hat <- function(U, tt, S, p){
   
   rc <- radii[ix]
 
-  return(list(rc = rc, ehat = ehat, radii = radii))
+  return(list(rc = rc, ehat = ehat, radii = radii, ix = ix))
 }
