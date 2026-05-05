@@ -253,7 +253,33 @@ residuals.wendy <- function(object, ...) {
   as.numeric(object$g(object$phat) - object$b)
 }
 
-
+#' Calculate the relative error of two vectors
+#'
+#' @param x Vector
+#' @param y Vector
+#' @return Scaler 
+#' @export
 rel_err <- function(x,y){
   norm(x - y, type = "2") / norm(y, type = "2")
+}
+
+
+#' Check for required suggested packages
+#' @keywords internal
+check_suggested_packages <- function() {
+
+  if (!requireNamespace("torch", quietly = TRUE)) {
+    stop("Package 'torch' is required but not installed.\n",
+         "Please install it manually with:\n",
+         "  install.packages('torch')\n",
+         "  torch::install_torch()",
+         call. = FALSE)
+  }
+
+  if (!requireNamespace("symengine", quietly = TRUE)) {
+    stop("Package 'symengine' is required but not installed.\n",
+         "Please install it manually with:\n",
+         "  install.packages('symengine')",
+         call. = FALSE)
+  }
 }
