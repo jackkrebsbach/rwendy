@@ -4,7 +4,7 @@
 \alias{estimate_u0}
 \title{Estimate the initial condition using Euler-MacLaurin Trapezoid correction on the function g(t) := φ(t)f(p,u,t) + φ′(t)u(t)}
 \usage{
-estimate_u0(U, f_, J_u, J_t, tt, p, test_function_params)
+estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_params)
 }
 \description{
 Estimate the initial condition using Euler-MacLaurin Trapezoid correction on the function g(t) := φ(t)f(p,u,t) + φ′(t)u(t)

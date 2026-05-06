@@ -1,3 +1,5 @@
+#' Default control for solveWendy
+#' @export
 default_control <- list(
   optimize = TRUE, # boolean: run IRLS or MLE optimzation for parameters 
   estimate_u0 = FALSE, # Estimate the initial condition
