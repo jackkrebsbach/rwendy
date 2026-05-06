@@ -104,7 +104,9 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 
   D   <- ncol(U)
   Mp1 <- nrow(U)
-
+  T <- tt[Mp1] - tt[1]
+  dt <- mean(diff(tt))
+  
   step  <- max(1, ceiling((radius_max - radius_min) / num_radii))
   radii <- seq(radius_min, radius_max - 1, by = step)
   
@@ -121,7 +123,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
       sweep(V_r, 2, U[, d], `*`)
     }))
 
-    f_hat_G_imag <- Im(mvfft(t(GT))[IX, ])
+    f_hat_G_imag <- dt / sqrt(T) * Im(mvfft(t(GT))[IX, ])
     
     errors[i] <- (4 * pi * IX / Mp1) * sqrt(sum(f_hat_G_imag^2) / K)
     

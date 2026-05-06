@@ -14,7 +14,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.1);
 p0 <- c(0.75, 0.75);
-npoints <- 128
+npoints <- 10
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
