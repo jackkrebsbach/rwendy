@@ -100,25 +100,32 @@ build_full_test_function_matrix <- function(test_function, tt, radii, order = 0)
   do.call(rbind, lapply(radii, function(r) build_test_function_matrix(test_function, tt, r, order)))
 }
 
-find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, sub_sample_rate = 2) {
-  Mp1 <- nrow(U)
-  D <- ncol(U)
+find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, sub_sample_rate = 3) {
 
-  step <- max(1, ceiling((radius_max - radius_min) / num_radii))
+  D   <- ncol(U)
+  Mp1 <- nrow(U)
+  M <- Mp1 - 1
+
+  step  <- max(1, ceiling((radius_max - radius_min) / num_radii))
   radii <- seq(radius_min, radius_max - 1, by = step)
 
-  errors <- numeric(length(radii))
+  errors  <- numeric(length(radii))
 
-  IX <- floor((Mp1 - 1) / sub_sample_rate) + 1
-  T_span <- as.numeric(tail(tt, 1) - tt[1])
+  n_mode <- floor(M / sub_sample_rate) 
+  IX <- n_mode + 1L # 1-based index in R
 
   for (i in seq_along(radii)) {
     radius <- radii[i]
-    V_r <- build_test_function_matrix(psi, tt, radius)
-    K <- nrow(V_r)
-    GT <- do.call(rbind, lapply(seq_len(D), function(d) sweep(V_r, 2, U[, d], `*`)))
-    f_hat_G_imag <- Im(mvfft(t(GT))[IX, ]) 
-    errors[i] <- abs(4 * pi  * floor((Mp1 - 1) / sub_sample_rate) / sqrt(T_span)) * sqrt(sum(f_hat_G_imag^2) / K)
+    V_r <- build_test_function_matrix(phi, tt, radius)
+    K   <- nrow(V_r)
+
+    GT <- do.call(rbind, lapply(seq_len(D), function(d){
+      sweep(V_r[, seq_len(M), drop = FALSE], 2, U[seq_len(M), d], `*`)
+    }))
+
+    f_hat_G_imag <- Im(mvfft(t(GT))[IX, ])
+
+    errors[i] <- (4 * pi * n_mode / M) * sqrt(sum(f_hat_G_imag^2) / K)
   }
 
   log_errors <- log(errors)
@@ -127,22 +134,17 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   return(list(index = ix, errors = errors, radii = radii))
 }
 
-build_full_test_function_matrices_ssl <- function(U, tt, test_function_params) {
+build_full_test_function_matrices_ssl <- function(U, tt, control) {
 
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
-  if (!is.null(test_function_params$fixed_radius)) {
-    radius_c <- test_function_params$fixed_radius
+  if (!is.null(control$fixed_radius)) {
+    radius_c <- control$fixed_radius
     rc_errors <- NULL
     rc_radii <- NULL
   } else {
-    data <- compute_r_c_hat(
-      U,
-      tt,
-      test_function_params$S,
-      test_function_params$p
-    )
+    data <- compute_r_c_hat(U, tt, control$S, control$p)
     radius_c <- data$rc
     rc_errors <- data$ehat
     rc_radii <- data$radii
@@ -155,22 +157,20 @@ build_full_test_function_matrices_ssl <- function(U, tt, test_function_params) {
 
 }
 
-build_full_test_function_matrices_msg <- function(U, tt, test_function_params, compute_svd = TRUE) {
+build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = TRUE) {
   # cat("<< Building test matrices >>\n")
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
-  radii <- test_function_params$radius_params
-  radius_min_time <- test_function_params$radius_min_time
-  radius_max_time <- test_function_params$radius_max_time
+  radii <- control$radius_params
+  radius_min_time <- control$radius_min_time
+  radius_max_time <- control$radius_max_time
+
+  test_fun <- get(control$test_fun)
 
   min_radius <- max(ceiling(radius_min_time / dt), 2)
   max_radius <- floor(radius_max_time / dt)
 
-  # Cap max_radius to what the interior of the data can support before anything
-  # else depends on it.  With n small (e.g. 32), the time-based max_radius can
-  # exceed the geometric maximum, and computing radius_min_max from the uncapped
-  # value lets the fallback push the radius search above what is feasible.
   max_radius_for_interior <- floor((mp1 - 2) / 2)
   if (max_radius > max_radius_for_interior) {
     max_radius <- max_radius_for_interior
@@ -179,39 +179,35 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   # cat(sprintf("  Min radius: %d\n", min_radius))
   # cat(sprintf("  Max radius: %d\n", max_radius))
 
-  if (!is.null(test_function_params$fixed_radius)) {
-    min_radius_int_error <- test_function_params$fixed_radius
+  if (!is.null(control$fixed_radius)) {
+    min_radius_int_error <- control$fixed_radius
     min_radius_errors    <- NA
     min_radius_radii     <- NA
     min_radius_ix        <- NA
   } else {
-    # For Phi
-    # result               <- find_min_radius_int_error(U, tt, min_radius, max_radius,
-    #                                                   num_radii = 100, sub_sample_rate = 2)
-    # min_radius_int_error <- result$radii[result$index]
-    # min_radius_errors    <- result$errors
-    # min_radius_radii     <- result$radii
-    # min_radius_ix        <- result$index
     
-    # For Psi
-    result <- compute_r_c_hat(
-      U,
-      tt,
-      test_function_params$S,
-      test_function_params$p
-    )
-    min_radius_int_error <- result$rc
-    min_radius_errors    <- result$errors
-    min_radius_radii     <- result$radii
-    min_radius_ix        <- result$ix
-
+    if(control$test_fun == "phi"){
+      # For phi
+      result <- find_min_radius_int_error(U, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 2)
+      min_radius_int_error <- result$radii[result$index]
+      min_radius_errors <- result$errors
+      min_radius_radii <- result$radii
+      min_radius_ix <- result$index
+    } else{
+      # For psi
+      result <- compute_r_c_hat(U, tt, control$S, control$p)
+      min_radius_int_error <- result$rc
+      min_radius_errors    <- result$errors
+      min_radius_radii     <- result$radii
+      min_radius_ix        <- result$ix
+    }
   }
 
   min_radius <- min_radius_int_error
 
   # cat(sprintf("  Integral Error min radius: %d\n", min_radius_int_error))
 
-  radii <- test_function_params$radius_params * min_radius_int_error
+  radii <- control$radius_params * min_radius_int_error
 
   radii_filtered <- radii[radii < max_radius]
 
@@ -221,8 +217,8 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
 
   # cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
 
-  V_ <- build_full_test_function_matrix(psi, tt, radii_filtered, order = 0)
-  V_prime_ <- build_full_test_function_matrix(psi, tt, radii_filtered, order = 1)
+  V_ <- build_full_test_function_matrix(test_fun, tt, radii_filtered, order = 0)
+  V_prime_ <- build_full_test_function_matrix(test_fun, tt, radii_filtered, order = 1)
 
   if (!compute_svd) {
     return(list(
@@ -247,7 +243,7 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   Vt <- t(SVD$v)
 
   sum_singular_values <- sum(singular_values)
-  k_max <- min(k_full, mp1, test_function_params$k_max)
+  k_max <- min(k_full, mp1, control$k_max)
 
   info_numbers <- numeric(k_max)
   for (i in 2:k_max) {
@@ -256,11 +252,11 @@ build_full_test_function_matrices_msg <- function(U, tt, test_function_params, c
   condition_numbers <- singular_values[1] / singular_values
 
   k1 <- find_last(condition_numbers, function(x) {
-    x < test_function_params$max_test_fun_condition_number
+    x < control$max_test_fun_condition_number
   })
 
   k2 <- find_last(info_numbers, function(x) {
-    x < test_function_params$min_test_fun_info_number
+    x < control$min_test_fun_info_number
   })
 
   if (k1 == -1) k1 <- .Machine$integer.max
