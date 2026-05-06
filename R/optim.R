@@ -163,7 +163,7 @@ mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
   return(data)
 }
 
-# Output Error forward based nonlinear least squares
+# Output Error forward based nonlinear least squares (NLS)
 output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
   D  <- ncol(U) 
   J  <- length(p0)

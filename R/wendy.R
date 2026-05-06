@@ -6,25 +6,6 @@
 #' @importFrom numbers mGCD bernoulli_numbers
 NULL
 
-#' Check for required suggested packages
-#' @keywords internal
-check_suggested_packages <- function() {
-
-  if (!requireNamespace("torch", quietly = TRUE)) {
-    stop("Package 'torch' is required but not installed.\n",
-         "Please install it manually with:\n",
-         "  install.packages('torch')\n",
-         "  torch::install_torch()",
-         call. = FALSE)
-  }
-
-  if (!requireNamespace("symengine", quietly = TRUE)) {
-    stop("Package 'symengine' is required but not installed.\n",
-         "Please install it manually with:\n",
-         "  install.packages('symengine')",
-         call. = FALSE)
-  }
-}
 
 #' Parameter Estimation for ODE Systems
   #'
@@ -57,33 +38,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
-  default_control <- list(
-    optimize = TRUE,
-    estimate_u0 = TRUE,
-    estimate_U_star = TRUE,
-    noise_sd = NA,
-    compute_svd = TRUE,
-    diag_reg = 10e-10, # Regularization for covariance of the weak residual for stability
-    max_iterates = 100, # Maximum number of iterates for WENDy-IRLS
-    S = 1,  # Euler-Maclaurin series order expansion
-    p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
-    test_fun = "psi", # or phi 𝚿(t; r, p) Piecewise polynomial test function or 𝜱(t; r, n) = exp(η/ [(1 - (t/r)²)]₊) 𝐂^{∞} Bump test function
-    test_fun_type = "MSG",  # Multi-scale Global (MSG) or Single-scale Local (SSL)
-    radius_params = 2^(0:3), # Radius factors to use in the MSG test functions
-    radius_min_time = NULL,  #  User set restriction on test function radius
-    radius_max_time = NULL,  # User set restriction on test function radius
-    k_max = 200, # The max number of test functions
-    max_test_fun_condition_number = 1e4, 
-    min_test_fun_info_number = 0.95,
-    min_number_points = 256,            
-    max_points_interp = 25,           # integer: only interpolate data when number of data points is less than this
-    interpolation_method = NULL,  # "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
-    fixed_radius = NULL,              # integer: fix the base test-function radius, bypassing auto-selection
-    use_interp_uncertainty = TRUE,               # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-    device = torch::torch_device("cpu"), # If GPUs are available use cuda (this speed up is most appropriate for high dimensional data)
-    apply_fn = NULL    # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
-  )
-  
   control <- if(!is.null(control)) modifyList(default_control, control) else default_control
 
   U_orig   <- U
@@ -146,10 +100,10 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     estimate_std(U, k = 6)
   } else {
     # Standard SD estimation unreliable for sparse data; use poly LS residuals
-    degree               <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
+    degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
     degree_interpolation <- paste0("poly_ls_", degree)
     U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control = control)$U
-    df    <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
+    df <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
     sqrt(sum((U_orig - U_fit)^2) / df)
   }
 
@@ -227,23 +181,23 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   }
 
   opt_ctx <- list(
-    system       = if (method != "OE") system else NULL,
-    method       = method,
-    f            = f,
-    U_orig       = U_orig,
-    tt_orig      = tt_orig,
+    system = if (method != "OE") system else NULL,
+    method = method,
+    f = f,
+    U_orig = U_orig,
+    tt_orig = tt_orig,
     U_processed  = U,          # for lognormal: log-transformed + filtered; else same as U_orig
     tt_processed = as.vector(tt),
-    lip          = lip,
+    lip = lip,
     f_orig_expr  = f_orig_expr,
-    u_expr       = u_expr,
+    u_expr = u_expr,
     estimated_sd = estimated_sd,
-    f_           = f_,
-    J_p          = J_p,
-    J            = J,
-    D            = D,
-    noise_dist   = noise_dist,
-    control      = control
+    f_ = f_,
+    J_p = J_p,
+    J = J,
+    D = D,
+    noise_dist  = noise_dist,
+    control = control
   )
 
   class(res) <- "wendy"
@@ -284,11 +238,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   u0hat <- if(control$estimate_u0) estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
   state <- if(control$estimate_U_star) estimate_U_star(U, f_, J_u, J_t, tt, res$phat, control, sigma = sig)
 
-  # wendy_state_filtered <- estimate_U_star_wendy_filter(U, tt, f, f_, res$V_prime, res$phat, wendy_control = NULL, max_iter = 1, tol = 1e-6)
-  
-  res$u0hat <- u0hat
-  res$state <- state
-  # res$wendy_filter_data <- wendy_state_filtered
+  tfp         <- list(S = control$S, p = control$p)
+  state_wendy <- if(control$estimate_U_star) estimate_U_star_wendy(
+    U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, J_u, tt, res$phat, tfp, sigma = sig
+  ) else NULL
+
+  res$u0hat       <- u0hat
+  res$state       <- state
+  res$state_wendy <- state_wendy
 
   return(res)
 }
