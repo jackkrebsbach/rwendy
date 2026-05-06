@@ -38,7 +38,8 @@ U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
 time <- system.time({
-  res <- solveWendy(f, U, tt, method = "IRLS", noise_dist = "lognormal", control = list(test_fun = "psi"))
+  res <- solveWendy(f, U, tt, method = "IRLS", noise_dist = "lognormal",
+    control = list(test_fun = "phi"))
 })
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);

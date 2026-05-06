@@ -108,11 +108,11 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 
   step  <- max(1, ceiling((radius_max - radius_min) / num_radii))
   radii <- seq(radius_min, radius_max - 1, by = step)
-
+  
   errors  <- numeric(length(radii))
 
   n_mode <- floor(M / sub_sample_rate) 
-  IX <- n_mode + 1L # 1-based index in R
+  IX <- n_mode + 1 # 1-based index in R
 
   for (i in seq_along(radii)) {
     radius <- radii[i]
@@ -123,9 +123,11 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
       sweep(V_r[, seq_len(M), drop = FALSE], 2, U[seq_len(M), d], `*`)
     }))
 
-    f_hat_G_imag <- Im(mvfft(t(GT))[IX, ])
 
+    f_hat_G_imag <- Im(mvfft(t(GT))[IX, ])
+    
     errors[i] <- (4 * pi * n_mode / M) * sqrt(sum(f_hat_G_imag^2) / K)
+    
   }
 
   log_errors <- log(errors)
@@ -188,7 +190,7 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
     
     if(control$test_fun == "phi"){
       # For phi
-      result <- find_min_radius_int_error(U, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 2)
+      result <- find_min_radius_int_error(U, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 3)
       min_radius_int_error <- result$radii[result$index]
       min_radius_errors <- result$errors
       min_radius_radii <- result$radii

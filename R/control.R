@@ -16,7 +16,7 @@ default_control <- list(
   k_max = 200, # The max number of test functions
   max_test_fun_condition_number = 1e4, # Truncate SVD of the test function matrices based on the condition number
   min_test_fun_info_number = 0.95, # Cumulative sum of the singular values
-  min_number_points = 256, # integer:           
+  min_number_points = 256, # integer: target number of data points after interpolating
   max_points_interp = 25, # integer: only interpolate data when number of data points is less than this
   interpolation_method = NULL,  # "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
   fixed_radius = NULL, # integer: fix the base test-function radius, bypassing auto-selection
