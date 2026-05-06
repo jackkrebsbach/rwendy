@@ -100,10 +100,10 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     estimate_std(U, k = 6)
   } else {
     # Standard SD estimation unreliable for sparse data; use poly LS residuals
-    degree               <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
+    degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
     degree_interpolation <- paste0("poly_ls_", degree)
     U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control = control)$U
-    df    <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
+    df <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
     sqrt(sum((U_orig - U_fit)^2) / df)
   }
 
@@ -238,8 +238,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   u0hat <- if(control$estimate_u0) estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
   state <- if(control$estimate_U_star) estimate_U_star(U, f_, J_u, J_t, tt, res$phat, control, sigma = sig)
 
-  res$u0hat <- u0hat
-  res$state <- state
+  tfp         <- list(S = control$S, p = control$p)
+  state_wendy <- if(control$estimate_U_star) estimate_U_star_wendy(
+    U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, J_u, tt, res$phat, tfp, sigma = sig
+  ) else NULL
+
+  res$u0hat       <- u0hat
+  res$state       <- state
+  res$state_wendy <- state_wendy
 
   return(res)
 }

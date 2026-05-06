@@ -14,16 +14,16 @@ f <- function(u, p, t) {
 p_star <- c(1, 1);
 u0 <- c(0.1);
 p0 <- c(0.75, 0.75);
-npoints <- 32
+npoints <- 128
 t_span <- c(0.0, 10);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-# set.seed(86753)
+set.seed(8675309)
 
-nr <- 0.25
+nr <- 0.05
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -37,7 +37,9 @@ noise <- sol[, 2] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 U <- matrix(c(noise), ncol = 1)
 tt <- sol[, 1, drop = FALSE]
 
-res <- solveWendy(f, U, tt, method = "IRLS", noise_dist = "lognormal")
+time <- system.time({
+  res <- solveWendy(f, U, tt, method = "IRLS", noise_dist = "lognormal", control = list(test_fun = "psi"))
+})
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = 256);
 sol_hat <- deSolve::ode(u0, t_eval2, modelODE, res$phat)
@@ -56,7 +58,6 @@ for(i in seq_along(res$wendy_problems)){
 
 lines(t_eval2, sol_hat[,2], cex = 0.25, col = "#1f77b4")
 lines(t_eval_dense, sol_true[,2], cex = 0.5, col = "red")
-points(tt, exp(res$state$U_star), cex = 1, xlab = "Time", ylab=  "u₁", col="green")
 
 title(paste0("nr: ", nr,
             "\n n: ", npoints,
@@ -73,7 +74,4 @@ legend(
   cex = 0.8
 )
 
-cat(rel_err(res$phat, p_star))
-cat(rel_err(res$u0hat, u0), "\n")
-cat(rel_err(res$state$U_star[1, ], u0), "\n")
-cat(rel_err(U[1, ], u0))
+cat(sprintf("Relative error: %.2e | Walltime: %.4f", rel_err(res$phat, p_star), time[1]))
