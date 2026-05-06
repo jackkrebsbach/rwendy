@@ -8,7 +8,7 @@ default_control <- list(
   max_iterates = 100, # Maximum number of iterates for WENDy-IRLS
   test_fun_type = "MSG",  # Multi-scale Global (MSG) or Single-scale Local (SSL)
   radius_params = 2^(0:3), # Radius factors to use in the MSG test functions
-  test_fun = "psi", # psi 𝚿(t; r, p) Piecewise polynomial test function or phi 𝜱(t; r, n)  𝐂^{∞} Bump test function
+  test_fun = "phi", # phi 𝜱(t; r, n)  𝐂^{∞} Bump test function or psi 𝚿(t; r, p) Piecewise polynomial test function 
   S = 1,  # Euler-Maclaurin series order expansion
   p = 16, # parameters in 𝚿(t; r, p) Piecewise polynomial test function
   radius_min_time = NULL,  #  User set restriction on test function radius
