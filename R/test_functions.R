@@ -100,19 +100,17 @@ build_full_test_function_matrix <- function(test_function, tt, radii, order = 0)
   do.call(rbind, lapply(radii, function(r) build_test_function_matrix(test_function, tt, r, order)))
 }
 
-find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, sub_sample_rate = 3) {
+find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, sub_sample_rate = 2) {
 
   D   <- ncol(U)
   Mp1 <- nrow(U)
-  M <- Mp1 - 1
 
   step  <- max(1, ceiling((radius_max - radius_min) / num_radii))
   radii <- seq(radius_min, radius_max - 1, by = step)
   
   errors  <- numeric(length(radii))
 
-  n_mode <- floor(M / sub_sample_rate) 
-  IX <- n_mode + 1 # 1-based index in R
+  IX <- floor(Mp1 / sub_sample_rate) 
 
   for (i in seq_along(radii)) {
     radius <- radii[i]
@@ -120,13 +118,12 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
     K   <- nrow(V_r)
 
     GT <- do.call(rbind, lapply(seq_len(D), function(d){
-      sweep(V_r[, seq_len(M), drop = FALSE], 2, U[seq_len(M), d], `*`)
+      sweep(V_r, 2, U[, d], `*`)
     }))
-
 
     f_hat_G_imag <- Im(mvfft(t(GT))[IX, ])
     
-    errors[i] <- (4 * pi * n_mode / M) * sqrt(sum(f_hat_G_imag^2) / K)
+    errors[i] <- (4 * pi * IX / Mp1) * sqrt(sum(f_hat_G_imag^2) / K)
     
   }
 
@@ -183,20 +180,19 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
 
   if (!is.null(control$fixed_radius)) {
     min_radius_int_error <- control$fixed_radius
-    min_radius_errors    <- NA
-    min_radius_radii     <- NA
-    min_radius_ix        <- NA
+    min_radius_errors <- NA
+    min_radius_radii <- NA
+    min_radius_ix <- NA
   } else {
-    
     if(control$test_fun == "phi"){
-      # For phi
-      result <- find_min_radius_int_error(U, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 3)
+      # 𝜱
+      result <- find_min_radius_int_error(U, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 2)
       min_radius_int_error <- result$radii[result$index]
       min_radius_errors <- result$errors
       min_radius_radii <- result$radii
       min_radius_ix <- result$index
-    } else{
-      # For psi
+    } else {
+      # 𝚿
       result <- compute_r_c_hat(U, tt, control$S, control$p)
       min_radius_int_error <- result$rc
       min_radius_errors    <- result$errors
