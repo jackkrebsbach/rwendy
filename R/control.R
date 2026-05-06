@@ -21,6 +21,6 @@ default_control <- list(
   interpolation_method = NULL,  # "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
   fixed_radius = NULL, # integer: fix the base test-function radius, bypassing auto-selection
   use_interp_uncertainty = TRUE, # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-  device = torch::torch_device("cpu"), # If GPUs are available use cuda (this speed up is most appropriate for high dimensional data)
+  device = "cpu", # If GPUs are available use "cuda"; resolved to a torch device lazily inside solveWendy
   apply_fn = NULL # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
 )

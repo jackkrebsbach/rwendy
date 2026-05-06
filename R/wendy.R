@@ -49,7 +49,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     tt <- data$tt
   }
 
-  device  <- control$device
+  device  <- if (is.character(control$device)) torch::torch_device(control$device) else control$device
   methods <- control$interpolation_method
 
   # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
