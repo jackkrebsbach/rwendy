@@ -238,14 +238,15 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   u0hat <- if(control$estimate_u0) estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
   state <- if(control$estimate_U_star) estimate_U_star(U, f_, J_u, J_t, tt, res$phat, control, sigma = sig)
 
-  tfp         <- list(S = control$S, p = control$p)
-  state_wendy <- if(control$estimate_U_star) estimate_U_star_wendy(
-    U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, J_u, tt, res$phat, tfp, sigma = sig
-  ) else NULL
+  # tfp <- list(S = control$S, p = control$p)
+  # state_wendy <- if(control$estimate_U_star) estimate_U_star_wendy(
+  #   U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, J_u, tt, res$phat, tfp, sigma = sig
+  # ) else NULL
 
   res$u0hat       <- u0hat
   res$state       <- state
-  res$state_wendy <- state_wendy
+
+  # res$state_wendy <- state_wendy
 
   return(res)
 }

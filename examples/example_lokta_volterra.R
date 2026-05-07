@@ -11,18 +11,18 @@ f <- function(u, p, t) {
   c(u1, u2)
 }
 
-p_star <- c(3, -1, -6, 1);
-u0 <- c(1,1);
-p0 <- c(2, -0.1, -1, 0.25);
+p_star <- c(1, -0.1, -1.5, 0.075)
+u0 <- c(10,5)
+p0 <- c(2, -0.1, -1, 0.25)
 npoints <- 512
-t_span <- c(0.005, 5);
+t_span <- c(0, 20)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.1
+nr <- 0.15
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 noise <- matrix(
@@ -32,8 +32,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "SSL"))
-
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "MSG"))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 

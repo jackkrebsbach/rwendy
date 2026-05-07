@@ -109,6 +109,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   
   step  <- max(1, ceiling((radius_max - radius_min) / num_radii))
   radii <- seq(radius_min, radius_max - 1, by = step)
+  # radii <- radii[1:min(50, length(radii))] 
   
   errors  <- numeric(length(radii))
 
@@ -170,11 +171,11 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   test_fun <- get(control$test_fun)
 
   min_radius <- max(ceiling(radius_min_time / dt), 2)
-  max_radius <- floor(radius_max_time / dt)
+  max_radius <- floor(radius_max_time / dt / 2)
 
   max_radius_for_interior <- floor((mp1 - 2) / 2)
   if (max_radius > max_radius_for_interior) {
-    max_radius <- max_radius_for_interior
+    max_radius <- floor(max_radius_for_interior / 2)
   }
 
   # cat(sprintf("  Min radius: %d\n", min_radius))

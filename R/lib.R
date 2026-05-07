@@ -253,6 +253,19 @@ residuals.wendy <- function(object, ...) {
   as.numeric(object$g(object$phat) - object$b)
 }
 
+#' Extract corrected residuals from a wendy object
+#'
+#' @param object A wendy object
+#' @param ... Additional arguments (ignored)
+#' @return Numeric vector of weak residuals
+#' @export
+residuals_weighted <- function(object, ...) {
+  S_mat <- as.array(object$S(object$phat)$contiguous())
+  r     <- as.array((object$b - object$g(object$phat))$contiguous())
+  RT    <- t(chol(S_mat))
+  as.numeric(forwardsolve(RT, r))
+}
+
 #' Calculate the relative error of two vectors
 #'
 #' @param x Vector
