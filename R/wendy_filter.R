@@ -178,7 +178,7 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
     result
   }
 
-  un0 <- u00
+  un0 <- U[1,]
   t0  <- tt[1]
 
   for (iter in seq_len(3)) {
@@ -370,7 +370,7 @@ estimate_U_star <- function(U, f_, J_u, J_t, tt, p, test_function_params, sigma 
   R_mat    <- noise_sd^2 * I_D
 
   # Process noise: small so the filter trusts the ODE model (maybe based on the covariance estiamtes of p^\star)
-  Q_mat <- (noise_sd * 1e-3)^2 * I_D
+  Q_mat <- 0 * I_D
 
   u0 <- U[1,]
   P0 <- noise_sd^2 * I_D
@@ -393,10 +393,10 @@ estimate_U_star <- function(U, f_, J_u, J_t, tt, p, test_function_params, sigma 
     uk   <- u_filt[k, ]
 
     # RK4 state prediction
-    k1 <- f_(c(p, uk,                           tt[k]               ))
-    k2 <- f_(c(p, uk + 0.5 * dt_k * k1,        tt[k] + 0.5 * dt_k ))
-    k3 <- f_(c(p, uk + 0.5 * dt_k * k2,        tt[k] + 0.5 * dt_k ))
-    k4 <- f_(c(p, uk +       dt_k * k3,        tt[k] +       dt_k ))
+    k1 <- as.vector(f_(matrix(c(p, uk,                       tt[k]           ), ncol = 1)))
+    k2 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k1,        tt[k]+0.5*dt_k  ), ncol = 1)))
+    k3 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k2,        tt[k]+0.5*dt_k  ), ncol = 1)))
+    k4 <- as.vector(f_(matrix(c(p, uk +     dt_k*k3,        tt[k]+    dt_k  ), ncol = 1)))
     u_pred[k + 1L, ] <- uk + (dt_k / 6) * (k1 + 2*k2 + 2*k3 + k4)
 
     # Linearised Covariance Propogation: F ≈ I + dt * J_u  (first-order)
@@ -411,7 +411,7 @@ estimate_U_star <- function(U, f_, J_u, J_t, tt, p, test_function_params, sigma 
     S_k              <- Pk_pred + R_mat          # innovation covariance (H = I)
     Kk               <- Pk_pred %*% solve(S_k)
     u_filt[k + 1L, ] <- u_pred[k + 1L, ] + Kk %*% (U[k + 1L, ] - u_pred[k + 1L, ])
-    P_filt[k + 1L,,] <- (I_D - Kk) %*% Pk_pred
+    P_filt[k + 1L,,] <- (I_D - Kk) %*% Pk_pred %*% t(I_D - Kk) + Kk %*% R_mat %*% t(Kk)
   }
 
   # Backward pass RTS smoother
@@ -426,7 +426,7 @@ estimate_U_star <- function(U, f_, J_u, J_t, tt, p, test_function_params, sigma 
     Fk   <- F_store[k,,]
 
     # Smoother gain
-    Gk <- Pk %*% t(Fk) %*% solve(Pp)
+    Gk <- Pk %*% t(Fk) %*% solve(Pp + 1e-10 * I_D)
     u_smooth[k, ] <- u_filt[k, ] + Gk %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
     P_smooth[k,,] <- Pk           + Gk %*% (P_smooth[k + 1L,,] - Pp) %*% t(Gk)
   }

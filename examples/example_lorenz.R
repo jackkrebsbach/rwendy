@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 256 
+npoints <- 32
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -39,11 +39,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS",
-                  control = list(estimate_u0 = TRUE,
-                                 estimate_U_star = TRUE
-                                )
-                    )
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0 = FALSE, estimate_U_star = FALSE))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 
@@ -52,20 +48,31 @@ plot_ly(
  y = sol[, 3],
  z = sol[, 4],
  type = 'scatter3d',
- mode = 'lines',
-#  marker = list(color = 'blue', size = 3),
+ mode = 'marker',
+ marker = list(color = 'blue', size = 3),
  name = "data"
 ) |>
  add_trace(
    x = sol_hat[, 1],
    y = sol_hat[, 2],
    z = sol_hat[, 3],
-   mode = 'lines',
-  #  marker = list(color = 'red', size = 3),
+   mode = 'marker',
+   marker = list(color = 'red', size = 3),
    name = "fit"
  )
 
 cat(rel_err(res$phat, p_star))
-cat(rel_err(res$u0hat, u0), "\n")
-cat(rel_err(res$state$U_star[1, ], u0), "\n")
-cat(rel_err(U[1,], u0))
+
+# cat(rel_err(res$u0hat, u0), "\n")
+# cat(rel_err(res$state$U_star[1, ], u0), "\n")
+# cat(rel_err(U[1,], u0))
+
+# res2 <- solveWendy(f, res$state$U_star, tt, method = "OLS")
+
+# cat(sprintf("\np̂₁ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
+# cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res$phat, p_star)))
+
+# cat(sprintf("\np̂₂ = [%s]", paste(sprintf("%.3f", res2$phat), collapse = ", ")))
+# cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res2$phat, p_star)))
+
+# cat(sprintf("\np* = [%s]", paste(sprintf("%.3f", p_star), collapse = ", ")))

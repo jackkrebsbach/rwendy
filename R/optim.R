@@ -207,7 +207,7 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
   costFn <- function(theta) {
     out <- modelRun(theta)
     if (is.null(out)) {
-      bad_model      <- obs
+      bad_model <- obs
       bad_model[, -1] <- 1e6
       return(FME::modCost(model = bad_model, obs = obs))  
     }
@@ -327,14 +327,14 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   noise_dist   <- ctx$noise_dist
   control      <- ctx$control
 
-  g      <- system$g
-  b      <- system$b
-  G      <- system$G
-  L      <- system$L
-  W      <- system$W
-  Jp_r   <- system$Jp_r
-  S      <- system$S
-  wnll   <- system$wnll
+  g <- system$g
+  b <- system$b
+  G <- system$G
+  L <- system$L
+  W <- system$W
+  Jp_r <- system$Jp_r
+  S <- system$S
+  wnll <- system$wnll
   J_wnll <- system$J_wnll
   H_wnll <- system$H_wnll
 
