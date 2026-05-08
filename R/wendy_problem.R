@@ -35,7 +35,7 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   }
   K   <- nrow(tf$V)
 
-  V  <- torch::torch_tensor(tf$V,       dtype = torch::torch_float64(), device = device)
+  V  <- torch::torch_tensor(tf$V, dtype = torch::torch_float64(), device = device)
   Vp <- torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device)
 
   F_ <- build_F(U, tt, f_, J, device)

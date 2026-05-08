@@ -1,3 +1,67 @@
+# GLS-Gauss-Newton joint state and paramater estimate 
+gls_gn <- function(p, U, tt, f_, V, V_prime, S, max_iter = 100, tol = 1e-8, lambda = 1e-8){
+  mp1 <- nrow(U)
+  D <- ncol(U)
+
+  Vp <- as.array(V_prime$contiguous())
+  V <- as.array(V$contiguous())
+
+  u0_vec <- as.vector(U)
+
+  nu <- length(u0_vec)
+  np <- length(p)
+
+  # Matrix valued function on RHS
+  F_ <- function(U, p){
+      mp1 <- nrow(U)
+      J <- length(p)
+      tU <- t(U)
+      ttt   <- matrix(tt, nrow = 1L)
+      p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+      input <- rbind(p_mat, tU, ttt)
+      f_(input)
+  }
+
+  root_target <- function(U, p){
+    U <- matrix(U, ncol = D)
+    as.vector(-Vp %*% U -  V %*% F_(U, p))
+  }
+
+  joint_target <- function(theta) {
+    root_target(theta[seq_len(nu)], theta[nu + seq_len(np)])
+  }
+
+  theta_w <- c(u0_vec, p)
+  G_w <- joint_target(theta_w)
+  J_w <- jacobian(joint_target, theta_w)
+
+  S_inv  <- solve(as.array(S(p)$contiguous()))
+
+  for (iter in seq_len(max_iter)) {
+    p_cur  <- theta_w[nu + seq_len(np)]
+
+    JtSiJ <- t(J_w) %*% S_inv %*% J_w
+    delta  <- solve(JtSiJ + lambda * diag(length(theta_w)), t(J_w) %*% S_inv %*% G_w)
+    theta_new <- theta_w - delta
+
+    G_new <- joint_target(theta_new)
+    s <- -delta; y <- G_new - G_w
+    J_w <- J_w + ((y - J_w %*% s) %*% t(s)) / as.numeric(t(s) %*% s)
+
+    theta_w <- theta_new
+    G_w     <- G_new
+
+    if (max(abs(delta)) < tol) break
+  }
+
+  u_w  <- theta_w[seq_len(nu)]
+  p_w  <- theta_w[nu + seq_len(np)]
+  Un_w <- matrix(u_w, ncol = D)
+  
+  list(Uhat = Un_w, p = p_w)
+
+}
+
 # Iterative (weak) re-weighted least squares
 irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- nrow(G)
@@ -26,12 +90,20 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     b_ <- forwardsolve(RT, b)
     p <- lm.fit(G_, b_)$coefficients
 
-    relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
+    denom <- sqrt(sum(pn1^2))
+    relative_change <- if (denom == 0 || !is.finite(denom)) Inf else sqrt(sum((p - pn1)^2)) / denom
+    if (!is.finite(relative_change)) relative_change <- Inf
 
     residuals <- b_ - G_ %*% p
+    residuals_clean <- residuals[is.finite(residuals)]
 
-    sw_test <- shapiro.test(residuals)
-    p_val <- sw_test$p.value
+    if (length(residuals_clean) < 3) {
+      p_val <- 0
+    } else {
+      sw_test <- shapiro.test(residuals_clean)
+      p_val <- sw_test$p.value
+      if (is.na(p_val)) p_val <- 0
+    }
     sw_pvalues[n] <- p_val
 
     if(n >= n0){
@@ -93,7 +165,9 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
 
     p <- nls.lm(p, lower = NULL, upper = NULL, function(p){weighted_residual(p, RT)}, function(p){weighted_residual_jacobian(p, RT)})$par
 
-    relative_change <- sqrt(sum((p - pn1)^2)) / sqrt(sum(pn1^2))
+    denom <- sqrt(sum(pn1^2))
+    relative_change <- if (denom == 0 || !is.finite(denom)) Inf else sqrt(sum((p - pn1)^2)) / denom
+    if (!is.finite(relative_change)) relative_change <- Inf
 
     residuals <- weighted_residual(p, RT)
 
@@ -322,6 +396,14 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   estimated_sd <- ctx$estimated_sd
   f_           <- ctx$f_
   J_p          <- ctx$J_p
+  J_u          <- ctx$J_u
+  J_t          <- ctx$J_t
+  dF_dt_       <- ctx$dF_dt_
+  d2F_dt2_     <- ctx$d2F_dt2_
+  d3F_dt3_     <- ctx$d3F_dt3_
+  sig          <- ctx$sig
+  V            <- ctx$V
+  V_prime      <- ctx$V_prime
   J            <- ctx$J
   D            <- ctx$D
   noise_dist   <- ctx$noise_dist
@@ -363,6 +445,19 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   }
 
   data <- switch(method,
+    # ROOT using Gauss-Newton and ETS Smoother 
+    ROOT = if (lip) {
+      if (is.null(p0)) {
+        p0 <- ols(G_cont, b_cont, L)$p
+      }
+      p <- irls(G_cont, b_cont, L, p0 = p0, W = W, max_its = control$max_iterates)$p
+      smooth <- wendy_erts(U, f_, J_u, J_t, tt, p, control, dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_, sigma = sig)
+      gls_gn(p, smooth$U_star, tt, f_, V, V_prime, S)
+    } else {
+      p <- nirls(g, b_cont, L, Jp_r, p0 = p0, W = W, max_its = control$max_iterates)$p
+      smooth <- wendy_erts(U, f_, J_u, J_t, tt, p, control, dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_, sigma = sig)
+      gls_gn(p, smooth$U_star, tt, f_, V, V_prime, S)
+    },
     # Ordinary Least Squares on the weak residual
     OLS = if (lip) {
       ols(G_cont, b_cont, L)

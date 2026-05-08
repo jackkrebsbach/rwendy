@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 32
+npoints <- 256
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -25,7 +25,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-12)
 
-nr <- 0.05
+nr <- 0.15
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
@@ -39,7 +39,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0 = FALSE, estimate_U_star = FALSE))
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0 = FALSE, estimate_U_star = TRUE))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 
@@ -67,12 +67,12 @@ cat(rel_err(res$phat, p_star))
 # cat(rel_err(res$state$U_star[1, ], u0), "\n")
 # cat(rel_err(U[1,], u0))
 
-# res2 <- solveWendy(f, res$state$U_star, tt, method = "OLS")
+res2 <- solveWendy(f, U, tt, method = "ROOT")
 
-# cat(sprintf("\np̂₁ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
-# cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res$phat, p_star)))
+cat(sprintf("\np̂₁ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
+cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res$phat, p_star)))
 
-# cat(sprintf("\np̂₂ = [%s]", paste(sprintf("%.3f", res2$phat), collapse = ", ")))
-# cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res2$phat, p_star)))
+cat(sprintf("\np̂₂ = [%s]", paste(sprintf("%.3f", res2$phat), collapse = ", ")))
+cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res2$phat, p_star)))
 
-# cat(sprintf("\np* = [%s]", paste(sprintf("%.3f", p_star), collapse = ", ")))
+cat(sprintf("\np* = [%s]", paste(sprintf("%.3f", p_star), collapse = ", ")))

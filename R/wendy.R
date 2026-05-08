@@ -1,3 +1,4 @@
+#' @importFrom numDeriv jacobian
 #' @importFrom stats quantile median predict fft lm.fit shapiro.test
 #' @importFrom utils modifyList tail
 #' @importFrom trust trust
@@ -8,30 +9,32 @@ NULL
 
 
 #' Parameter Estimation for ODE Systems
-  #'
-#' This function estimates parameters of a system of ordinary differential equations (ODEs)
-#' The method leverages symbolic derivatives of the ODE right-hand side and a
+#'
+#' Estimates parameters of a system of ordinary differential equations (ODEs).
+#' Leverages symbolic derivatives of the ODE right-hand side and a
 #' trust-region optimization algorithm.
 #'
 #' @param f A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 #'   where \code{u} is the state vector, \code{p} is the parameter vector,
-#'   and \code{t} is the time variable. 
-#' @param p0 Numeric vector or matrix. Initial guess for the parameters for when. Used in MLE or nonlinear least squares solvers.
-#' @param U Numeric matrix. Rows represent observed states at time points in \code{tt}.
-#'   Columns correspond to state variables.
-#' @param tt Numeric vector. Time points corresponding to the rows of \code{U}.
-#' @param method String "MLE" | "IRLS" | "OLS" \code{U}.
+#'   and \code{t} is the time variable.
+#' @param p0 Numeric vector or matrix. Initial parameter guess. Used by MLE,
+#'   nonlinear least squares, and OE solvers; computed automatically when \code{NULL}.
+#' @param U Numeric matrix. Rows are observed states at the time points in \code{tt};
+#'   columns are state variables.
+#' @param tt Numeric vector. Time points corresponding to rows of \code{U}.
+#' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
+#' @param method One of \code{"ROOT"}, \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
+#'   \code{"OE"}, or \code{"HYBRID"}.
+#' @param control Named list of control parameters; merged with \code{default_control}.
 #'
 #' @details
-#' The procedure:
 #' \itemize{
 #'   \item Builds symbolic expressions and derivatives of the ODE system (\eqn{f}, Jacobians, Hessians).
 #'   \item Constructs weak negative log-likelihood and functionals based on observed (noisy) data.
 #' }
 #'
-#'
 #' @export
-solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
+solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("ROOT", "IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
 
   check_suggested_packages()
 
@@ -194,6 +197,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     estimated_sd = estimated_sd,
     f_ = f_,
     J_p = J_p,
+    J_u = if (method != "OE") J_u else NULL,
+    J_t = if (method != "OE") J_t else NULL,
+    dF_dt_   = if (method != "OE") dF_dt_   else NULL,
+    d2F_dt2_ = if (method != "OE") d2F_dt2_ else NULL,
+    d3F_dt3_ = if (method != "OE") d3F_dt3_ else NULL,
+    sig = if (method != "OE") sig else NULL,
+    V       = if (method != "OE") p1$V   else NULL,
+    V_prime = if (method != "OE") p1$Vp  else NULL,
     J = J,
     D = D,
     noise_dist  = noise_dist,
@@ -233,20 +244,16 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     result  <- .run_wendy_optimization(opt_ctx, p0_vec)
     res$phat <- result$p
     res$data <- result$data
+    res$Uhat <- result$data$Uhat
   }
   
-  u0hat <- if(control$estimate_u0) estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
-  state <- if(control$estimate_U_star) estimate_U_star(U, f_, J_u, J_t, tt, res$phat, control, sigma = sig)
-
-  # tfp <- list(S = control$S, p = control$p)
-  # state_wendy <- if(control$estimate_U_star) estimate_U_star_wendy(
-  #   U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, J_u, tt, res$phat, tfp, sigma = sig
-  # ) else NULL
+  u0hat <- if(control$estimate_u0 && method != "OE") estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
+  state <- if(control$estimate_U_star && method != "OE") wendy_erts(U, f_, J_u, J_t, tt, res$phat, control,
+                                                       dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_,
+                                                       sigma = sig) else NULL
 
   res$u0hat       <- u0hat
   res$state       <- state
-
-  # res$state_wendy <- state_wendy
 
   return(res)
 }
