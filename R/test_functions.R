@@ -238,6 +238,8 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   # cat(sprintf("  K Full: %d\n", k_full))
   # cat(sprintf(" Computing SVD"))
 
+  # cat("Computing SVD")
+
   SVD <- svd(V_)
   U_svd <- SVD$u
   singular_values <- SVD$d

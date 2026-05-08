@@ -10,7 +10,7 @@ solveWendy(
   tt,
   p0 = NULL,
   noise_dist = c("addgaussian", "lognormal"),
-  method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"),
+  method = c("ROOT", "IRLS", "MLE", "OLS", "OE", "HYBRID"),
   control = NULL
 )
 }
@@ -19,22 +19,27 @@ solveWendy(
 where \code{u} is the state vector, \code{p} is the parameter vector,
 and \code{t} is the time variable.}
 
-\item{U}{Numeric matrix. Rows represent observed states at time points in \code{tt}.
-Columns correspond to state variables.}
+\item{U}{Numeric matrix. Rows are observed states at the time points in \code{tt};
+columns are state variables.}
 
-\item{tt}{Numeric vector. Time points corresponding to the rows of \code{U}.}
+\item{tt}{Numeric vector. Time points corresponding to rows of \code{U}.}
 
-\item{p0}{Numeric vector or matrix. Initial guess for the parameters for when. Used in MLE or nonlinear least squares solvers.}
+\item{p0}{Numeric vector or matrix. Initial parameter guess. Used by MLE,
+nonlinear least squares, and OE solvers; computed automatically when \code{NULL}.}
 
-\item{method}{String "MLE" | "IRLS" | "OLS" \code{U}.}
+\item{noise_dist}{One of \code{"addgaussian"} (default) or \code{"lognormal"}.}
+
+\item{method}{One of \code{"ROOT"}, \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
+\code{"OE"}, or \code{"HYBRID"}.}
+
+\item{control}{Named list of control parameters; merged with \code{default_control}.}
 }
 \description{
-This function estimates parameters of a system of ordinary differential equations (ODEs)
-The method leverages symbolic derivatives of the ODE right-hand side and a
+Estimates parameters of a system of ordinary differential equations (ODEs).
+Leverages symbolic derivatives of the ODE right-hand side and a
 trust-region optimization algorithm.
 }
 \details{
-The procedure:
 \itemize{
   \item Builds symbolic expressions and derivatives of the ODE system (\eqn{f}, Jacobians, Hessians).
   \item Constructs weak negative log-likelihood and functionals based on observed (noisy) data.
