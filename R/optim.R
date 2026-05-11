@@ -1,52 +1,67 @@
-# GLS-Gauss-Newton joint state and paramater estimate 
-gls_gn <- function(p, U, tt, f_, V, V_prime, S, max_iter = 100, tol = 1e-8, lambda = 1e-8){
+# Gauss-Newton joint state and parameter estimate
+gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10, lambda = 1e-8,
+               alpha = 0){
   mp1 <- nrow(U)
   D <- ncol(U)
 
   Vp <- as.array(V_prime$contiguous())
-  V <- as.array(V$contiguous())
+  V  <- as.array(V$contiguous())
 
   u0_vec <- as.vector(U)
 
   nu <- length(u0_vec)
   np <- length(p)
 
-  # Matrix valued function on RHS
+  R_reg <- diag(c(rep(alpha, nu), rep(0, np)))
+
   F_ <- function(U, p){
-      mp1 <- nrow(U)
-      J <- length(p)
-      tU <- t(U)
-      ttt   <- matrix(tt, nrow = 1L)
-      p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-      input <- rbind(p_mat, tU, ttt)
-      f_(input)
+    mp1   <- nrow(U)
+    J     <- length(p)
+    tU    <- t(U)
+    ttt   <- matrix(tt, nrow = 1L)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    f_(rbind(p_mat, tU, ttt))
   }
 
   root_target <- function(U, p){
     U <- matrix(U, ncol = D)
-    as.vector(-Vp %*% U -  V %*% F_(U, p))
+    as.vector(-Vp %*% U - V %*% F_(U, p))
   }
 
   joint_target <- function(theta) {
     root_target(theta[seq_len(nu)], theta[nu + seq_len(np)])
   }
 
-  theta_w <- c(u0_vec, p)
-  G_w <- joint_target(theta_w)
-  J_w <- jacobian(joint_target, theta_w)
+  solve_pd <- function(A, b, lam) {
+    n <- nrow(A)
+    for (i in seq_len(10L)) {
+      result <- tryCatch(solve(A + lam * diag(n), b), error = function(e) NULL)
+      if (!is.null(result)) return(result)
+      lam <- lam * 10
+    }
+    MASS::ginv(A) %*% b
+  }
 
-  S_inv  <- solve(as.array(S(p)$contiguous()))
+  theta_w <- c(u0_vec, p)
+  G_w     <- joint_target(theta_w)
+  J_w     <- jacobian(joint_target, theta_w)
 
   for (iter in seq_len(max_iter)) {
-    p_cur  <- theta_w[nu + seq_len(np)]
+    u_cur        <- theta_w[seq_len(nu)]
+    penalty_grad <- c(alpha * (u_cur - u0_vec), rep(0, np))
 
-    JtSiJ <- t(J_w) %*% S_inv %*% J_w
-    delta  <- solve(JtSiJ + lambda * diag(length(theta_w)), t(J_w) %*% S_inv %*% G_w)
+    JtJ   <- t(J_w) %*% J_w + R_reg
+    rhs   <- t(J_w) %*% G_w + penalty_grad
+    delta <- solve_pd(JtJ, rhs, lambda)
     theta_new <- theta_w - delta
+
+    if (anyNA(delta) || !all(is.finite(delta))) break
 
     G_new <- joint_target(theta_new)
     s <- -delta; y <- G_new - G_w
-    J_w <- J_w + ((y - J_w %*% s) %*% t(s)) / as.numeric(t(s) %*% s)
+    ss <- as.numeric(t(s) %*% s)
+    if (ss > 1e-14)
+      J_w <- J_w + ((y - J_w %*% s) %*% t(s)) / ss
 
     theta_w <- theta_new
     G_w     <- G_new
@@ -56,10 +71,83 @@ gls_gn <- function(p, U, tt, f_, V, V_prime, S, max_iter = 100, tol = 1e-8, lamb
 
   u_w  <- theta_w[seq_len(nu)]
   p_w  <- theta_w[nu + seq_len(np)]
-  Un_w <- matrix(u_w, ncol = D)
-  
-  list(Uhat = Un_w, p = p_w)
 
+  list(Uhat = matrix(u_w, ncol = D), p = p_w)
+}
+
+# Joint state-parameter Ensemble Kalman Filter (stochastic EnKF).
+# Augmented state: [u(t); p]. Parameters are treated as constant between steps.
+# Returns list(U_star, p, p_ens) — smoothed state mean, parameter mean, full parameter ensemble.
+wendy_enkf <- function(p, U, tt, f_, sigma = NULL, N_e = 100, u0 = NULL) {
+  mp1 <- nrow(U)
+  D   <- ncol(U)
+  J   <- length(p)
+  tt  <- as.vector(tt)
+
+  noise_sd <- mean(as.numeric(if (!is.null(sigma)) sigma else estimate_std(U, k = 6)))
+  R_obs    <- noise_sd^2 * diag(D)
+
+  u0_init <- if (!is.null(u0)) as.numeric(u0) else as.vector(U[1, ])
+  if (length(u0_init) != D)
+    stop(sprintf("u0 must have length D = %d", D))
+
+  p_sd  <- pmax(abs(p) * 0.1, 1e-6)
+  u0_sd <- rep(noise_sd, D)
+
+  ens <- rbind(
+    u0_init + matrix(rnorm(D * N_e) * u0_sd, D, N_e),
+    p       + matrix(rnorm(J * N_e, sd = p_sd), J, N_e)
+  )
+
+  rk4_step <- function(u, pi, t, dt) {
+    k1 <- as.vector(f_(matrix(c(pi, u,                  t         ), ncol = 1)))
+    k2 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k1,     t + 0.5*dt), ncol = 1)))
+    k3 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k2,     t + 0.5*dt), ncol = 1)))
+    k4 <- as.vector(f_(matrix(c(pi, u +     dt*k3,     t +     dt), ncol = 1)))
+    u + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
+  }
+
+  solve_safe <- function(A, b) {
+    tryCatch(solve(A, b), error = function(e) MASS::ginv(A) %*% b)
+  }
+
+  U_mean       <- matrix(0, mp1, D)
+  U_mean[1, ]  <- rowMeans(ens[seq_len(D), , drop = FALSE])
+
+  for (k in seq_len(mp1 - 1L)) {
+    dt_k <- tt[k + 1L] - tt[k]
+
+    ens_f <- ens
+    for (i in seq_len(N_e)) {
+      u_i <- ens[seq_len(D), i]
+      p_i <- ens[D + seq_len(J), i]
+      ens_f[seq_len(D), i] <- tryCatch(
+        rk4_step(u_i, p_i, tt[k], dt_k),
+        error = function(e) u_i
+      )
+    }
+
+    y_k    <- as.vector(U[k + 1L, ])
+    mean_f <- rowMeans(ens_f)
+    A_f    <- ens_f - mean_f
+    H_ens  <- ens_f[seq_len(D), , drop = FALSE]
+    A_H    <- H_ens - rowMeans(H_ens)
+
+    C_uy <- (A_f %*% t(A_H)) / (N_e - 1)
+    C_yy <- (A_H %*% t(A_H)) / (N_e - 1) + R_obs
+
+    K      <- C_uy %*% solve_safe(C_yy, diag(D))
+    y_pert <- y_k + matrix(rnorm(D * N_e, sd = noise_sd), D, N_e)
+    ens    <- ens_f + K %*% (y_pert - H_ens)
+
+    U_mean[k + 1L, ] <- rowMeans(ens[seq_len(D), , drop = FALSE])
+  }
+
+  list(
+    U_star = U_mean,
+    p      = rowMeans(ens[D + seq_len(J), , drop = FALSE]),
+    p_ens  = t(ens[D + seq_len(J), , drop = FALSE])
+  )
 }
 
 # Iterative (weak) re-weighted least squares
@@ -445,18 +533,21 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   }
 
   data <- switch(method,
-    # ROOT using Gauss-Newton and ETS Smoother 
-    ROOT = if (lip) {
-      if (is.null(p0)) {
-        p0 <- ols(G_cont, b_cont, L)$p
+    # ROOT: Gauss-Newton 
+    ROOT = {
+      U_gn  <- if (noise_dist == "lognormal") U_processed  else U
+      tt_gn <- if (noise_dist == "lognormal") tt_processed else tt
+
+      # Initial parameter estimate
+      if (lip) {
+        if (is.null(p0)) p0 <- ols(G_cont, b_cont, L)$p
+        p <- irls(G_cont, b_cont, L, p0 = p0, W = W, max_its = control$max_iterates)$p
+      } else {
+        p <- nirls(g, b_cont, L, Jp_r, p0 = p0, W = W, max_its = control$max_iterates)$p
       }
-      p <- irls(G_cont, b_cont, L, p0 = p0, W = W, max_its = control$max_iterates)$p
-      smooth <- wendy_erts(U, f_, J_u, J_t, tt, p, control, dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_, sigma = sig)
-      gls_gn(p, smooth$U_star, tt, f_, V, V_prime, S)
-    } else {
-      p <- nirls(g, b_cont, L, Jp_r, p0 = p0, W = W, max_its = control$max_iterates)$p
-      smooth <- wendy_erts(U, f_, J_u, J_t, tt, p, control, dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_, sigma = sig)
-      gls_gn(p, smooth$U_star, tt, f_, V, V_prime, S)
+
+      smooth <- wendy_erts(U_gn, f_, J_u, tt_gn, p, control, sigma = sig)
+      gn(p, smooth$U_star, tt_gn, f_, V, V_prime, alpha = control$gn_alpha %||% 0)
     },
     # Ordinary Least Squares on the weak residual
     OLS = if (lip) {

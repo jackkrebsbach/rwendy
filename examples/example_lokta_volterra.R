@@ -14,10 +14,13 @@ f <- function(u, p, t) {
   c(u1, u2)
 }
 
+p_star <- c(3, -1, -6, 1)
+u0 <- c(1, 1)
+
 p_star <- c(1, -0.1, -1.5, 0.075)
 u0 <- c(10,5)
 p0 <- c(2, -0.1, -1, 0.25)
-npoints <- 256
+npoints <- 128
 t_span <- c(0, 20)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -25,7 +28,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.5
+nr <- 0.45
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 noise <- matrix(
@@ -36,7 +39,7 @@ U <- sol[, -1] + noise
 # U[,1] <- mean(U[,2])
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "ROOT")
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0= TRUE, estimate_U_star= TRUE))
 
 Vp <- as.array(res$V_prime$contiguous())
 V <- as.array(res$V$contiguous())
@@ -55,7 +58,7 @@ F_ <- function(U, p){
 # Root on just state
 root_target <- function(U, p){
   U <- matrix(U, ncol = 2)
-  as.vector(-Vp %*% U -  V %*% F_(U, p))
+as.vector(-Vp %*% U -  V %*% F_(U, p))
 }
 
 # U <- res$state$U_star
@@ -95,7 +98,7 @@ root_target <- function(U, p){
 # Un <- matrix(u, ncol = 2)
 # Un <- sweep(Un, 2, colMeans(U - Un), "+")
 
-# frob_rel_err <- function(A, B) norm(A - B, "F") / norm(B, "F")
+frob_rel_err <- function(A, B) norm(A - B, "F") / norm(B, "F")
 # sol_true <- sol[, -1]
 
 # cat(sprintf("\nIRLS p̂:  %s  rel_err=%.6f\n", paste(round(res$phat, 4), collapse=" "), rel_err(res$phat, p_star)))
@@ -223,10 +226,10 @@ cat(sprintf("p̂_ROOT: %s   rel_err=%.8f\n", paste(round(p_w, 4), collapse=" "),
 cat(sprintf("Û_RKS state err=%.6f\n", frob_rel_err(U,    sol_true)))
 cat(sprintf("Û_ROOT err=%.6f\n", frob_rel_err(Un_w, sol_true)))
 
-plot(tt, sol[,2], col = "blue", ylim = range(c(sol[,2], U[,1], Un_joint[,1])), main = "State estimation", ylab = "u1", cex=0.5)
-points(tt, sol[,2] + noise[,2],   col = "green",  pch = 1, cex=0.5)
-points(tt, Un_w[,1],  col = "purple", pch = 1, cex=0.5)
-points(tt, U[,1],  col = "black", pch = 1)
+plot(tt, sol[,2], col = "blue", ylim = range(c(sol[,2], U[,1], Un_w[,1])), main = "State estimation", ylab = "u1", cex=0.5)
+points(tt, sol[,2] + noise[,2],   col = "green",  pch = 1, cex=0.25)
+points(tt, Un_w[,1],  col = "purple", pch = 1, cex=0.25)
+points(tt, U[,1],  col = "black", pch = 1, cex=0.25)
 
 # Vpinv <- ginv(Vp)
 # Un <- U
@@ -253,3 +256,5 @@ points(tt, U[,1],  col = "black", pch = 1)
 # abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
 
 # print(res$phat)
+
+# res <- solveWendy(f, sol[,-1] + noise, tt, method = "ROOT")
