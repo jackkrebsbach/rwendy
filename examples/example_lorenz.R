@@ -37,9 +37,10 @@ noise <- matrix(
 )
 
 U <- sol[, -1] + noise
+U[,1] <- 1
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0 = FALSE, estimate_U_star = TRUE))
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0 = FALSE))
 
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 
@@ -67,7 +68,7 @@ cat(rel_err(res$phat, p_star))
 # cat(rel_err(res$state$U_star[1, ], u0), "\n")
 # cat(rel_err(U[1,], u0))
 
-res2 <- solveWendy(f, U, tt, method = "ROOT")
+res2 <- solveWendy(f, U, tt, method = "ROOT", control = list(gn_alpha = 10^-1))
 
 cat(sprintf("\np̂₁ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
 cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res$phat, p_star)))

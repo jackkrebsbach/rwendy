@@ -1,3 +1,4 @@
+#' @importFrom MASS ginv
 #' @importFrom numDeriv jacobian
 #' @importFrom stats quantile median predict fft lm.fit shapiro.test
 #' @importFrom utils modifyList tail
@@ -236,6 +237,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
     res$phat <- best$p
     res$data <- best$data
+    res$Uhat <- if (noise_dist == "lognormal") exp(best$data$Uhat) else best$data$Uhat
     res$multistart_results <- all_results
     res$multistart_objectives <- objectives
   } else {
@@ -244,13 +246,11 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     result  <- .run_wendy_optimization(opt_ctx, p0_vec)
     res$phat <- result$p
     res$data <- result$data
-    res$Uhat <- result$data$Uhat
+    res$Uhat <- if (noise_dist == "lognormal") exp(result$data$Uhat) else result$data$Uhat
   }
   
   u0hat <- if(control$estimate_u0 && method != "OE") estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
-  state <- if(control$estimate_U_star && method != "OE") wendy_erts(U, f_, J_u, J_t, tt, res$phat, control,
-                                                       dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_,
-                                                       sigma = sig) else NULL
+  state <- if(control$estimate_U_star && method != "OE") wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = sig) else NULL
 
   res$u0hat       <- u0hat
   res$state       <- state

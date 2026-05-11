@@ -1,0 +1,83 @@
+---
+title: "SIR"
+format:
+  html:
+    code-fold: false
+    embed-resources: true
+---
+
+```{r setup, message=FALSE}
+library(devtools)
+library(deSolve)
+library(ggplot2)
+devtools::load_all()
+```
+
+## Problem setup
+
+SIR ODE:
+$$\dot{S} = -\beta S I, \quad \dot{I} = \beta S I - \gamma I, \quad \dot{R} = \gamma I$$
+True parameters $p^* = (\beta,\ \gamma) = (0.3,\ 0.1)$.
+
+```{r data}
+f <- function(u, p, t) c(
+  -p[1] * u[1] * u[2],
+   p[1] * u[1] * u[2] - p[2] * u[2],
+   p[2] * u[2]
+)
+
+p_star  <- c(0.3, 0.1)
+u0      <- c(0.99, 0.01, 0.0)
+npoints <- 64
+t_span  <- c(0, 60)
+tt      <- matrix(seq(t_span[1], t_span[2], length.out = npoints), ncol = 1)
+
+modelODE <- function(tvec, state, parms) list(as.vector(f(state, parms, tvec)))
+sol      <- deSolve::ode(y = u0, times = tt, func = modelODE, parms = p_star)
+U_true   <- sol[, 2:4]
+
+set.seed(42)
+nr       <- 0.25
+U_vec    <- as.vector(U_true)
+noise_sd <- nr * sqrt(mean(U_vec^2))
+U_noisy  <- U_true + matrix(rnorm(npoints * 3, sd = noise_sd), nrow = npoints)
+
+cat(sprintf("n = %d   nr = %.2f   σ = %.4f\n", npoints, nr, noise_sd))
+```
+
+## Noisy data
+
+```{r plot-data}
+df_data <- data.frame(
+  t  = as.vector(tt),
+  S_true  = U_true[, 1],  I_true  = U_true[, 2],  R_true  = U_true[, 3],
+  S_noisy = U_noisy[, 1], I_noisy = U_noisy[, 2], R_noisy = U_noisy[, 3]
+)
+
+ggplot(df_data, aes(x = t)) +
+  geom_point(aes(y = S_noisy), colour = "steelblue",  size = 0.8, alpha = 0.5) +
+  geom_point(aes(y = I_noisy), colour = "firebrick",  size = 0.8, alpha = 0.5) +
+  geom_point(aes(y = R_noisy), colour = "darkgreen",  size = 0.8, alpha = 0.5) +
+  geom_line(aes(y = S_true,  colour = "S"), linewidth = 0.9) +
+  geom_line(aes(y = I_true,  colour = "I"), linewidth = 0.9) +
+  geom_line(aes(y = R_true,  colour = "R"), linewidth = 0.9) +
+  scale_colour_manual(values = c(S = "steelblue", I = "firebrick", R = "darkgreen")) +
+  labs(title = sprintf("SIR — noisy observations (nr = %.2f, n = %d)", nr, npoints),
+       x = "Time", y = "Proportion", colour = "Compartment") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+## Solve with WENDy ROOT
+
+```{r solve, message=FALSE}
+devtools::load_all()
+res1 <- solveWendy(f, U_noisy, tt, method = "ROOT")
+res2 <- solveWendy(f, U_noisy, tt, method = "IRLS")
+
+cat(sprintf("p*   = [%s]\n", paste(sprintf("%.4f", p_star),       collapse = ", ")))
+cat(sprintf("p̂_ROOT    = [%s]\n", paste(sprintf("%.4f", res1$phat),     collapse = ", ")))
+cat(sprintf("p̂_IRLS    = [%s]\n", paste(sprintf("%.4f", res2$phat),     collapse = ", ")))
+cat(sprintf("Relative Coefficient Error ROOT = %.4f\n", rel_err(res1$phat, p_star)))
+cat(sprintf("Relative Coefficient Error IRLS = %.4f\n", rel_err(res2$phat, p_star)))
+```

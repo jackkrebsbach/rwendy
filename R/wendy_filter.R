@@ -130,79 +130,66 @@ em_corrected_solve <- function(B, residual, Vs, k, f_, dF_dt_, d2F_dt2_, d3F_dt3
 
 #' Estimate the state using the RTS smoother
 #' @export
-wendy_erts <- function(U, f_, J_u, J_t, tt, p, test_function_params,
-                            dF_dt_ = NULL, d2F_dt2_ = NULL, d3F_dt3_ = NULL,
-                            sigma = NULL) {
+wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
+                       sigma = NULL) {
   tt   <- as.vector(tt)
   mp1  <- nrow(U)
   D    <- ncol(U)
   I_D  <- diag(D)
 
-  # Noise covariance
   noise_sd <- as.numeric(if (!is.null(sigma)) sigma else estimate_std(U, k = 6))
-  noise_sd <- mean(noise_sd)   # collapse to scalar if estimate_std returns per-column vector
-  R_mat    <- noise_sd^2 * I_D
+  noise_sd <- mean(noise_sd)
+  R_obs    <- noise_sd^2 * I_D
+  Q_mat    <- (noise_sd * 0.1)^2 * I_D
 
-  # Process noise: scaled to noise level so observations can correct a bad initial state
-  Q_mat <- (noise_sd * 0.1)^2 * I_D
+  u0 <- as.vector(U[1, ])
 
-  u0 <- if (!is.null(dF_dt_) && !is.null(d2F_dt2_) && !is.null(d3F_dt3_))
-    estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_params)
-  else
-    colMeans(U[1:min(5, nrow(U)), , drop = FALSE])
-  P0 <- noise_sd^2 * I_D
+  P0           <- noise_sd^2 * I_D
+  S0           <- P0 + R_obs
+  K0           <- P0 %*% solve(S0)
+  u_filt       <- matrix(0, mp1, D)
+  u_filt[1, ]  <- u0 + K0 %*% (U[1, ] - u0)
+  P_filt       <- array(0, c(mp1, D, D))
+  P_filt[1,,]  <- (I_D - K0) %*% P0 %*% t(I_D - K0) + K0 %*% R_obs %*% t(K0)
 
-  # Fuse u0 prior with first observation
-  K0 <- P0 %*% solve(P0 + R_mat)
-  u_filt <- matrix(0, mp1, D)
-  u_filt[1, ] <- u0 + K0 %*% (U[1, ] - u0)
-  P_filt <- array(0, c(mp1, D, D))
-  P_filt[1,,] <- (I_D - K0) %*% P0
+  u_pred  <- matrix(0, mp1, D)
+  P_pred  <- array(0, c(mp1, D, D))
+  F_store <- array(0, c(mp1 - 1L, D, D))
 
-  # Storage for smoother
-  u_pred <- matrix(0, mp1, D)
-  P_pred <- array(0,  c(mp1, D, D))
-  F_store <- array(0,  c(mp1 - 1L, D, D))  # linearised transition Jacobians
-
-  # Forward Pass Extend Kalman Filter 
   for (k in seq_len(mp1 - 1L)) {
     dt_k <- tt[k + 1L] - tt[k]
     uk   <- u_filt[k, ]
 
-    # RK4 state prediction
-    k1 <- as.vector(f_(matrix(c(p, uk,                       tt[k]           ), ncol = 1)))
-    k2 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k1,        tt[k]+0.5*dt_k  ), ncol = 1)))
-    k3 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k2,        tt[k]+0.5*dt_k  ), ncol = 1)))
-    k4 <- as.vector(f_(matrix(c(p, uk +     dt_k*k3,        tt[k]+    dt_k  ), ncol = 1)))
+    k1 <- as.vector(f_(matrix(c(p, uk,                    tt[k]          ), ncol = 1)))
+    k2 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k1,     tt[k]+0.5*dt_k ), ncol = 1)))
+    k3 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k2,     tt[k]+0.5*dt_k ), ncol = 1)))
+    k4 <- as.vector(f_(matrix(c(p, uk +     dt_k*k3,     tt[k]+    dt_k  ), ncol = 1)))
     u_pred[k + 1L, ] <- uk + (dt_k / 6) * (k1 + 2*k2 + 2*k3 + k4)
 
-    # Linearised Covariance Propogation: F ≈ I + dt * J_u  (first-order)
     Ju_k <- t(matrix(as.vector(J_u(c(p, uk, tt[k]))), D, D))
-    Fk  <- I_D + dt_k * Ju_k
+    Fk   <- I_D + dt_k * Ju_k
     F_store[k,,] <- Fk
 
     Pk_pred <- Fk %*% P_filt[k,,] %*% t(Fk) + Q_mat
     P_pred[k + 1L,,] <- Pk_pred
 
-    # Update with observation y_{k+1}
-    S_k              <- Pk_pred + R_mat          # innovation covariance (H = I)
-    Kk               <- Pk_pred %*% solve(S_k)
-    u_filt[k + 1L, ] <- u_pred[k + 1L, ] + Kk %*% (U[k + 1L, ] - u_pred[k + 1L, ])
-    P_filt[k + 1L,,] <- (I_D - Kk) %*% Pk_pred %*% t(I_D - Kk) + Kk %*% R_mat %*% t(Kk)
+    Sk               <- Pk_pred + R_obs
+    Kk               <- Pk_pred %*% solve(Sk)
+    innov            <- U[k + 1L, ] - u_pred[k + 1L, ]
+    u_filt[k + 1L, ] <- u_pred[k + 1L, ] + Kk %*% innov
+    P_filt[k + 1L,,] <- (I_D - Kk) %*% Pk_pred %*% t(I_D - Kk) + Kk %*% R_obs %*% t(Kk)
   }
 
-  # Backward pass RTS smoother
-  u_smooth      <- matrix(0, mp1, D)
-  P_smooth      <- array(0,  c(mp1, D, D))
+  u_smooth         <- matrix(0, mp1, D)
+  P_smooth         <- array(0,  c(mp1, D, D))
   u_smooth[mp1, ]  <- u_filt[mp1, ]
   P_smooth[mp1,,]  <- P_filt[mp1,,]
 
   for (k in seq(mp1 - 1L, 1L)) {
-    Pk   <- P_filt[k,,]
-    Pp   <- P_pred[k + 1L,,]
-    Fk   <- F_store[k,,]
+    Pk <- P_filt[k,,]
+    Pp <- P_pred[k + 1L,,]
+    Fk <- F_store[k,,]
 
-    # Smoother gain
     Gk <- Pk %*% t(Fk) %*% solve(Pp + 1e-10 * I_D)
     u_smooth[k, ] <- u_filt[k, ] + Gk %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
     P_smooth[k,,] <- Pk           + Gk %*% (P_smooth[k + 1L,,] - Pp) %*% t(Gk)
@@ -215,5 +202,80 @@ wendy_erts <- function(U, f_, J_u, J_t, tt, p, test_function_params,
     P_filt   = P_filt,
     u_pred   = u_pred,
     P_pred   = P_pred
+  )
+}
+
+# Joint state-parameter Ensemble Kalman Filter (stochastic EnKF).
+# Augmented state: [u(t); p]. Parameters are treated as constant between steps.
+# Returns list(U_star, p, p_ens) — smoothed state mean, parameter mean, full parameter ensemble.
+wendy_enkf <- function(p, U, tt, f_, sigma = NULL, N_e = 100, u0 = NULL) {
+  mp1 <- nrow(U)
+  D   <- ncol(U)
+  J   <- length(p)
+  tt  <- as.vector(tt)
+
+  noise_sd <- mean(as.numeric(if (!is.null(sigma)) sigma else estimate_std(U, k = 6)))
+  R_obs    <- noise_sd^2 * diag(D)
+
+  u0_init <- if (!is.null(u0)) as.numeric(u0) else as.vector(U[1, ])
+  if (length(u0_init) != D)
+    stop(sprintf("u0 must have length D = %d", D))
+
+  p_sd  <- pmax(abs(p) * 0.1, 1e-6)
+  u0_sd <- rep(noise_sd, D)
+
+  ens <- rbind(
+    u0_init + matrix(rnorm(D * N_e) * u0_sd, D, N_e),
+    p       + matrix(rnorm(J * N_e, sd = p_sd), J, N_e)
+  )
+
+  rk4_step <- function(u, pi, t, dt) {
+    k1 <- as.vector(f_(matrix(c(pi, u,                  t         ), ncol = 1)))
+    k2 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k1,     t + 0.5*dt), ncol = 1)))
+    k3 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k2,     t + 0.5*dt), ncol = 1)))
+    k4 <- as.vector(f_(matrix(c(pi, u +     dt*k3,     t +     dt), ncol = 1)))
+    u + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
+  }
+
+  solve_safe <- function(A, b) {
+    tryCatch(solve(A, b), error = function(e) MASS::ginv(A) %*% b)
+  }
+
+  U_mean       <- matrix(0, mp1, D)
+  U_mean[1, ]  <- rowMeans(ens[seq_len(D), , drop = FALSE])
+
+  for (k in seq_len(mp1 - 1L)) {
+    dt_k <- tt[k + 1L] - tt[k]
+
+    ens_f <- ens
+    for (i in seq_len(N_e)) {
+      u_i <- ens[seq_len(D), i]
+      p_i <- ens[D + seq_len(J), i]
+      ens_f[seq_len(D), i] <- tryCatch(
+        rk4_step(u_i, p_i, tt[k], dt_k),
+        error = function(e) u_i
+      )
+    }
+
+    y_k    <- as.vector(U[k + 1L, ])
+    mean_f <- rowMeans(ens_f)
+    A_f    <- ens_f - mean_f
+    H_ens  <- ens_f[seq_len(D), , drop = FALSE]
+    A_H    <- H_ens - rowMeans(H_ens)
+
+    C_uy <- (A_f %*% t(A_H)) / (N_e - 1)
+    C_yy <- (A_H %*% t(A_H)) / (N_e - 1) + R_obs
+
+    K      <- C_uy %*% solve_safe(C_yy, diag(D))
+    y_pert <- y_k + matrix(rnorm(D * N_e, sd = noise_sd), D, N_e)
+    ens    <- ens_f + K %*% (y_pert - H_ens)
+
+    U_mean[k + 1L, ] <- rowMeans(ens[seq_len(D), , drop = FALSE])
+  }
+
+  list(
+    U_star = U_mean,
+    p      = rowMeans(ens[D + seq_len(J), , drop = FALSE]),
+    p_ens  = t(ens[D + seq_len(J), , drop = FALSE])
   )
 }

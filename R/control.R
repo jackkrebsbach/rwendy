@@ -3,7 +3,7 @@
 default_control <- list(
   optimize = TRUE, # boolean: run IRLS or MLE optimzation for parameters 
   estimate_u0 = FALSE, # Estimate the initial condition
-  estimate_U_star = FALSE, # Estimate the state
+  estimate_U_star = FALSE, # Estimate the state using wendy_erts
   noise_sd = NA, # User can supply sd of the noise if known
   compute_svd = TRUE, # Compute the SVD on the test function matrices (MSG)
   diag_reg = 10e-10, # Regularization for covariance of the weak residual for stability
@@ -24,5 +24,6 @@ default_control <- list(
   fixed_radius = NULL, # integer: fix the base test-function radius, bypassing auto-selection
   use_interp_uncertainty = TRUE, # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
   device = "cpu", # If GPUs are available use "cuda"; resolved to a torch device lazily inside solveWendy
-  apply_fn = NULL # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
+  apply_fn = NULL, # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
+  gn_alpha = 0         # ROOT: Tikhonov weight penalising state departure from ERTS smoother estimate
 )

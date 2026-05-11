@@ -22,14 +22,22 @@ t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
-nr <- 0.005
-noise_sd <- sqrt(nr)
-noise <- matrix(
-  rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
-  nrow = nrow(sol)
-)
+# Additive Gaussian Noise
+# nr <- 0.05
+# U_vec <- as.vector(sol[,-1])
+# noise_sd <- nr * sqrt(mean(U_vec^2))
+# noise <- matrix(
+#   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
+#   nrow = nrow(sol)
+# )
+
+# U <- sol[, -1]  + noise
+# tt <- matrix(sol[, 1], ncol = 1)
+
 # Log Normal Noise
-U <- sol[, -1] * exp(noise)
+nr <- 0.5
+noise_sd <- nr
+U <- sol[, -1] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 tt <- matrix(sol[, 1], ncol = 1)
 
 tt <- sol[, 1]
@@ -43,10 +51,14 @@ points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))
 
 legend("topright", legend = c("Susceptible", "Infected", "Recovered"), col = c("black", "red", "blue"), lwd = 1)
 
-res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "lognormal")
+res <- solveWendy(f, U, tt, method = "ROOT", noise_dist = "lognormal")
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = res$phat)
 
 lines(sol[, "time"], sol[, 2], col = "black", lwd = 2)
 lines(sol[, "time"], sol[, 3], col = "red", lwd = 2)
 lines(sol[, "time"], sol[, 4], col = "blue", lwd = 2)
+
+lines(res$tt, res$Uhat[,1], pch = 16, cex = 1, col = "green")
+lines(res$tt, res$Uhat[,2], pch = 16, cex = 1, col = "green")
+lines(res$tt, res$Uhat[,3], pch = 16, cex = 1, col = "green")
