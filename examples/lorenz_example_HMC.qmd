@@ -1,0 +1,538 @@
+---
+title: "Lorenz"
+format:
+  html:
+    code-fold: false
+    embed-resources: true
+---
+
+```{r setup, message=FALSE}
+library(devtools)
+library(deSolve)
+library(ggplot2)
+library(plotly)
+devtools::load_all()
+```
+
+## Problem setup
+
+Lorenz ODE:
+$$\dot{x} = \sigma(y - x), \quad \dot{y} = x(\rho - z) - y, \quad \dot{z} = xy - \beta z$$
+True parameters $p^* = (\sigma,\ \rho,\ \beta) = (10,\ 28,\ 8/3)$.
+
+```{r data}
+f <- function(u, p, t) c(
+  p[1] * (u[2] - u[1]),
+  u[1] * (p[2] - u[3]) - u[2],
+  u[1] * u[2] - p[3] * u[3]
+)
+
+p_star  <- c(10.0, 28.0, 8.0 / 3.0)
+u0      <- c(-8, 10, 27)
+npoints <- 256
+t_span  <- c(0, 10)
+tt      <- matrix(seq(t_span[1], t_span[2], length.out = npoints), ncol = 1)
+
+modelODE <- function(tvec, state, parms) list(as.vector(f(state, parms, tvec)))
+sol      <- deSolve::ode(y = u0, times = tt, func = modelODE, parms = p_star,
+                         rtol = 1e-12, atol = 1e-12)
+U_true   <- sol[, 2:4]
+
+set.seed(42)
+nr       <- 0.15
+U_vec    <- as.vector(U_true)
+noise_sd <- nr * sqrt(mean(U_vec^2))
+U_noisy  <- U_true + matrix(rnorm(npoints * 3, sd = noise_sd), nrow = npoints)
+
+cat(sprintf("n = %d   nr = %.2f   σ = %.4f\n", npoints, nr, noise_sd))
+```
+
+## Noisy data
+
+```{r plot-data}
+cols <- c(x = "steelblue", y = "firebrick", z = "darkgreen")
+
+df_data <- data.frame(
+  t      = as.vector(tt),
+  x_true = U_true[, 1],  y_true = U_true[, 2],  z_true = U_true[, 3],
+  x_obs  = U_noisy[, 1], y_obs  = U_noisy[, 2],  z_obs  = U_noisy[, 3]
+)
+
+ggplot(df_data, aes(x = t)) +
+  geom_point(aes(y = x_obs), colour = "steelblue", size = 0.5, alpha = 0.4) +
+  geom_point(aes(y = y_obs), colour = "firebrick",  size = 0.5, alpha = 0.4) +
+  geom_point(aes(y = z_obs), colour = "darkgreen",  size = 0.5, alpha = 0.4) +
+  geom_line(aes(y = x_true, colour = "x"), linewidth = 0.8) +
+  geom_line(aes(y = y_true, colour = "y"), linewidth = 0.8) +
+  geom_line(aes(y = z_true, colour = "z"), linewidth = 0.8) +
+  scale_colour_manual(values = cols) +
+  labs(title = sprintf("Lorenz — noisy observations (nr = %.2f, n = %d)", nr, npoints),
+       x = "Time", y = "State", colour = "Component") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+## Solve with WENDy IRLS
+
+```{r solve, message=FALSE}
+devtools::load_all()
+res_irls <- solveWendy(f, U_noisy, tt, method = "IRLS")
+
+cat(sprintf("p*        = [%s]\n", paste(sprintf("%.4f", p_star),      collapse = ", ")))
+cat(sprintf("p̂_IRLS    = [%s]\n", paste(sprintf("%.4f", res_irls$phat), collapse = ", ")))
+cat(sprintf("Relative Coefficient Error IRLS = %.4f\n", rel_err(res_irls$phat, p_star)))
+```
+
+## GP state estimate
+
+```{r plot-ustar, message=FALSE}
+gp_state <- gp_smooth(U_noisy, tt)
+U_star   <- gp_state$U_star
+
+df_state <- data.frame(
+  t      = as.vector(tt),
+  x_obs  = U_noisy[, 1], y_obs  = U_noisy[, 2], z_obs  = U_noisy[, 3],
+  x_true = U_true[, 1],  y_true = U_true[, 2],  z_true = U_true[, 3],
+  x_gp   = U_star[, 1],  y_gp   = U_star[, 2],  z_gp   = U_star[, 3]
+)
+
+ggplot(df_state, aes(x = t)) +
+  geom_point(aes(y = x_obs), colour = "steelblue", size = 0.5, alpha = 0.3) +
+  geom_point(aes(y = y_obs), colour = "firebrick",  size = 0.5, alpha = 0.3) +
+  geom_point(aes(y = z_obs), colour = "darkgreen",  size = 0.5, alpha = 0.3) +
+  geom_line(aes(y = x_true, colour = "x true"), linewidth = 0.8, linetype = "dashed") +
+  geom_line(aes(y = y_true, colour = "y true"), linewidth = 0.8, linetype = "dashed") +
+  geom_line(aes(y = z_true, colour = "z true"), linewidth = 0.8, linetype = "dashed") +
+  geom_line(aes(y = x_gp,   colour = "x GP"),  linewidth = 1.0) +
+  geom_line(aes(y = y_gp,   colour = "y GP"),  linewidth = 1.0) +
+  geom_line(aes(y = z_gp,   colour = "z GP"),  linewidth = 1.0) +
+  scale_colour_manual(values = c(
+    "x true" = "steelblue", "y true" = "firebrick", "z true" = "darkgreen",
+    "x GP"   = "steelblue", "y GP"   = "firebrick", "z GP"   = "darkgreen"
+  )) +
+  labs(title = "GP smoothed state vs true signal",
+       x = "Time", y = "State", colour = "Series") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+## HMC: Physics-informed posterior sampling
+
+### Setup — build WENDy matrices and initialize
+
+```{r hmc-setup, message=FALSE}
+devtools::load_all()
+
+# z (3rd component) is unobserved — likelihood only penalises x and y
+obs_idx <- 1:2
+
+# WENDy test-function matrices — still built from all 3 components
+Phi  <- as.matrix(res_irls$V)
+Phip <- as.matrix(res_irls$V_prime)
+sig  <- mean(as.numeric(res_irls$sig))
+
+n <- nrow(U_noisy)
+D <- ncol(U_noisy)
+J <- length(res_irls$phat)   # 3 Lorenz parameters
+
+p_lower <- c(0.0,  0.0,  0.0)
+p_upper <- c(30.0, 60.0, 10.0)
+
+# GP posterior means — prior centred here
+gp_mu <- gp_state$U_star   # n x D
+
+# Precompute GP prior precision matrices C_d^{-1} from fitted hyperparameters.
+tt_vec <- as.vector(tt)
+gp_Cinv <- lapply(seq_len(D), function(d) {
+  fit_d <- gp_state$fits[[d]]
+  C_d   <- matern52_matrix(tt_vec, tt_vec, fit_d$sigma2, fit_d$ell)
+  chol2inv(chol(C_d + 1e-10 * diag(n)))
+})
+
+cat(sprintf("n=%d  D=%d  J=%d  K=%d  sig=%.4f\n", n, D, J, nrow(Phi), sig))
+```
+
+### Energy and gradient
+
+```{r hmc-energy}
+# Assemble F matrix: n x D, row i = f(U[i,], p, tt[i])
+build_F_mat <- function(p, U) {
+  t(sapply(seq_len(nrow(U)), function(i) f(U[i, ], p, tt[i])))
+}
+
+# Physics-informed posterior energy (negative log-posterior up to constant)
+#   E = obs_term + phys_term + gp_term + box_term
+#   obs_term  = (1/2sig^2)  ||U_noisy[,obs_idx] - U[,obs_idx]||_F^2  (observed dims only)
+#   phys_term = (1/2tau^2)  ||Phi F(p,U) + Phi' U||_F^2              (WENDy weak form)
+#   gp_term   = (1/2) sum_d (U_d - mu_d)^T C_d^{-1} (U_d - mu_d)    (GP prior on trajectories)
+#   box_term  = Inf if p outside [p_lower, p_upper]
+#
+# For unobserved z: obs_term=0, phys_term drives z toward ODE, gp_term keeps z smooth.
+tau <- sig * 0.1   # physics 100x stronger than obs
+
+energy <- function(p, U) {
+  if (any(p < p_lower) | any(p > p_upper)) return(Inf)
+
+  obs_term  <- 0.5 / sig^2 * sum((U_noisy[, obs_idx] - U[, obs_idx])^2)
+
+  Fmat      <- build_F_mat(p, U)
+  resid     <- Phi %*% Fmat + Phip %*% U   # K x D
+  phys_term <- 0.5 / tau^2 * sum(resid^2)
+
+  gp_term <- 0.5 * sum(sapply(seq_len(D), function(d) {
+    r <- U[, d] - gp_mu[, d]
+    as.numeric(t(r) %*% gp_Cinv[[d]] %*% r)
+  }))
+
+  obs_term + phys_term + gp_term
+}
+
+# Flat interface: theta = c(p, vec(U)) column-major
+theta_to_pU <- function(theta) {
+  list(p = theta[seq_len(J)],
+       U = matrix(theta[(J + 1L):length(theta)], nrow = n, ncol = D))
+}
+
+energy_flat <- function(theta) {
+  pU <- theta_to_pU(theta)
+  energy(pU$p, pU$U)
+}
+
+# Build (J+D+1) x n input matrix for vectorized symbolic fn calls
+build_input_mat <- function(p, U) {
+  rbind(
+    matrix(rep(p, n),     nrow = J, ncol = n),
+    t(U),
+    matrix(as.vector(tt), nrow = 1, ncol = n)
+  )
+}
+
+# Analytic gradient exploiting symbolic J_p and J_u from WENDy.
+# Reshape convention mirrors build_Jp_r / build_L in wendy:
+#   J_p -> (n, D, J): Jp_arr[m, d, j] = df_d/dp_j at time m
+#   J_u -> (n, D, D): Ju_arr[m, a, b] = df_a/du_b at time m
+grad_energy_analytic <- function(theta) {
+  pU <- theta_to_pU(theta)
+  p  <- pU$p
+  U  <- pU$U
+  X  <- build_input_mat(p, U)   # (J+D+1) x n
+
+  Fmat <- build_F_mat(p, U)
+  R    <- Phi %*% Fmat + Phip %*% U   # K x D
+
+  # ── Gradient w.r.t. p ───────────────────────────────────────────────────
+  Jp_arr <- as.array(
+    torch::torch_tensor(res_irls$J_p(X))$reshape(c(n, D, J))$contiguous()
+  )  # n x D x J R array
+
+  gp <- numeric(J)
+  for (j in seq_len(J)) {
+    dF_dpj <- Jp_arr[,, j]              # n x D
+    gp[j]  <- sum(R * (Phi %*% dF_dpj))
+  }
+  gp <- gp / tau^2
+
+  # ── Gradient w.r.t. U ───────────────────────────────────────────────────
+  # Unobserved component (z, col 3) gets no observation penalty
+  g_obs <- matrix(0, n, D)
+  g_obs[, obs_idx] <- (U[, obs_idx] - U_noisy[, obs_idx]) / sig^2
+  PhipT_R <- t(Phip) %*% R           # n x D
+  PhiT_R  <- t(Phi)  %*% R           # n x D
+
+  Ju_arr <- as.array(
+    torch::torch_tensor(res_irls$J_u(X))$reshape(c(n, D, D))$contiguous()
+  )  # n x D x D R array
+
+  g_phys_nl <- matrix(0, n, D)
+  for (i in seq_len(n))
+    g_phys_nl[i,] <- PhiT_R[i,] %*% Ju_arr[i,,]   # 1xD %*% DxD
+
+  # GP prior gradient: C_d^{-1} (U_d - mu_d) for each dimension
+  g_gp <- matrix(0, n, D)
+  for (d in seq_len(D))
+    g_gp[, d] <- gp_Cinv[[d]] %*% (U[, d] - gp_mu[, d])
+
+  gU <- g_obs + (g_phys_nl + PhipT_R) / tau^2 + g_gp
+  c(gp, as.vector(gU))
+}
+
+# Spot-check gradient on parameter dimensions only (full 771-dim FD is too slow)
+theta_test <- c(p0, as.vector(U0))
+g_an       <- grad_energy_analytic(theta_test)
+g_fd_p <- as.numeric(numDeriv::jacobian(
+  function(p) energy_flat(c(p, theta_test[(J + 1L):length(theta_test)])),
+  theta_test[seq_len(J)], method = "Richardson"
+))
+cat(sprintf("Gradient check (p only) — max abs diff: %.2e  (rel: %.2e)\n",
+            max(abs(g_fd_p - g_an[seq_len(J)])),
+            max(abs(g_fd_p - g_an[seq_len(J)])) / (max(abs(g_fd_p)) + 1e-12)))
+
+grad_energy <- grad_energy_analytic
+```
+
+### MAP initialisation
+
+```{r hmc-map-init}
+# Following MAGI: hold observed state (x, y) fixed at GP mean, optimise
+# (p, z-trajectory) jointly via L-BFGS-B.  Gives a warm start near the
+# posterior mode without needing any observations of z.
+# Optimisation dimension: J + n = 3 + 256 = 259.
+set.seed(123)
+p_init      <- p_lower + runif(J) * (p_upper - p_lower)
+U_obs_fixed <- gp_mu[, obs_idx]   # x, y fixed throughout
+
+energy_missing <- function(pz_free) {
+  p <- pz_free[seq_len(J)]
+  if (any(p < p_lower) | any(p > p_upper)) return(1e12)
+  U_full <- cbind(U_obs_fixed, matrix(pz_free[(J + 1L):length(pz_free)], nrow = n))
+  energy(p, U_full)
+}
+
+message("MAP init: optimising (p, z) with x,y fixed at GP mean ...")
+E_start <- energy_missing(c(p_init, gp_mu[, 3]))
+opt <- optim(
+  par     = c(p_init, gp_mu[, 3]),
+  fn      = energy_missing,
+  method  = "L-BFGS-B",
+  lower   = c(p_lower, rep(-Inf, n)),
+  upper   = c(p_upper, rep( Inf, n)),
+  control = list(maxit = 500)
+)
+message(sprintf("MAP done. energy: %.2f -> %.2f  convergence: %d",
+                E_start, opt$value, opt$convergence))
+
+p0 <- opt$par[seq_len(J)]
+U0 <- cbind(U_obs_fixed, matrix(opt$par[(J + 1L):length(opt$par)], nrow = n))
+
+cat(sprintf("MAP init:  sigma=%.4f  rho=%.4f  beta=%.4f\n", p0[1], p0[2], p0[3]))
+cat(sprintf("True:      sigma=%.4f  rho=%.4f  beta=%.4f\n", p_star[1], p_star[2], p_star[3]))
+```
+
+### Leapfrog HMC step
+
+```{r hmc-step}
+# Dual averaging (Hoffman & Gelman 2014): adapts eps during burn-in to hit
+# delta_target acceptance rate, then freezes epsbar for sampling.
+T_traj       <- 0.5
+eps_init     <- 1e-2   # start near expected converged eps (~2.6e-2) so L stays reasonable
+L_max        <- 50L    # cap leapfrog steps during early burn-in when eps is still small
+delta_target <- 0.65
+
+da_init <- function(eps0) {
+  list(eps = eps0, epsbar = eps0, Hbar = 0,
+       mu = log(10 * eps0), gamma = 0.05, t0 = 10, kappa = 0.75)
+}
+
+da_update <- function(t, alpha, state) {
+  w        <- 1 / (t + state$t0)
+  Hbar     <- (1 - w) * state$Hbar + w * (delta_target - alpha)
+  log_e    <- state$mu - sqrt(t) / state$gamma * Hbar
+  log_ebar <- t^(-state$kappa) * log_e + (1 - t^(-state$kappa)) * log(state$epsbar)
+  modifyList(state, list(eps = exp(log_e), epsbar = exp(log_ebar), Hbar = Hbar))
+}
+
+# M_diag: per-dimension mass (variance). Default identity; updated after burn-in phase 1.
+# Leapfrog with diagonal mass matrix M:
+#   r ~ N(0, M)  =>  draw r_raw ~ N(0,1), scale r = r_raw * sqrt(M)
+#   KE  = 0.5 * sum(r^2 / M)
+#   position step: theta += eps * r / M   (= eps * r_raw / sqrt(M))
+#   momentum step: r     -= eps * grad_E  (unscaled gradient, M absorbed in position step)
+M_diag <- NULL   # set after phase-1 burn-in
+
+hmc_step <- function(theta, eps, l_max = L_max) {
+  L      <- min(l_max, max(1L, round(T_traj / eps)))
+  p_dim  <- length(theta)
+  Mdiag  <- if (is.null(M_diag)) rep(1, p_dim) else M_diag
+
+  r_raw  <- rnorm(p_dim)                        # N(0,1)
+  r      <- r_raw * sqrt(Mdiag)                 # N(0, M)
+  KE_old <- 0.5 * sum(r^2 / Mdiag)
+  H_old  <- energy_flat(theta) + KE_old
+
+  th <- theta
+  g  <- grad_energy(th)
+  rv <- r - 0.5 * eps * g                       # half-step momentum
+
+  for (l in seq_len(L)) {
+    th <- th + eps * rv / Mdiag                  # position step scaled by M^{-1}
+    if (l < L) rv <- rv - eps * grad_energy(th)
+  }
+  rv <- rv - 0.5 * eps * grad_energy(th)        # final half-step
+
+  p_prop <- th[seq_len(J)]
+  if (!all(is.finite(th)) || any(p_prop < p_lower) | any(p_prop > p_upper)) {
+    return(list(theta = theta, accepted = FALSE, alpha = 0, L = L))
+  }
+
+  H_new   <- energy_flat(th) + 0.5 * sum(rv^2 / Mdiag)
+  log_acc <- H_old - H_new
+  alpha   <- min(1, exp(log_acc))
+
+  if (is.finite(log_acc) && log(runif(1)) < log_acc) {
+    list(theta = th,    accepted = TRUE,  alpha = alpha, L = L)
+  } else {
+    list(theta = theta, accepted = FALSE, alpha = alpha, L = L)
+  }
+}
+```
+
+### Run HMC
+
+```{r hmc-run}
+n_burn1  <- 2000   # phase 1: adapt eps with identity mass matrix
+n_burn2  <- 2000   # phase 2: collect samples to estimate mass matrix, re-adapt eps
+n_sample <- 5000
+
+theta_cur <- c(p0, as.vector(U0))
+p_dim     <- length(theta_cur)
+da        <- da_init(eps_init)
+
+print_diag <- function(i, total, p_cur, U_cur, da, out, n_acc) {
+  E_obs   <- 0.5 / sig^2 * sum((U_noisy[, obs_idx] - U_cur[, obs_idx])^2)
+  Fmat_c  <- build_F_mat(p_cur, U_cur)
+  resid_c <- Phi %*% Fmat_c + Phip %*% U_cur
+  E_phys  <- 0.5 / tau^2 * sum(resid_c^2)
+  E_gp    <- 0.5 * sum(sapply(seq_len(D), function(d) {
+    r <- U_cur[, d] - gp_mu[, d]; as.numeric(t(r) %*% gp_Cinv[[d]] %*% r)
+  }))
+  message(sprintf("  %4d/%-4d  %6.3f  %6.3f  %6.3f  %8.2e  %4d  %5.3f  %10.2f  %10.2f  %10.2f",
+                  i, total, p_cur[1], p_cur[2], p_cur[3], da$epsbar, out$L, n_acc / i,
+                  E_obs, E_phys, E_gp))
+  flush.console()
+}
+
+hdr <- sprintf("  %-9s  %-6s  %-6s  %-6s  %-8s  %-4s  %-5s  %-10s  %-10s  %-10s",
+               "iter", "sigma", "rho", "beta", "eps", "L", "acc", "E_obs", "E_phys", "E_gp")
+
+# ── Phase 1: adapt eps with identity mass matrix ──────────────────────────────
+message(sprintf("=== Burn-in phase 1 (%d steps, identity mass) ===", n_burn1))
+message(hdr)
+n_acc <- 0L
+burn1_samples <- matrix(NA_real_, n_burn1, p_dim)
+
+for (i in seq_len(n_burn1)) {
+  out               <- hmc_step(theta_cur, da$eps)
+  theta_cur         <- out$theta
+  n_acc             <- n_acc + out$accepted
+  da                <- da_update(i, out$alpha, da)
+  burn1_samples[i,] <- theta_cur
+
+  if (i %% 200 == 0) {
+    pU <- theta_to_pU(theta_cur)
+    print_diag(i, n_burn1, pU$p, pU$U, da, out, n_acc)
+  }
+}
+
+# ── Estimate diagonal mass matrix from phase-1 samples (second half only) ────
+M_diag <- pmax(apply(burn1_samples[seq(n_burn1 %/% 2 + 1, n_burn1), ], 2, var), 1e-6)
+message(sprintf("\nMass matrix estimated. p-dim variances: sigma=%.4f  rho=%.4f  beta=%.4f",
+                M_diag[1], M_diag[2], M_diag[3]))
+message(sprintf("State dim var range: [%.4f, %.4f]\n", min(M_diag[-(1:J)]), max(M_diag[-(1:J)])))
+
+# ── Phase 2: re-adapt eps with new mass matrix ────────────────────────────────
+da    <- da_init(da$epsbar)   # warm-start from phase-1 eps
+n_acc <- 0L
+message(sprintf("=== Burn-in phase 2 (%d steps, diagonal mass) ===", n_burn2))
+message(hdr)
+
+for (i in seq_len(n_burn2)) {
+  out       <- hmc_step(theta_cur, da$eps)
+  theta_cur <- out$theta
+  n_acc     <- n_acc + out$accepted
+  da        <- da_update(i, out$alpha, da)
+
+  if (i %% 200 == 0) {
+    pU <- theta_to_pU(theta_cur)
+    print_diag(i, n_burn2, pU$p, pU$U, da, out, n_acc)
+  }
+}
+
+eps_final <- da$epsbar
+L_final   <- min(L_max, max(1L, round(T_traj / eps_final)))
+message(sprintf("Burn-in done. eps=%.2e  L=%d  acc=%.3f\n", eps_final, L_final, n_acc / n_burn2))
+
+# ── Sampling (eps and L frozen) ───────────────────────────────────────────────
+message(sprintf("=== Sampling (%d steps, eps=%.2e  L=%d) ===", n_sample, eps_final, L_final))
+samples   <- matrix(NA_real_, n_sample, J,
+                    dimnames = list(NULL, c("sigma", "rho", "beta")))
+U_samples <- array(NA_real_, dim = c(n_sample, n, D))
+n_acc <- 0L
+
+for (i in seq_len(n_sample)) {
+  out           <- hmc_step(theta_cur, eps_final, l_max = L_max)
+  theta_cur     <- out$theta
+  n_acc         <- n_acc + out$accepted
+  samples[i, ]  <- theta_cur[seq_len(J)]
+  U_samples[i,,] <- matrix(theta_cur[(J + 1L):length(theta_cur)], nrow = n, ncol = D)
+
+  if (i %% 250 == 0) {
+    p_cur <- theta_cur[seq_len(J)]
+    message(sprintf("  sample %4d/%d | sigma=%.3f  rho=%.3f  beta=%.3f | acc=%.2f",
+                    i, n_sample, p_cur[1], p_cur[2], p_cur[3], n_acc / i))
+    flush.console()
+  }
+}
+
+message(sprintf("\nFinal acceptance rate : %.3f", n_acc / n_sample))
+message(sprintf("Posterior mean        : sigma=%.4f  rho=%.4f  beta=%.4f",
+                mean(samples[, "sigma"]), mean(samples[, "rho"]), mean(samples[, "beta"])))
+message(sprintf("True                  : sigma=%.4f  rho=%.4f  beta=%.4f",
+                p_star[1], p_star[2], p_star[3]))
+```
+
+### Diagnostics
+
+```{r hmc-diagnostics}
+df_trace <- data.frame(
+  iter  = seq_len(n_sample),
+  sigma = samples[, "sigma"],
+  rho   = samples[, "rho"],
+  beta  = samples[, "beta"]
+)
+
+p_trace_sigma <- ggplot(df_trace, aes(x = iter, y = sigma)) +
+  geom_line(alpha = 0.6, colour = "steelblue") +
+  geom_hline(yintercept = p_star[1], colour = "red", linetype = "dashed", linewidth = 0.8) +
+  labs(title = "Trace: sigma", x = "Iteration", y = "sigma") +
+  theme_bw()
+
+p_trace_rho <- ggplot(df_trace, aes(x = iter, y = rho)) +
+  geom_line(alpha = 0.6, colour = "firebrick") +
+  geom_hline(yintercept = p_star[2], colour = "red", linetype = "dashed", linewidth = 0.8) +
+  labs(title = "Trace: rho", x = "Iteration", y = "rho") +
+  theme_bw()
+
+p_trace_beta <- ggplot(df_trace, aes(x = iter, y = beta)) +
+  geom_line(alpha = 0.6, colour = "darkgreen") +
+  geom_hline(yintercept = p_star[3], colour = "red", linetype = "dashed", linewidth = 0.8) +
+  labs(title = "Trace: beta", x = "Iteration", y = "beta") +
+  theme_bw()
+
+p_hist_sigma <- ggplot(df_trace, aes(x = sigma)) +
+  geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = p_star[1], colour = "red",  linetype = "dashed", linewidth = 0.8) +
+  geom_vline(xintercept = mean(samples[, "sigma"]), colour = "navy", linewidth = 0.8) +
+  labs(title = "Posterior: sigma", x = "sigma", y = "count") +
+  theme_bw()
+
+p_hist_rho <- ggplot(df_trace, aes(x = rho)) +
+  geom_histogram(bins = 40, fill = "firebrick", alpha = 0.7) +
+  geom_vline(xintercept = p_star[2], colour = "red",     linetype = "dashed", linewidth = 0.8) +
+  geom_vline(xintercept = mean(samples[, "rho"]), colour = "darkred", linewidth = 0.8) +
+  labs(title = "Posterior: rho", x = "rho", y = "count") +
+  theme_bw()
+
+p_hist_beta <- ggplot(df_trace, aes(x = beta)) +
+  geom_histogram(bins = 40, fill = "darkgreen", alpha = 0.7) +
+  geom_vline(xintercept = p_star[3], colour = "red",      linetype = "dashed", linewidth = 0.8) +
+  geom_vline(xintercept = mean(samples[, "beta"]), colour = "darkgreen", linewidth = 0.8) +
+  labs(title = "Posterior: beta", x = "beta", y = "count") +
+  theme_bw()
+
+gridExtra::grid.arrange(p_trace_sigma, p_trace_rho,   p_trace_beta,
+                        p_hist_sigma,  p_hist_rho,    p_hist_beta,  ncol = 3)
+
+cat(sprintf("%-25s %8s %8s %8s\n", "", "sigma", "rho", "beta"))
+cat(sprintf("%-25s %8.4f %8.4f %8.4f\n", "True p*",        p_star[1],                p_star[2],               p_star[3]))
+cat(sprintf("%-25s %8.4f %8.4f %8.4f\n", "IRLS estimate",  p0[1],                    p0[2],                   p0[3]))
+cat(sprintf("%-25s %8.4f %8.4f %8.4f\n", "Posterior mean", mean(samples[, "sigma"]), mean(samples[, "rho"]),  mean(samples[, "beta"])))
+cat(sprintf("%-25s %8.4f %8.4f %8.4f\n", "Posterior sd",   sd(samples[, "sigma"]),   sd(samples[, "rho"]),    sd(samples[, "beta"])))
+```

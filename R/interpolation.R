@@ -72,6 +72,11 @@ fit_col <- function(y, tt_obs, tt_target, method, sigma = NULL) {
     bw <- diff(range(tt_obs)) / sqrt(length(tt_obs))
     list(fit = ksmooth(tt_obs, y, kernel = "normal", bandwidth = bw, x.points = tt_target)$y,
          var = rep(NA_real_, length(tt_target)))
+  } else if (method == "gp") {
+    sigma2_n <- if (!is.null(sigma)) sigma^2 else NULL
+    fit      <- gp_fit_1d(tt_obs, y, sigma2_n = sigma2_n)
+    pred     <- gp_predict(fit, tt_target)
+    list(fit = pred$mean, var = pred$var)
   } else {
     stop("Unknown interpolation_method: ", method)
   }
