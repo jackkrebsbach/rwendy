@@ -1,0 +1,372 @@
+---
+title: "Lorenz — Unobserved Component Recovery"
+format:
+  html:
+    code-fold: false
+    embed-resources: true
+---
+
+```{r setup, message=FALSE}
+library(devtools)
+library(deSolve)
+library(ggplot2)
+library(plotly)
+devtools::load_all()
+```
+
+## Problem setup
+
+Lorenz ODE:
+$$\dot{x} = \sigma(y - x), \quad \dot{y} = x(\rho - z) - y, \quad \dot{z} = xy - \beta z$$
+True parameters $p^* = (\sigma,\ \rho,\ \beta) = (10,\ 28,\ 8/3)$.
+The $z$ component is treated as **unobserved**.
+
+```{r data}
+f <- function(u, p, t) c(
+  p[1] * (u[2] - u[1]),
+  u[1] * (p[2] - u[3]) - u[2],
+  u[1] * u[2] - p[3] * u[3]
+)
+
+p_star  <- c(10.0, 28.0, 8.0 / 3.0)
+u0      <- c(-8, 10, 27)
+npoints <- 256
+t_span  <- c(0, 10)
+tt      <- matrix(seq(t_span[1], t_span[2], length.out = npoints), ncol = 1)
+
+modelODE <- function(tvec, state, parms) list(as.vector(f(state, parms, tvec)))
+sol      <- deSolve::ode(y = u0, times = tt, func = modelODE, parms = p_star,
+                         rtol = 1e-12, atol = 1e-12)
+U_true   <- sol[, 2:4]
+
+set.seed(42)
+nr       <- 0.15
+noise_sd <- nr * sqrt(mean(U_true^2))
+U_noisy  <- U_true + matrix(rnorm(npoints * 3, sd = noise_sd), nrow = npoints)
+
+obs_idx   <- 1:2   # x, y observed
+unobs_idx <- 3     # z unobserved
+
+cat(sprintf("n = %d   nr = %.2f   σ = %.4f\n", npoints, nr, noise_sd))
+```
+
+## Noisy data
+
+```{r plot-data}
+cols <- c(x = "steelblue", y = "firebrick", z = "darkgreen")
+
+df_data <- data.frame(
+  t      = as.vector(tt),
+  x_true = U_true[, 1],  y_true = U_true[, 2],  z_true = U_true[, 3],
+  x_obs  = U_noisy[, 1], y_obs  = U_noisy[, 2]
+)
+
+ggplot(df_data, aes(x = t)) +
+  geom_point(aes(y = x_obs), colour = "steelblue", size = 0.5, alpha = 0.4) +
+  geom_point(aes(y = y_obs), colour = "firebrick",  size = 0.5, alpha = 0.4) +
+  geom_line(aes(y = x_true, colour = "x"), linewidth = 0.8) +
+  geom_line(aes(y = y_true, colour = "y"), linewidth = 0.8) +
+  geom_line(aes(y = z_true, colour = "z"), linewidth = 0.8, linetype = "dashed") +
+  scale_colour_manual(values = cols) +
+  labs(title = sprintf("Lorenz — x,y observed  |  z unobserved  (nr=%.2f, n=%d)", nr, npoints),
+       x = "Time", y = "State", colour = "Component") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+## Build WENDy systems (no optimization)
+
+```{r build-systems, message=FALSE}
+devtools::load_all()
+
+# Build both the standard and joint systems; optimization is skipped.
+# U_noisy is passed in full (all 3 cols) to build the test-function matrices
+# and interpolant — the "unobserved" z column is only masked at optimization time.
+res <- solveWendy(f, U_noisy, tt, method = "IRLS",
+                  control = list(optimize = FALSE, estimate_u0 = FALSE, test_fun_type = "MSG"))
+
+sys_joint <- res$system_joint
+U_fit     <- res$U          # interpolated state matrix (npoints x 3)
+tt_vec    <- as.vector(res$tt)
+n         <- nrow(U_fit)
+J         <- res$opt_ctx$J
+D         <- res$opt_ctx$D
+
+cat(sprintf("n=%d  D=%d  J=%d\n", n, D, J))
+```
+
+---
+
+## Step 1 — Joint optimization of $(U^u, p)$ via WNLL
+
+Hold $U^o$ (x, y columns) fixed at the interpolated values.
+Free variables: $\theta = (p,\ U^u) \in \mathbb{R}^{J + n}$.
+
+$\sigma$ is fully fixed: $\sigma^o$ from `estimate_std` on the observed columns;
+$\sigma^u$ defaulted to $2 \times \overline{\sigma^o}$ (twice the mean observed noise SD).
+
+Objective: $\ell(\theta) = \text{WNLL}(U, p,\, \mathbf{t},\, b(U,\mathbf{t}),\, \sigma)$,
+where $U = [U^o \mid U^u]$ and $b$ is recomputed at every call.
+
+Gradients: analytic w.r.t. $p$ via `J_wnll`; w.r.t. $U^u$ via `J_u_wnll`.
+
+```{r step1-opt, message=FALSE}
+U_obs_fixed <- U_fit[, obs_idx]      # n x 2 — held fixed throughout Step 1
+
+make_U1 <- function(u_free) cbind(U_obs_fixed, matrix(u_free, ncol = 1))
+
+# sig fully fixed: observed components from data, unobserved defaulted to 2x mean.
+sig_obs_fixed  <- estimate_std(U_noisy[, obs_idx])   # length(obs_idx) noise SDs
+sig_unobs_default <- mean(sig_obs_fixed)
+sig_full <- numeric(D)
+sig_full[obs_idx]   <- sig_obs_fixed
+sig_full[unobs_idx] <- sig_unobs_default
+sig1 <- torch::torch_tensor(sig_full, dtype = torch::torch_float64())
+
+idx_p <- seq_len(J)
+idx_u <- J + seq_len(n)
+
+obj1 <- function(theta) {
+  U <- make_U1(theta[idx_u])
+  b <- sys_joint$build_compute_b(U, tt_vec)
+  as.numeric(sys_joint$wnll(U, theta[idx_p], tt_vec, b, sig1))
+}
+
+grad1 <- function(theta) {
+  p  <- theta[idx_p]
+  U  <- make_U1(theta[idx_u])
+  b  <- sys_joint$build_compute_b(U, tt_vec)
+  gp <- sys_joint$J_wnll(U, p, tt_vec, b, sig1)      # ∂/∂p  (J,)
+  gU <- sys_joint$J_u_wnll(U, p, tt_vec, b, sig1)    # ∂/∂U  (n x D)
+  c(gp, gU[, unobs_idx])
+}
+
+# Initialise: p = 1_J, U^u = mean of observed columns
+p0_step1 <- rep(1.0, J)
+u0_step1 <- rep(mean(U_obs_fixed), n)
+
+message("Step 1: optimising (p, z) with x,y and sig fixed ...")
+opt1 <- optim(
+  par     = c(p0_step1, u0_step1),
+  fn      = obj1,
+  gr      = grad1,
+  method  = "L-BFGS-B",
+  control = list(maxit = 500, trace = 1)
+)
+message(sprintf("Step 1 done. convergence=%d  obj=%.4f", opt1$convergence, opt1$value))
+
+p_hat1   <- opt1$par[idx_p]
+U_u_hat1 <- opt1$par[idx_u]
+U_full1  <- make_U1(U_u_hat1)
+
+cat(sprintf("\np*      = [%s]\n", paste(sprintf("%.4f", p_star),  collapse = ", ")))
+cat(sprintf("p̂_s1    = [%s]  rel err = %.4f\n",
+            paste(sprintf("%.4f", p_hat1), collapse = ", "), rel_err(p_hat1, p_star)))
+cat(sprintf("σ (fixed) = [%s]  (σ* = %.4f)\n",
+            paste(sprintf("%.4f", sig_full), collapse = ", "), noise_sd))
+```
+
+```{r step1-plot}
+df1 <- data.frame(
+  t       = tt_vec,
+  z_true  = U_true[, 3],
+  z_init  = u0_step1,
+  z_hat1  = U_u_hat1
+)
+
+ggplot(df1, aes(x = t)) +
+  geom_line(aes(y = z_true, colour = "true"),  linewidth = 0.8, linetype = "dashed") +
+  geom_line(aes(y = z_init, colour = "init"),  linewidth = 0.6, linetype = "dotted") +
+  geom_line(aes(y = z_hat1, colour = "step1"), linewidth = 0.8) +
+  scale_colour_manual(values = c(true = "darkgreen", init = "grey50", step1 = "steelblue")) +
+  labs(title = "Step 1: recovered z vs true", x = "Time", y = "z", colour = "") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+---
+
+## Step 2 — IRLS parameter refinement + ERTS state smoothing
+
+Run IRLS on $U = [U^o \mid \hat{U}^u_1]$ to get a refined parameter estimate,
+then apply EKF/RTS smoothing over **all three components** using those parameters.
+The smoother propagates information through the ODE dynamics so the $z$ estimate
+is also refined.
+
+```{r step2-irls-erts, message=FALSE}
+devtools::load_all()
+
+res2 <- solveWendy(f, U_full1, tt, p0 = p_hat1, method = "MLE",
+                   control = list(estimate_u0   = FALSE,
+                                  estimate_U_star = TRUE,
+                                  smoother       = "erts"))
+p_hat2       <- res2$phat
+U_smooth_all <- res2$state$U_star    # n x 3  — ERTS posterior mean, all components
+
+cat(sprintf("p*      = [%s]\n", paste(sprintf("%.4f", p_star),  collapse = ", ")))
+cat(sprintf("p̂_s1    = [%s]  rel err = %.4f\n",
+            paste(sprintf("%.4f", p_hat1), collapse = ", "), rel_err(p_hat1, p_star)))
+cat(sprintf("p̂_MLE2 = [%s]  rel err = %.4f\n",
+            paste(sprintf("%.4f", p_hat2), collapse = ", "), rel_err(p_hat2, p_star)))
+```
+
+```{r step2-plot}
+df2 <- data.frame(
+  t      = tt_vec,
+  x_obs  = U_noisy[, 1], y_obs  = U_noisy[, 2],
+  x_true = U_true[, 1],  y_true = U_true[, 2],  z_true = U_true[, 3],
+  x_sm   = U_smooth_all[, 1],
+  y_sm   = U_smooth_all[, 2],
+  z_sm   = U_smooth_all[, 3]
+)
+
+ggplot(df2, aes(x = t)) +
+  geom_point(aes(y = x_obs), colour = "steelblue", size = 0.4, alpha = 0.3) +
+  geom_point(aes(y = y_obs), colour = "firebrick",  size = 0.4, alpha = 0.3) +
+  geom_line(aes(y = x_true, colour = "x true"), linetype = "dashed", linewidth = 0.7) +
+  geom_line(aes(y = y_true, colour = "y true"), linetype = "dashed", linewidth = 0.7) +
+  geom_line(aes(y = z_true, colour = "z true"), linetype = "dashed", linewidth = 0.7) +
+  geom_line(aes(y = x_sm,   colour = "x ERTS"), linewidth = 1.0) +
+  geom_line(aes(y = y_sm,   colour = "y ERTS"), linewidth = 1.0) +
+  geom_line(aes(y = z_sm,   colour = "z ERTS"), linewidth = 1.0) +
+  scale_colour_manual(values = c(
+    "x true" = "steelblue", "y true" = "firebrick", "z true" = "darkgreen",
+    "x ERTS" = "navy",      "y ERTS" = "darkred",   "z ERTS" = "forestgreen"
+  )) +
+  labs(title = "Step 2: ERTS smoothed state (all components)", x = "Time", y = "State", colour = "") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+---
+
+## Step 4 — JWENDy: RSS refinement
+
+Warm-start from $U_0 = [U^o_\text{ERTS} \mid \hat{U}^u_\text{ERTS}]$, $p_0 = \hat{p}_\text{IRLS2}$.
+Observed columns are fixed at the ERTS smoothed $x, y$; $z$ is free.
+
+Objective:
+$$\text{obj}(U^u, p) = \|r(U, p)\|^2$$
+
+where $r(U, p) = g(U, p, t) - b(U, t)$ is the weak residual vector.
+
+Gradient w.r.t. $p$: analytic via $2\,J_p r^\top r$.
+Gradient w.r.t. $U^u$: analytic via `J_u_rss`.
+
+```{r step4-jwendy, message=FALSE}
+# Build a fresh joint system on the ERTS-smoothed full state from Step 2.
+devtools::load_all()
+
+res4_base <- solveWendy(f, U_smooth_all, tt, method = "IRLS",
+                        control = list(optimize = FALSE, estimate_u0 = FALSE,
+                                       include_boundary_layer = TRUE, test_fun_type = "SSL"))
+# plot(res4_base$V[1,])
+
+prob   <- res4_base$wendy_problems_joint[[1]]
+V_mat  <- as.array(prob$V$cpu())     # augmented joint V
+K_int  <- prob$bl$K_interior
+K_bl   <- prob$bl$K_bl
+
+# # First BL row (peak at t_1, sweeping right)
+# plot(V_mat[K_int + 1, ], type = "h",
+#      main = "First left-BL row (SSL)")
+
+# # All BL rows overlaid
+# matplot(t(V_mat[(K_int + 1):(K_int + K_bl), ]),
+#         type = "l", lty = 1,
+#         main = sprintf("All %d BL test functions (SSL)", K_bl))
+
+sys4      <- res4_base$system_joint
+U4_fit    <- res4_base$U
+tt4       <- as.vector(res4_base$tt)
+n4        <- nrow(U4_fit)
+
+# Observed columns fixed at ERTS smooth; free variable is z only
+U4_obs_fixed <- U_smooth_all[, obs_idx]   # n x 2 from Step 2 ERTS
+
+make_U4 <- function(u_free) cbind(U4_obs_fixed, matrix(u_free, ncol = 1))
+
+# Weak residual vector r(U, p) = g(U,p,tt) - b(U,tt)
+resid4 <- function(U, p) {
+  b <- sys4$build_compute_b(U, tt4)
+  as.numeric(sys4$g(U, p, tt4) - b)
+}
+
+obj4 <- function(theta) {
+  p      <- theta[seq_len(J)]
+  u_free <- theta[(J + 1L):length(theta)]
+  U      <- make_U4(u_free)
+  r      <- resid4(U, p)
+  sum(r^2)
+}
+
+grad4 <- function(theta) {
+  p      <- theta[seq_len(J)]
+  u_free <- theta[(J + 1L):length(theta)]
+  U      <- make_U4(u_free)
+  b      <- sys4$build_compute_b(U, tt4)
+  r      <- as.numeric(sys4$g(U, p, tt4) - b)
+
+  # analytic ∂/∂p: 2 * Jp_r(U,p,tt)ᵀ r
+  Jp_r_mat <- as.matrix(sys4$Jp_r(U, p, tt4))   # KD x J
+  gp       <- 2 * as.numeric(t(Jp_r_mat) %*% r)
+
+  # analytic ∂RSS/∂U: 2*(∂r/∂U)ᵀ r  →  extract free (unobserved) columns
+  gU_full <- sys4$J_u_rss(U, p, tt4, b)         # n4 x D
+  gu      <- gU_full[, unobs_idx]                # n4-vector
+
+  c(gp, gu)
+}
+
+# Warm start: p from IRLS2, z from ERTS smoother (Step 2)
+p0_step4 <- p_hat2
+u0_step4 <- U_smooth_all[, unobs_idx]
+
+message("Step 4: JWENDy RSS optimisation ...")
+opt4 <- optim(
+  par     = c(p0_step4, u0_step4),
+  fn      = obj4,
+  gr      = grad4,
+  method  = "L-BFGS-B",
+  control = list(maxit = 1000, trace = 2)
+)
+
+message(sprintf("Step 4 done. convergence=%d  obj=%.4f", opt4$convergence, opt4$value))
+
+p_hat4   <- opt4$par[seq_len(J)]
+U_u_hat4 <- opt4$par[(J + 1L):length(opt4$par)]
+U_full4  <- make_U4(U_u_hat4)
+
+cat(sprintf("\np*      = [%s]\n", paste(sprintf("%.4f", p_star),  collapse = ", ")))
+cat(sprintf("p̂_s4    = [%s]  rel err = %.4f\n",
+            paste(sprintf("%.4f", p_hat4), collapse = ", "), rel_err(p_hat4, p_star)))
+```
+
+```{r step4-plot-z}
+df4 <- data.frame(
+  t       = tt4,
+  z_true  = U_true[seq_len(n4), 3],
+  z_hat1  = U_u_hat1[seq_len(n4)],
+  z_hat4  = U_u_hat4
+)
+
+ggplot(df4, aes(x = t)) +
+  geom_line(aes(y = z_true, colour = "true"),  linewidth = 0.8, linetype = "dashed") +
+  geom_line(aes(y = z_hat1, colour = "step1"), linewidth = 0.7, alpha = 0.7) +
+  geom_line(aes(y = z_hat4, colour = "step4"), linewidth = 0.8) +
+  scale_colour_manual(values = c(true = "darkgreen", step1 = "steelblue", step4 = "firebrick")) +
+  labs(title = "Step 4: refined z vs Step 1 vs true", x = "Time", y = "z", colour = "") +
+  theme_bw() + theme(legend.position = "bottom")
+```
+
+---
+
+## Summary
+
+```{r summary}
+results <- data.frame(
+  Method  = c("True p*", "Step 1 (WNLL joint)", "Step 2 (IRLS + ERTS)", "Step 4 (JWENDy RSS)"),
+  sigma   = c(p_star[1], p_hat1[1], p_hat2[1], p_hat4[1]),
+  rho     = c(p_star[2], p_hat1[2], p_hat2[2], p_hat4[2]),
+  beta    = c(p_star[3], p_hat1[3], p_hat2[3], p_hat4[3]),
+  rel_err = c(NA, rel_err(p_hat1, p_star), rel_err(p_hat2, p_star), rel_err(p_hat4, p_star))
+)
+knitr::kable(results, digits = 4)
+```

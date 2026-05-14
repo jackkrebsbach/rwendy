@@ -24,7 +24,7 @@ NULL
 #'   columns are state variables.
 #' @param tt Numeric vector. Time points corresponding to rows of \code{U}.
 #' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
-#' @param method One of \code{"ROOT"}, \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
+#' @param method One of \code{"JOINT"}, \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 #'   \code{"OE"}, or \code{"HYBRID"}.
 #' @param control Named list of control parameters; merged with \code{default_control}.
 #'
@@ -35,7 +35,7 @@ NULL
 #' }
 #'
 #' @export
-solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("ROOT", "IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
+solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("JOINT", "IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
 
   check_suggested_packages()
 
@@ -54,7 +54,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   }
 
   device  <- if (is.character(control$device)) torch::torch_device(control$device) else control$device
-  methods <- control$interpolation_method
 
   # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
   J <- detect_n_params(f)
@@ -83,9 +82,11 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     J_t_sym   <- compute_symbolic_jacobian(f_expr, c(t_expr))
     J_up_sym  <- compute_symbolic_jacobian(J_u_sym, p_expr)
     J_upp_sym <- compute_symbolic_jacobian(J_up_sym, p_expr)
+    J_uu_sym  <- compute_symbolic_jacobian(J_u_sym, u_expr)
 
     J_t   <- build_fn(J_t_sym,   vars)  # ∇ₜf(p,u,t)
     J_u   <- build_fn(J_u_sym,   vars)  # ∇ᵤf(p,u,t)
+    J_uu  <- build_fn(J_uu_sym,  vars)  # ∇ᵤ∇ᵤf(p,u,t)
     J_up  <- build_fn(J_up_sym,  vars)  # ∇ₚ∇ᵤf(p,u,t)
     J_pp  <- build_fn(J_pp_sym,  vars)  # ∇ₚ∇ₚf(p,u,t)
     J_upp <- build_fn(J_upp_sym, vars)  # ∇ₚ∇ₚ∇ᵤf(p,u,t)
@@ -124,14 +125,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     # noise-to-signal ratio is low (<= 0.1) the observations are clean enough that
     # linear interpolation between them suffices.
     if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
-      nsr <- min(estimated_sd / apply(U, 2, sd))
-      if (nsr <= 0.15) {
-        control$interpolation_method <- "linear"
-      } else {
-        max_order     <- detect_max_state_order(f_orig_expr, u_expr)
-        interp_degree <- if (noise_dist == "lognormal") max_order else max_order + 1L
-        control$interpolation_method <- paste0("poly_ls_", interp_degree)
-      }
+      control$interpolation_method <- "gp"
     }
 
     if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
@@ -148,6 +142,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     })
 
     system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty, device)
+
+    wendy_problems_joint <- lapply(wendy_data, function(d) {
+      build_wendy_problem_joint(d, f_, J_u, J_uu, J_up, J_p, J_pp, J_upp,
+                                dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_,
+                                J = J, lip = lip, sig = sig, device = device, control = control)
+    })
+
+    system_joint <- build_wendy_system_joint(wendy_problems_joint, lip, control$diag_reg, control$use_interp_uncertainty, device)
 
     p1 <- wendy_problems[[1]]
 
@@ -175,8 +177,10 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     res$rc          <- p1$rc
     res$rc_errors   <- p1$rc_errors
     res$rc_radii    <- p1$rc_radii
-    res$wendy_problems <- wendy_problems
-    res$wendy_data     <- wendy_data
+    res$wendy_problems       <- wendy_problems
+    res$wendy_problems_joint <- wendy_problems_joint
+    res$system_joint         <- system_joint
+    res$wendy_data           <- wendy_data
     res$U              <- p1$U
     res$tt             <- wendy_data[[1]]$tt
     res$var            <- p1$var
@@ -186,26 +190,35 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
   opt_ctx <- list(
     system = if (method != "OE") system else NULL,
+    system_joint = if (method != "OE") system_joint else NULL,
     method = method,
     f = f,
     U_orig = U_orig,
     tt_orig = tt_orig,
     U_processed  = U,          # for lognormal: log-transformed + filtered; else same as U_orig
     tt_processed = as.vector(tt),
+    # U/tt that match the V, V_prime grid (post-interpolation if it happened)
+    U_sys        = if (method != "OE") wendy_data[[1]]$U          else NULL,
+    tt_sys       = if (method != "OE") as.vector(wendy_data[[1]]$tt) else NULL,
     lip = lip,
     f_orig_expr  = f_orig_expr,
     u_expr = u_expr,
     estimated_sd = estimated_sd,
     f_ = f_,
     J_p = J_p,
-    J_u = if (method != "OE") J_u else NULL,
+    J_u   = if (method != "OE") J_u   else NULL,
+    J_uu  = if (method != "OE") J_uu  else NULL,
+    J_up  = if (method != "OE") J_up  else NULL,
+    J_pp  = if (method != "OE") J_pp  else NULL,
+    J_upp = if (method != "OE") J_upp else NULL,
     J_t = if (method != "OE") J_t else NULL,
     dF_dt_   = if (method != "OE") dF_dt_   else NULL,
     d2F_dt2_ = if (method != "OE") d2F_dt2_ else NULL,
     d3F_dt3_ = if (method != "OE") d3F_dt3_ else NULL,
     sig = if (method != "OE") sig else NULL,
-    V       = if (method != "OE") p1$V   else NULL,
-    V_prime = if (method != "OE") p1$Vp  else NULL,
+    V          = if (method != "OE") p1$V          else NULL,
+    V_prime    = if (method != "OE") p1$Vp         else NULL,
+    min_radius = if (method != "OE") p1$min_radius else NULL,
     J = J,
     D = D,
     noise_dist  = noise_dist,
@@ -249,11 +262,20 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     res$Uhat <- if (noise_dist == "lognormal") exp(result$data$Uhat) else result$data$Uhat
   }
   
-  u0hat <- if(control$estimate_u0 && method != "OE") estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control) else NULL
-  state <- if(control$estimate_U_star && method != "OE") wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = sig) else NULL
+  boundary_state <- if (control$estimate_u0 && method != "OE") {
+    estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control)
+  } else NULL
+  state <- if (control$estimate_U_star && method != "OE") {
+    if (identical(control$smoother, "erts") && !is.null(res$phat)) {
+      wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = estimated_sd)
+    } else {
+      gp_smooth(U, tt, sigma2_n = as.numeric(sig)^2)
+    }
+  } else NULL
 
-  res$u0hat       <- u0hat
-  res$state       <- state
+  res$boundary_state <- boundary_state
+  res$u0hat          <- boundary_state$u0hat   # length-D vector, back-compat
+  res$state          <- state
 
   return(res)
 }

@@ -41,6 +41,7 @@ fdcoeffF <- function(k, xbar, x) {
   return(C)
 }
 
+#' @export
 estimate_std <- function(U, k = 6) {
   D <- ncol(U)
   std_vec <- numeric(D)

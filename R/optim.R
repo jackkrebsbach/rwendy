@@ -1,63 +1,56 @@
-# Gauss-Newton joint state and parameter estimate
-gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10, lambda = 1e-8,
-               alpha = 0){
-  mp1 <- nrow(U)
-  D <- ncol(U)
-
-  Vp <- as.array(V_prime$contiguous())
-  V  <- as.array(V$contiguous())
-
-  u0_vec <- as.vector(U)
-
-  nu <- length(u0_vec)
-  np <- length(p)
-
-  R_reg <- diag(c(rep(alpha, nu), rep(0, np)))
-
-  F_ <- function(U, p){
-    mp1   <- nrow(U)
-    J     <- length(p)
-    tU    <- t(U)
-    ttt   <- matrix(tt, nrow = 1L)
-    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    f_(rbind(p_mat, tU, ttt))
+# Solve (A + lam*I) x = b with ridge bumping; fall back to pseudoinverse if all
+# bumps fail. Shared by the Gauss-Newton variants below.
+solve_pd <- function(A, b, lam) {
+  n <- nrow(A)
+  for (i in seq_len(10L)) {
+    result <- tryCatch(solve(A + lam * diag(n), b), error = function(e) NULL)
+    if (!is.null(result)) return(result)
+    lam <- lam * 10
   }
+  MASS::ginv(A) %*% b
+}
 
-  root_target <- function(U, p){
-    U <- matrix(U, ncol = D)
-    as.vector(-Vp %*% U - V %*% F_(U, p))
-  }
+# Broyden-update Gauss-Newton loop with optional adaptive Tikhonov penalty on a
+# subset of theta. target_fn(theta) returns a residual vector to be driven to 0.
+#
+# penalty_mask: length-length(theta) 0/1 vector marking entries that receive the
+#   (theta_i - theta_ref_i)^2 penalty. NULL means all ones.
+# theta_ref: penalty pulls theta toward this; defaults to theta0.
+# alpha = 0 with sigma given means "adaptive": alpha_eff is recomputed each
+#   iteration from the current residual norm so the penalty decays naturally.
+# Returns the final theta vector.
+gauss_newton_iterate <- function(target_fn, theta0,
+                                  penalty_mask = NULL, theta_ref = NULL,
+                                  max_iter = 100, tol = 1e-8, lambda = 1e-8,
+                                  alpha = 0, sigma = NULL) {
+  n        <- length(theta0)
+  if (is.null(penalty_mask)) penalty_mask <- rep(1, n)
+  if (is.null(theta_ref))    theta_ref    <- theta0
+  n_mask   <- sum(penalty_mask)
+  sig_mean <- if (!is.null(sigma)) mean(as.numeric(sigma)) else NULL
 
-  joint_target <- function(theta) {
-    root_target(theta[seq_len(nu)], theta[nu + seq_len(np)])
-  }
-
-  solve_pd <- function(A, b, lam) {
-    n <- nrow(A)
-    for (i in seq_len(10L)) {
-      result <- tryCatch(solve(A + lam * diag(n), b), error = function(e) NULL)
-      if (!is.null(result)) return(result)
-      lam <- lam * 10
-    }
-    MASS::ginv(A) %*% b
-  }
-
-  theta_w <- c(u0_vec, p)
-  G_w     <- joint_target(theta_w)
-  J_w     <- jacobian(joint_target, theta_w)
+  theta_w <- theta0
+  G_w     <- target_fn(theta_w)
+  J_w     <- jacobian(target_fn, theta_w)
 
   for (iter in seq_len(max_iter)) {
-    u_cur        <- theta_w[seq_len(nu)]
-    penalty_grad <- c(alpha * (u_cur - u0_vec), rep(0, np))
+    # Recompute alpha each iteration from the current residual so the penalty
+    # decays naturally as we converge (large early, small at solution).
+    alpha_eff <- if (alpha == 0 && !is.null(sig_mean)) {
+      sum(G_w^2) / (n_mask * sig_mean^2)
+    } else alpha
+
+    grad_pen <- alpha_eff * penalty_mask * (theta_w - theta_ref)
+    R_reg    <- diag(alpha_eff * penalty_mask, nrow = n)
 
     JtJ   <- t(J_w) %*% J_w + R_reg
-    rhs   <- t(J_w) %*% G_w + penalty_grad
+    rhs   <- t(J_w) %*% G_w + grad_pen
     delta <- solve_pd(JtJ, rhs, lambda)
     theta_new <- theta_w - delta
 
     if (anyNA(delta) || !all(is.finite(delta))) break
 
-    G_new <- joint_target(theta_new)
+    G_new <- target_fn(theta_new)
     s <- -delta; y <- G_new - G_w
     ss <- as.numeric(t(s) %*% s)
     if (ss > 1e-14)
@@ -68,86 +61,204 @@ gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10, lambda = 1
 
     if (max(abs(delta)) < tol) break
   }
-
-  u_w  <- theta_w[seq_len(nu)]
-  p_w  <- theta_w[nu + seq_len(np)]
-
-  list(Uhat = matrix(u_w, ncol = D), p = p_w)
+  theta_w
 }
 
-# Joint state-parameter Ensemble Kalman Filter (stochastic EnKF).
-# Augmented state: [u(t); p]. Parameters are treated as constant between steps.
-# Returns list(U_star, p, p_ens) — smoothed state mean, parameter mean, full parameter ensemble.
-wendy_enkf <- function(p, U, tt, f_, sigma = NULL, N_e = 100, u0 = NULL) {
+# Gauss-Newton joint state and parameter estimate
+gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10,
+               lambda = 1e-8, alpha = 0, sigma = NULL){
+  D  <- ncol(U)
+  Vp <- as.array(V_prime$contiguous())
+  V  <- as.array(V$contiguous())
+
+  u0_vec <- as.vector(U)
+  nu <- length(u0_vec)
+  np <- length(p)
+
+  F_ <- function(U, p){
+    mp1   <- nrow(U)
+    J     <- length(p)
+    tU    <- t(U)
+    ttt   <- matrix(tt, nrow = 1L)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    f_(rbind(p_mat, tU, ttt))
+  }
+
+  joint_target <- function(theta) {
+    U_cur <- matrix(theta[seq_len(nu)], ncol = D)
+    p_cur <- theta[nu + seq_len(np)]
+    as.vector(Vp %*% U_cur + V %*% F_(U_cur, p_cur))
+  }
+
+  theta0  <- c(u0_vec, p)
+  mask    <- c(rep(1, nu), rep(0, np))
+  theta_w <- gauss_newton_iterate(joint_target, theta0,
+                                   penalty_mask = mask, theta_ref = theta0,
+                                   max_iter = max_iter, tol = tol,
+                                   lambda = lambda, alpha = alpha, sigma = sigma)
+
+  list(Uhat = matrix(theta_w[seq_len(nu)], ncol = D),
+       p    = theta_w[nu + seq_len(np)])
+}
+
+# GLS-Gauss-Newton joint state and parameter estimate.
+# Variant of gn(): weights the normal equations by S(p)^{-1}, evaluated once
+# at the initial p (held fixed across iterations as a preconditioner). No
+# Tikhonov penalty on the state, no Broyden safety floor — intentionally
+# minimal so it's easy to compare against gn().
+gls_gn <- function(p, U, tt, f_, V, V_prime, S,
+                   max_iter = 100, tol = 1e-8, lambda = 1e-8){
+  D  <- ncol(U)
+  Vp <- as.array(V_prime$contiguous())
+  V  <- as.array(V$contiguous())
+
+  u0_vec <- as.vector(U)
+  nu <- length(u0_vec)
+  np <- length(p)
+
+  F_ <- function(U, p){
+    mp1   <- nrow(U)
+    J     <- length(p)
+    tU    <- t(U)
+    ttt   <- matrix(tt, nrow = 1L)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    f_(rbind(p_mat, tU, ttt))
+  }
+
+  joint_target <- function(theta) {
+    U_cur <- matrix(theta[seq_len(nu)], ncol = D)
+    p_cur <- theta[nu + seq_len(np)]
+    as.vector(-Vp %*% U_cur - V %*% F_(U_cur, p_cur))
+  }
+
+  theta_w <- c(u0_vec, p)
+  G_w     <- joint_target(theta_w)
+  J_w     <- jacobian(joint_target, theta_w)
+
+  S_inv <- solve(as.array(S(p)$contiguous()))
+
+  for (iter in seq_len(max_iter)) {
+    JtSiJ <- t(J_w) %*% S_inv %*% J_w
+    delta <- solve_pd(JtSiJ, t(J_w) %*% S_inv %*% G_w, lambda)
+    theta_new <- theta_w - delta
+
+    G_new <- joint_target(theta_new)
+    s <- -delta; y <- G_new - G_w
+    J_w <- J_w + ((y - J_w %*% s) %*% t(s)) / as.numeric(t(s) %*% s)
+
+    theta_w <- theta_new
+    G_w     <- G_new
+
+    if (max(abs(delta)) < tol) break
+  }
+
+  list(Uhat = matrix(theta_w[seq_len(nu)], ncol = D),
+       p    = theta_w[nu + seq_len(np)])
+}
+
+# Gauss-Newton boundary refinement: hold interior U and p fixed, optimize only
+# the first and last r_c rows of U against an SSL+BL system built lazily.
+# Returns list(Uhat, p, g, build_compute_b) — the latter two reusable by gn_bl.
+gn_boundary <- function(p, U, tt,
+                        f_, J_u, J_uu, J_up, J_p, J_pp, J_upp,
+                        dF_dt_ = NULL, d2F_dt2_ = NULL, d3F_dt3_ = NULL,
+                        J_num, lip, sig, control,
+                        U_ref = NULL, fixed_radius = NULL,
+                        max_iter = 100, tol = 1e-10, lambda = 1e-8,
+                        alpha = 0, sigma = NULL) {
   mp1 <- nrow(U)
   D   <- ncol(U)
-  J   <- length(p)
   tt  <- as.vector(tt)
+  device <- if (is.character(control$device)) torch::torch_device(control$device) else control$device
 
-  noise_sd <- mean(as.numeric(if (!is.null(sigma)) sigma else estimate_std(U, k = 6)))
-  R_obs    <- noise_sd^2 * diag(D)
-
-  u0_init <- if (!is.null(u0)) as.numeric(u0) else as.vector(U[1, ])
-  if (length(u0_init) != D)
-    stop(sprintf("u0 must have length D = %d", D))
-
-  p_sd  <- pmax(abs(p) * 0.1, 1e-6)
-  u0_sd <- rep(noise_sd, D)
-
-  ens <- rbind(
-    u0_init + matrix(rnorm(D * N_e) * u0_sd, D, N_e),
-    p       + matrix(rnorm(J * N_e, sd = p_sd), J, N_e)
+  # Build SSL+BL system lazily.
+  # Use U_ref (original noisy data) for r_c selection — noisy data yields a
+  # larger change-point radius than the smooth stage-1 estimate, giving the
+  # boundary window enough coverage.
+  ctrl_ssl_bl <- modifyList(control, list(
+    test_fun_type          = "SSL",
+    include_boundary_layer = TRUE,
+    fixed_radius           = fixed_radius %||% control$fixed_radius
+  ))
+  wendy_data_bl <- list(U = U_ref %||% U, tt = tt, var = NULL)
+  prob <- build_wendy_problem_joint(
+    wendy_data_bl,
+    f_, J_u, J_uu, J_up, J_p, J_pp, J_upp,
+    dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_,
+    J = J_num, lip = lip, sig = sig, device = device, control = ctrl_ssl_bl
   )
+  sys <- build_wendy_system_joint(
+    list(prob), lip, control$diag_reg, control$use_interp_uncertainty, device
+  )
+  g               <- sys$g
+  build_compute_b <- sys$build_compute_b
 
-  rk4_step <- function(u, pi, t, dt) {
-    k1 <- as.vector(f_(matrix(c(pi, u,                  t         ), ncol = 1)))
-    k2 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k1,     t + 0.5*dt), ncol = 1)))
-    k3 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k2,     t + 0.5*dt), ncol = 1)))
-    k4 <- as.vector(f_(matrix(c(pi, u +     dt*k3,     t +     dt), ncol = 1)))
-    u + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
+  # r_c is an integer grid-step count; clamp so left/right ranges never overlap
+  r_c  <-   min(prob$rc, floor((mp1 - 1L) / 2L))
+  l_idx   <- seq_len(r_c)
+  r_idx   <- seq(mp1 - r_c + 1L, mp1)
+  int_idx <- seq(r_c + 1L, mp1 - r_c)
+
+  U_interior <- U[int_idx, , drop = FALSE]
+  U_left0    <- U[l_idx,   , drop = FALSE]
+  U_right0   <- U[r_idx,   , drop = FALSE]
+
+  n_l     <- length(l_idx) * D
+  n_r     <- length(r_idx) * D
+  nu_bdry <- n_l + n_r
+  u0_vec  <- c(as.vector(U_left0), as.vector(U_right0))
+
+  reconstruct_U <- function(theta) {
+    U_l <- matrix(theta[seq_len(n_l)],          nrow = length(l_idx), ncol = D)
+    U_r <- matrix(theta[n_l + seq_len(n_r)],    nrow = length(r_idx), ncol = D)
+    rbind(U_l, U_interior, U_r)
   }
 
-  solve_safe <- function(A, b) {
-    tryCatch(solve(A, b), error = function(e) MASS::ginv(A) %*% b)
+  joint_target <- function(theta) {
+    U_full <- reconstruct_U(theta)
+    g_val  <- as.numeric(g(U_full, p, tt)$contiguous())
+    b_val  <- as.numeric(build_compute_b(U_full, tt)$contiguous())
+    g_val - b_val
   }
 
-  U_mean       <- matrix(0, mp1, D)
-  U_mean[1, ]  <- rowMeans(ens[seq_len(D), , drop = FALSE])
-
-  for (k in seq_len(mp1 - 1L)) {
-    dt_k <- tt[k + 1L] - tt[k]
-
-    ens_f <- ens
-    for (i in seq_len(N_e)) {
-      u_i <- ens[seq_len(D), i]
-      p_i <- ens[D + seq_len(J), i]
-      ens_f[seq_len(D), i] <- tryCatch(
-        rk4_step(u_i, p_i, tt[k], dt_k),
-        error = function(e) u_i
-      )
-    }
-
-    y_k    <- as.vector(U[k + 1L, ])
-    mean_f <- rowMeans(ens_f)
-    A_f    <- ens_f - mean_f
-    H_ens  <- ens_f[seq_len(D), , drop = FALSE]
-    A_H    <- H_ens - rowMeans(H_ens)
-
-    C_uy <- (A_f %*% t(A_H)) / (N_e - 1)
-    C_yy <- (A_H %*% t(A_H)) / (N_e - 1) + R_obs
-
-    K      <- C_uy %*% solve_safe(C_yy, diag(D))
-    y_pert <- y_k + matrix(rnorm(D * N_e, sd = noise_sd), D, N_e)
-    ens    <- ens_f + K %*% (y_pert - H_ens)
-
-    U_mean[k + 1L, ] <- rowMeans(ens[seq_len(D), , drop = FALSE])
-  }
+  theta_w <- gauss_newton_iterate(joint_target, u0_vec,
+                                   max_iter = max_iter, tol = tol,
+                                   lambda = lambda, alpha = alpha, sigma = sigma)
 
   list(
-    U_star = U_mean,
-    p      = rowMeans(ens[D + seq_len(J), , drop = FALSE]),
-    p_ens  = t(ens[D + seq_len(J), , drop = FALSE])
+    Uhat            = reconstruct_U(theta_w),
+    p               = p,
+    g               = g,
+    build_compute_b = build_compute_b
   )
+}
+
+# Gauss-Newton joint state and parameter estimate with boundary-layer test functions
+gn_bl <- function(p, U, tt, build_compute_b, g, max_iter = 100, tol = 1e-10,
+                  lambda = 1e-8, alpha = 0, sigma = NULL){
+  D <- ncol(U)
+
+  u0_vec <- as.vector(U)
+  nu <- length(u0_vec)
+  np <- length(p)
+
+  joint_target <- function(theta) {
+    U_cur <- matrix(theta[seq_len(nu)], ncol = D)
+    p_cur <- theta[nu + seq_len(np)]
+    g_val <- as.numeric(g(U_cur, p_cur, tt)$contiguous())
+    b_val <- as.numeric(build_compute_b(U_cur, tt)$contiguous())
+    g_val - b_val
+  }
+
+  theta0  <- c(u0_vec, p)
+  mask    <- c(rep(1, nu), rep(0, np))
+  theta_w <- gauss_newton_iterate(joint_target, theta0,
+                                   penalty_mask = mask, theta_ref = theta0,
+                                   max_iter = max_iter, tol = tol,
+                                   lambda = lambda, alpha = alpha, sigma = sigma)
+
+  list(Uhat = matrix(theta_w[seq_len(nu)], ncol = D),
+       p    = theta_w[nu + seq_len(np)])
 }
 
 # Iterative (weak) re-weighted least squares
@@ -406,9 +517,9 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
   ))
 }
 
-# Equation Error initial guess for linear-in-parameters ODEs.
-# Smooths U with splines, approximates du/dt at midpoints, solves J_p(u,t) p = du/dt.
-ee_linear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, poly_degree = 3) {
+# Shared Equation-Error grid setup: optionally interpolate to max_points,
+# smooth columns with splines, return midpoint state, time, and du/dt.
+prepare_ee_grid <- function(U, tt, sigma = NULL, max_points = 256, poly_degree = 3) {
   tt <- as.vector(tt)
   if (!is.null(sigma) && nrow(U) < max_points) {
     nsr     <- min(sigma / apply(U, 2, sd))
@@ -419,48 +530,41 @@ ee_linear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, poly
     }))
     tt <- tt_fine
   }
-  t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
   U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
   u_mid    <- (U_smooth[-nrow(U_smooth), , drop = FALSE] + U_smooth[-1, , drop = FALSE]) / 2
   dudt     <- (U_smooth[-1, , drop = FALSE] - U_smooth[-nrow(U_smooth), , drop = FALSE]) / diff(tt)
-  n_mid    <- nrow(u_mid)
-  input    <- rbind(matrix(0, nrow = J, ncol = n_mid), t(u_mid), matrix(t_mid, nrow = 1))
+  t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
+  list(u_mid = u_mid, t_mid = t_mid, dudt = dudt, n_mid = nrow(u_mid))
+}
+
+# Equation Error initial guess for linear-in-parameters ODEs.
+# Smooths U with splines, approximates du/dt at midpoints, solves J_p(u,t) p = du/dt.
+ee_linear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, poly_degree = 3) {
+  grid <- prepare_ee_grid(U, tt, sigma, max_points, poly_degree)
+  n_mid <- grid$n_mid
+  input <- rbind(matrix(0, nrow = J, ncol = n_mid), t(grid$u_mid), matrix(grid$t_mid, nrow = 1))
   # Affine offset: b(u,t) = f(u, 0, t). For purely linear problems this is zero.
-  f0       <- f_(input)  # n_mid x D
-  jp_raw   <- J_p(input)  # n_mid x (D*J), D-outer J-inner per row
-  A_mat    <- do.call(rbind, lapply(seq_len(n_mid), function(i) {
+  f0     <- f_(input)
+  jp_raw <- J_p(input)  # n_mid x (D*J), D-outer J-inner per row
+  A_mat  <- do.call(rbind, lapply(seq_len(n_mid), function(i) {
     matrix(jp_raw[i, ], nrow = D, ncol = J, byrow = TRUE)
   }))
-  lm.fit(A_mat, as.vector(t(dudt - f0)))$coefficients
+  lm.fit(A_mat, as.vector(t(grid$dudt - f0)))$coefficients
 }
 
 # Equation Error initial guess for nonlinear-in-parameters ODEs.
 # Minimizes ||f(u_mid, p, t_mid) - du/dt||^2 via Levenberg-Marquardt.
 ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, poly_degree = 3) {
-  tt <- as.vector(tt)
-  if (!is.null(sigma) && nrow(U) < max_points) {
-    nsr     <- min(sigma / apply(U, 2, sd))
-    tt_fine <- seq(min(tt), max(tt), length.out = max_points)
-    method  <- if (nsr <= 0.1) "linear" else paste0("poly_ls_", poly_degree)
-    U  <- do.call(cbind, lapply(seq_len(ncol(U)), function(d) {
-      fit_col(U[, d], tt, tt_fine, method, sigma = sigma)$fit
-    }))
-    tt <- tt_fine
-  }
-  t_mid    <- (tt[-length(tt)] + tt[-1]) / 2
-  U_smooth <- apply(U, 2, function(col) smooth.spline(tt, col)$y)
-  u_mid    <- (U_smooth[-nrow(U_smooth), , drop = FALSE] + U_smooth[-1, , drop = FALSE]) / 2
-  dudt     <- (U_smooth[-1, , drop = FALSE] - U_smooth[-nrow(U_smooth), , drop = FALSE]) / diff(tt)
-  n_mid    <- nrow(u_mid)
-  dm_residual <- function(p) {
+  grid  <- prepare_ee_grid(U, tt, sigma, max_points, poly_degree)
+  u_mid <- grid$u_mid; t_mid <- grid$t_mid; dudt <- grid$dudt; n_mid <- grid$n_mid
+
+  build_input <- function(p) {
     p_mat <- matrix(rep(p, n_mid), nrow = J)
-    input <- rbind(p_mat, t(u_mid), matrix(t_mid, nrow = 1))
-    as.vector(t(f_(input) - dudt))
+    rbind(p_mat, t(u_mid), matrix(t_mid, nrow = 1))
   }
+  dm_residual <- function(p) as.vector(t(f_(build_input(p)) - dudt))
   dm_jacobian <- function(p) {
-    p_mat  <- matrix(rep(p, n_mid), nrow = J)
-    input  <- rbind(p_mat, t(u_mid), matrix(t_mid, nrow = 1))
-    jp_raw <- J_p(input)  # n_mid x (D*J), D-outer J-inner per row
+    jp_raw <- J_p(build_input(p))  # n_mid x (D*J), D-outer J-inner per row
     do.call(rbind, lapply(seq_len(n_mid), function(i) {
       matrix(jp_raw[i, ], nrow = D, ncol = J, byrow = TRUE)
     }))
@@ -468,139 +572,164 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   nls.lm(rep(1, J), fn = dm_residual, jac = dm_jacobian)$par
 }
 
-# Run a single optimization pass given a pre-built wendy system.
-# Returns list(p, data, objective) where objective = wnll(phat) for comparing starts.
-.run_wendy_optimization <- function(ctx, p0) {
-  system       <- ctx$system
-  method       <- ctx$method
-  f            <- ctx$f
-  U            <- ctx$U_orig
-  tt           <- ctx$tt_orig
-  U_processed  <- ctx$U_processed
-  tt_processed <- ctx$tt_processed
-  lip          <- ctx$lip
-  f_orig_expr  <- ctx$f_orig_expr
-  u_expr       <- ctx$u_expr
-  estimated_sd <- ctx$estimated_sd
-  f_           <- ctx$f_
-  J_p          <- ctx$J_p
-  J_u          <- ctx$J_u
-  J_t          <- ctx$J_t
-  dF_dt_       <- ctx$dF_dt_
-  d2F_dt2_     <- ctx$d2F_dt2_
-  d3F_dt3_     <- ctx$d3F_dt3_
-  sig          <- ctx$sig
-  V            <- ctx$V
-  V_prime      <- ctx$V_prime
-  J            <- ctx$J
-  D            <- ctx$D
-  noise_dist   <- ctx$noise_dist
-  control      <- ctx$control
+# Equation-error initial p0 used by every method that needs one. The
+# linear/nonlinear branch matches f's structure in p; lognormal uses the
+# log-transformed data so EE coordinates match f_.
+.ee_init_p0 <- function(ctx) {
+  ee_degree <- detect_max_state_order(ctx$f_orig_expr, ctx$u_expr) +
+               if (ctx$noise_dist == "lognormal") 0L else 1L
+  ee_fn <- if (ctx$lip) ee_linear else ee_nonlinear
+  ee_fn(ctx$U_processed, ctx$tt_processed, ctx$f_, ctx$J_p, ctx$J, ctx$D,
+        sigma = ctx$estimated_sd, poly_degree = ee_degree)
+}
 
-  g <- system$g
-  b <- system$b
-  G <- system$G
-  L <- system$L
-  W <- system$W
-  Jp_r <- system$Jp_r
-  S <- system$S
-  wnll <- system$wnll
-  J_wnll <- system$J_wnll
-  H_wnll <- system$H_wnll
+# OLS fallback for linear-in-p methods that need a warm-start p0 (MLE, IRLS,
+# HYBRID, JOINT stage 1). NIRLS/NOLS use user-supplied or EE p0 directly.
+.ols_warmstart <- function(ctx, G_cont, b_cont) {
+  ols(G_cont, b_cont, ctx$system$L)$p
+}
 
-  # Compute p0 via equation error when none is supplied.
-  # Needed for: all nonlinear methods, and OE (no p0 fallback).
-  # Linear OLS/IRLS don't need p0; MLE+lip and HYBRID+lip  use OLS to initialize
-  if (is.null(p0) && (!lip || method == "OE")) {
-    ee_degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
-    # For lognormal, f_ operates on z = log(x), so EE must receive the
-    # log-transformed data (U_processed/tt_processed) so that u_mid and dudt
-    # are in the same coordinate system as f_.  For addgaussian, U_processed
-    # and tt_processed are identical to U_orig/tt_orig.
-    U_ee  <- U_processed
-    tt_ee <- tt_processed
-    p0 <- if (lip) {
-      ee_linear(U_ee, tt_ee, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
-    } else {
-      ee_nonlinear(U_ee, tt_ee, f_, J_p, J, D, sigma = estimated_sd, poly_degree = ee_degree)
-    }
+.run_ols <- function(ctx, p0, G_cont, b_cont) {
+  sys <- ctx$system
+  if (ctx$lip) ols(G_cont, b_cont, sys$L)
+  else         nols(sys$g, b_cont, sys$L, sys$Jp_r, p0 = p0, reg = 10e-10)
+}
+
+.run_irls <- function(ctx, p0, G_cont, b_cont) {
+  sys <- ctx$system
+  if (ctx$lip) {
+    if (is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
+    irls(G_cont, b_cont, sys$L, p0 = p0, W = sys$W, max_its = ctx$control$max_iterates)
+  } else {
+    nirls(sys$g, b_cont, sys$L, sys$Jp_r, p0 = p0, W = sys$W, max_its = ctx$control$max_iterates)
   }
-  
-  # Convert from torch tensors to R arrays (not needed for OE)
-  if (method != "OE") {
-    b_cont <- as.array(b$contiguous())
-    G_cont <- as.array(G$contiguous())
+}
+
+.run_mle <- function(ctx, p0, G_cont, b_cont) {
+  sys <- ctx$system
+  if (ctx$lip && is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
+  mle(p0, sys$wnll, sys$J_wnll, sys$H_wnll, sys$S, sys$Jp_r, ctx$control)
+}
+
+# For lognormal noise the user-supplied f sees observed (positive) data, but
+# the WENDy system fits in log space; OE drives dz/dt for z = log(u) and
+# compares to log-observations.
+.f_for_oe <- function(ctx) {
+  if (ctx$noise_dist == "lognormal") {
+    f_user <- ctx$f
+    function(z, p, t) f_user(exp(z), p, t) / exp(z)
+  } else {
+    ctx$f
+  }
+}
+
+.run_oe <- function(ctx, p0, G_cont, b_cont) {
+  if (ctx$noise_dist == "lognormal") {
+    output_error(.f_for_oe(ctx), ctx$U_processed, ctx$tt_processed, p0)
+  } else {
+    output_error(ctx$f, ctx$U_orig, ctx$tt_orig, p0)
+  }
+}
+
+.run_hybrid <- function(ctx, p0, G_cont, b_cont) {
+  mle_result <- .run_mle(ctx, p0, G_cont, b_cont)
+  if (ctx$noise_dist == "lognormal") {
+    output_error(.f_for_oe(ctx), ctx$U_processed, ctx$tt_processed, mle_result$p)
+  } else {
+    output_error(ctx$f, ctx$U_orig, ctx$tt_orig, mle_result$p)
+  }
+}
+
+# JOINT: MLE-warm-started Gauss-Newton on the joint (U, p) residual, with an
+# optional boundary-refinement second pass.
+#   stage 1: MLE on p (with OLS warm-start for linear-in-p) + state smoother
+#   stage 2: gn() / gls_gn() for MSG or gn_bl() for SSL+BL — joint U and p
+#   stage 3 (optional, two_stage = TRUE): gn_boundary refines corner U rows
+# control$gn_method ("std" default, or "gls") selects the MSG stage-2 solver.
+.run_joint <- function(ctx, p0, G_cont, b_cont) {
+  control <- ctx$control
+  sys     <- ctx$system
+  is_ssl  <- identical(control$test_fun_type, "SSL")
+  use_gls <- identical(control$gn_method, "gls")
+
+  # Use the grid that V/V_prime were built on. For lognormal this is already
+  # log-space (wendy_data is built post preprocess_data); for sparse data it is
+  # the densified interpolated grid.
+  U_gn  <- ctx$U_sys
+  tt_gn <- ctx$tt_sys
+
+  if (ctx$lip && is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
+  p <- mle(p0, sys$wnll, sys$J_wnll, sys$H_wnll, sys$S, sys$Jp_r, control)$p
+
+  smooth <- if (identical(control$smoother, "erts")) {
+    wendy_erts(U_gn, ctx$f_, ctx$J_u, tt_gn, p, control, sigma = ctx$sig)
+  } else {
+    gp_smooth(U_gn, tt_gn, sigma2_n = as.numeric(ctx$sig)^2)
   }
 
-  data <- switch(method,
-    # ROOT: Gauss-Newton 
-    ROOT = {
-      U_gn  <- if (noise_dist == "lognormal") U_processed  else U
-      tt_gn <- if (noise_dist == "lognormal") tt_processed else tt
+  res1 <- if (is_ssl) {
+    if (use_gls) warning("gn_method = 'gls' has no SSL variant; falling back to gn_bl.", call. = FALSE)
+    sj <- ctx$system_joint
+    gn_bl(p, smooth$U_star, tt_gn, sj$build_compute_b, sj$g,
+          alpha = control$gn_alpha %||% 0, sigma = ctx$sig)
+  } else if (use_gls) {
+    gls_gn(p, smooth$U_star, tt_gn, ctx$f_, ctx$V, ctx$V_prime, sys$S)
+  } else {
+    gn(p, smooth$U_star, tt_gn, ctx$f_, ctx$V, ctx$V_prime,
+       alpha = control$gn_alpha %||% 0, sigma = ctx$sig)
+  }
 
-      # Initial parameter estimate
-      if (lip) {
-        if (is.null(p0)) p0 <- ols(G_cont, b_cont, L)$p
-        p <- irls(G_cont, b_cont, L, p0 = p0, W = W, max_its = control$max_iterates)$p
-      } else {
-        p <- nirls(g, b_cont, L, Jp_r, p0 = p0, W = W, max_its = control$max_iterates)$p
-      }
+  if (!isTRUE(control$two_stage)) return(res1)
 
-      smooth <- wendy_erts(U_gn, f_, J_u, tt_gn, p, control, sigma = sig)
-      gn(p, smooth$U_star, tt_gn, f_, V, V_prime, alpha = control$gn_alpha %||% 0)
-    },
-    # Ordinary Least Squares on the weak residual
-    OLS = if (lip) {
-      ols(G_cont, b_cont, L)
-    } else {
-      nols(g, b_cont, L, Jp_r, p0 = p0, reg = 10e-10)
-    },
-    # Iterative Reweighted Least Squares on the weak residual
-    IRLS = if (lip) {
-      if (is.null(p0)) {
-        p0 <- ols(G_cont, b_cont, L)$p
-      }
-      irls(G_cont, b_cont, L, p0 = p0, W = W, max_its = control$max_iterates)
-    } else {
-      nirls(g, b_cont, L, Jp_r, p0 = p0, W = W, max_its = control$max_iterates)
-    },
-    # Maximum Likelihood Estimation
-    MLE = {
-      if (lip && is.null(p0)) {
-        p0 <- ols(G_cont, b_cont, L)$p
-      }
-      mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
-    },
-    # Output Error
-    OE = if (noise_dist == "lognormal") {
-      # U_processed is log(y): solve dz/dt = f(exp(z),p,t)/exp(z), compare to log(obs)
-      f_log <- function(z, p, t) f(exp(z), p, t) / exp(z)
-      output_error(f_log, U_processed, tt_processed, p0)
-    } else {
-      output_error(f, U, tt, p0)
-    },
-    # WENDy-MLE + OE
-    HYBRID = {
-      if (lip && is.null(p0)) {
-        p0 <- ols(G_cont, b_cont, L)$p
-      }
-      mle_result <- mle(p0, wnll, J_wnll, H_wnll, S, Jp_r, control)
-      if (noise_dist == "lognormal") {
-        f_log <- function(z, p, t) f(exp(z), p, t) / exp(z)
-        output_error(f_log, U_processed, tt_processed, mle_result$p)
-      } else {
-        output_error(f, U, tt, mle_result$p)
-      }
-    }
+  # MSG pins the boundary refinement to the stage-1 radius; SSL re-detects
+  # its own change-point radius from U_ref (noisy data).
+  fixed_radius_arg <- if (is_ssl) NULL else ctx$min_radius
+  gn_boundary(
+    res1$p, res1$Uhat, tt_gn,
+    ctx$f_, ctx$J_u, ctx$J_uu, ctx$J_up, ctx$J_p, ctx$J_pp, ctx$J_upp,
+    dF_dt_ = ctx$dF_dt_, d2F_dt2_ = ctx$d2F_dt2_, d3F_dt3_ = ctx$d3F_dt3_,
+    J_num = ctx$J, lip = ctx$lip, sig = ctx$sig, control = control,
+    U_ref = U_gn, fixed_radius = fixed_radius_arg,
+    alpha = control$gn_alpha %||% 0, sigma = ctx$sig
   )
+}
+
+.method_runners <- list(
+  JOINT  = .run_joint,
+  OLS    = .run_ols,
+  IRLS   = .run_irls,
+  MLE    = .run_mle,
+  OE     = .run_oe,
+  HYBRID = .run_hybrid
+)
+
+# Run a single optimization pass given a pre-built wendy system.
+# Returns list(p, data, objective) where objective = wnll(phat) (or SSR for
+# OE/HYBRID), used to rank multistart results.
+.run_wendy_optimization <- function(ctx, p0) {
+  method <- ctx$method
+  runner <- .method_runners[[method]]
+  if (is.null(runner)) stop("Unknown method: ", method, call. = FALSE)
+
+  # Auto-init p0 via equation error when none is supplied. Linear OLS/IRLS
+  # can solve in closed form; everyone else needs a starting p.
+  if (is.null(p0) && (!ctx$lip || method == "OE")) {
+    p0 <- .ee_init_p0(ctx)
+  }
+
+  # OE drives an ODE; the other methods consume base-R arrays from the
+  # weak-residual system.
+  G_cont <- if (method != "OE") as.array(ctx$system$G$contiguous()) else NULL
+  b_cont <- if (method != "OE") as.array(ctx$system$b$contiguous()) else NULL
+
+  data <- runner(ctx, p0, G_cont, b_cont)
 
   phat <- data$p
   objective <- if (method %in% c("OE", "HYBRID")) {
     data$ssr %||% Inf
   } else {
-    tryCatch(wnll(phat), error = function(e) Inf)
+    tryCatch(ctx$system$wnll(phat), error = function(e) Inf)
   }
-
   list(p = phat, data = data, objective = objective)
 }
 

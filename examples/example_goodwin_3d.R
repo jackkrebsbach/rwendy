@@ -13,7 +13,7 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-npoints <- 32
+npoints <- 128
 p_star <- c(3.4884, 0.0969, 1, 10, 0.0969, 0.0581, 0.0969, 0.0775)
 p0 <- c(3, 0.1, 4, 12, 0.1, 0.1, 0.1, 0.1)
 u0 <- c(0.3617, 0.9137, 1.393)
@@ -36,8 +36,10 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-control <- list(optimize = FALSE)
-res <- solveWendy(f, U, tt, method = "IRLS", control = control)
+control <- list(optimize = TRUE)
+res <- solveWendy(f, U, p0=rep(1, length(p_star)), tt, method = "JOINT", control = control)
+
+rel_err(res$phat, p_star)
 
 # p_hat <- res$phat
 
@@ -61,5 +63,5 @@ res <- solveWendy(f, U, tt, method = "IRLS", control = control)
 #     name = "fit"
 #   )
 
-plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
-abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
+# plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
+# abline(v = res$wendy_problems[[1]]$min_radius, col = "red")

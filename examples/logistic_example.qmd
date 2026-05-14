@@ -1,5 +1,5 @@
 ---
-title: "Logistic ODE — WENDy ROOT vs IRLS"
+title: "Logistic ODE — WENDy JOINT vs IRLS"
 format:
   html:
     code-fold: false
@@ -22,7 +22,7 @@ f <- function(u, p, t) c(p[1] * u[1] - p[2] * u[1]^2)
 
 p_star  <- c(1, 0.1)
 u0      <- c(0.1)
-npoints <- 128
+npoints <- 512
 t_span  <- c(0, 10)
 tt      <- matrix(seq(t_span[1], t_span[2], length.out = npoints), ncol = 1)
 
@@ -30,8 +30,10 @@ modelODE <- function(tvec, state, parms) list(as.vector(f(state, parms, tvec)))
 sol      <- deSolve::ode(y = u0, times = tt, func = modelODE, parms = p_star)
 U_true   <- sol[, 2, drop = FALSE]
 
-set.seed(42)
-nr       <- 0.25
+set.seed(52)
+
+nr <- 0.7
+
 noise_sd <- nr * sqrt(mean(U_true^2))
 U_noisy  <- U_true + matrix(rnorm(npoints, sd = noise_sd), ncol = 1)
 
@@ -55,43 +57,60 @@ ggplot(df_data, aes(x = t)) +
   theme_bw()
 ```
 
-## Solve with ROOT and IRLS
+## Solve with JOINT and IRLS
 
 ```{r solve, message=FALSE}
-res_root <- solveWendy(f, U_noisy, tt, method = "ROOT")
+devtools::load_all()
 
-res_irls <- solveWendy(f, U_noisy, tt, method = "IRLS")
+res_root <- solveWendy(f, U_noisy, tt, method = "JOINT",
+                          control = list(
+                             two_stage = TRUE,
+                             test_fun_type = "SSL",
+                             include_boundary_layer = FALSE,
+                             smoother = "erts",
+                             max_points_interp = 200
+                           )
+                        )
+
+res_mle<- solveWendy(f, U_noisy, tt, method = "MLE")
 
 cat(sprintf("p* = [%s]\n",      paste(sprintf("%.4f", p_star),          collapse = ", ")))
-cat(sprintf("ROOT p̂ = [%s]  rel_err = %.4f\n",
+cat(sprintf("JOINT p̂ = [%s]  rel_err = %.4f\n",
             paste(sprintf("%.4f", res_root$phat), collapse = ", "),
             rel_err(res_root$phat, p_star)))
-cat(sprintf("IRLS p̂ = [%s]  rel_err = %.4f\n",
-            paste(sprintf("%.4f", res_irls$phat), collapse = ", "),
-            rel_err(res_irls$phat, p_star)))
+cat(sprintf("MLE p̂ = [%s]  rel_err = %.4f\n",
+            paste(sprintf("%.4f", res_mle$phat), collapse = ", "),
+            rel_err(res_mle$phat, p_star)))
 ```
 
-## Estimated state from WENDy ROOT
+## Estimated state from WENDy JOINT
 
 ```{r plot-state}
-U_root <- res_root$Uhat
+U_root  <- res_root$Uhat
+tt_root <- as.vector(res_root$tt)  # interpolated grid when sparse data was densified
 
-df_state <- data.frame(
-  t      = as.vector(tt),
-  true   = as.vector(U_true),
-  noisy  = as.vector(U_noisy),
-  root   = as.vector(U_root)
+df_obs <- data.frame(
+  t     = as.vector(tt),
+  true  = as.vector(U_true),
+  noisy = as.vector(U_noisy)
 )
 
-ggplot(df_state, aes(x = t)) +
-  geom_point(aes(y = noisy, colour = "Noisy data"),
+df_root <- data.frame(
+  t    = tt_root,
+  root = as.vector(U_root)
+)
+
+ggplot() +
+  geom_point(data = df_obs,  aes(x = t, y = noisy, colour = "Noisy data"),
              size = 0.8, alpha = 0.6) +
-  geom_line(aes(y = true,  colour = "True state"),  linewidth = 0.9) +
-  geom_line(aes(y = root,  colour = "ROOT estimate"), linewidth = 0.9, linetype = "dashed") +
+  geom_line(data = df_obs,   aes(x = t, y = true,  colour = "True state"),
+            linewidth = 0.9) +
+  geom_line(data = df_root,  aes(x = t, y = root,  colour = "JOINT estimate"),
+            linewidth = 0.9, linetype = "dashed") +
   scale_colour_manual(values = c("Noisy data"    = "grey60",
                                  "True state"    = "steelblue",
-                                 "ROOT estimate" = "firebrick")) +
-  labs(title = "WENDy ROOT — estimated state",
+                                 "JOINT estimate" = "firebrick")) +
+  labs(title = "WENDy JOINT — estimated state Single Scale Local (Boundary Layer)",
        x = "Time", y = "u(t)", colour = NULL) +
   theme_bw() +
   theme(legend.position = "bottom")

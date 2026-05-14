@@ -1,109 +1,184 @@
+# Leibniz expansion of g^(n)(t*) where g(t) = phi(t) F(p,u(t),t) + phi'(t) u(t)
+# and trajectory derivatives F^(m) are passed in (precomputed via dF_dt_ etc.).
+#
+# phi_scalars: list of length (order+2) with phi^(0..order+1) at the endpoint.
+# f_derivs:    list of length (order+1) with F^(0..order) at the endpoint.
+# u_vec:       state at the endpoint (numeric vector of length D).
+# order:       derivative order n.
+g_deriv_at_endpoint <- function(phi_scalars, f_derivs, u_vec, order) {
+  n      <- order
+  result <- phi_scalars[[n + 2]] * u_vec                        # φ^(n+1)·u
+  for (k in seq(0, n)) {
+    result <- result + choose(n, k) * phi_scalars[[k + 1]] * f_derivs[[n - k + 1]]
+  }
+  if (n >= 1) {
+    for (k in seq(0, n - 1)) {
+      result <- result + choose(n, k) * phi_scalars[[k + 2]] * f_derivs[[n - k]]
+    }
+  }
+  result
+}
 
-#' Estimate the initial condition using Euler-MacLaurin Trapezoid correction on the function g(t) := φ(t)f(p,u,t) + φ′(t)u(t)
+# Build the EM correction closure for the augmented BL residual.
+#
+# bl_phi_t1, bl_phi_tM: (K_bl × 5) matrices with raw phi^(0..4) at the
+#   left/right boundary for each BL test function (columns = derivative orders).
+# f_, dF_dt_, d2F_dt2_, d3F_dt3_: trajectory-derivative callables of the RHS.
+#
+# Returns function(U, p, tt) -> (K_bl × D) torch tensor, or NULL when K_bl == 0.
+# EM_k = -dt²/12·(g_k'(t_M) - g_k'(t_1)) + dt⁴/720·(g_k'''(t_M) - g_k'''(t_1))
+# with g(t) = phi_k(t) F(p,u(t),t) + phi_k'(t) u(t).
+build_em_correction <- function(bl_phi_t1, bl_phi_tM,
+                                f_, dF_dt_, d2F_dt2_, d3F_dt3_,
+                                dt, scale = 1.0, device = torch::torch_device("cpu")) {
+  if (is.null(bl_phi_t1) || nrow(bl_phi_t1) == 0L) return(NULL)
+  dtype <- torch::torch_float64()
+  K_bl  <- nrow(bl_phi_t1)
+  c2    <- scale * dt^2 / 12
+  c4    <- scale * dt^4 / 720
+
+  function(U, p, tt) {
+    D    <- ncol(U)
+    M    <- nrow(U)
+    u_t1 <- as.numeric(U[1L, ])
+    u_tM <- as.numeric(U[M, ])
+    t1   <- tt[1L]
+    tM   <- tt[M]
+
+    eval_derivs <- function(u_pt, t_pt) {
+      input <- matrix(c(p, u_pt, t_pt), ncol = 1L)
+      list(
+        as.vector(f_(input)),
+        as.vector(dF_dt_(input)),
+        as.vector(d2F_dt2_(input)),
+        as.vector(d3F_dt3_(input))
+      )
+    }
+
+    f_derivs_t1 <- eval_derivs(u_t1, t1)
+    f_derivs_tM <- eval_derivs(u_tM, tM)
+
+    em <- matrix(0, nrow = K_bl, ncol = D)
+    for (k in seq_len(K_bl)) {
+      phi_t1 <- as.list(bl_phi_t1[k, ])   # phi^(0..4) at t_1
+      phi_tM <- as.list(bl_phi_tM[k, ])   # phi^(0..4) at t_M
+
+      g1_t1 <- g_deriv_at_endpoint(phi_t1, f_derivs_t1, u_t1, order = 1L)
+      g1_tM <- g_deriv_at_endpoint(phi_tM, f_derivs_tM, u_tM, order = 1L)
+      g3_t1 <- g_deriv_at_endpoint(phi_t1, f_derivs_t1, u_t1, order = 3L)
+      g3_tM <- g_deriv_at_endpoint(phi_tM, f_derivs_tM, u_tM, order = 3L)
+
+      em[k, ] <- -c2 * (g1_tM - g1_t1) + c4 * (g3_tM - g3_t1)
+    }
+
+    torch::torch_tensor(em, dtype = dtype, device = device)
+  }
+}
+
+#' Estimate u0 and uM by minimising the augmented BL weak residual.
+#'
+#' Builds SSL boundary-layer test functions at the SSL change-point radius r_c,
+#' assembles the augmented residual (trapezoid + 2-term Euler-Maclaurin) and
+#' optimises only the two corner rows U[1, ] and U[M, ] via Levenberg-Marquardt.
+#' The interior of U (rows 2..M-1) is held at its observed values throughout.
+#' With K_bl*D ~ 20+ residual equations and 2*D unknowns, the LS is comfortably
+#' overdetermined and needs no regularisation; warm-started from the observed
+#' corner values.
+#'
+#' @return Named list with U_hat (full M x D state, interior verbatim, corners
+#'   replaced), u0hat (= U_hat[1, ]), uMhat (= U_hat[M, ]), and r_c.
 #' @export
-estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_params){
-  mp1 <- nrow(U)
-  D <- ncol(U)
-  J <- length(p)
+estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_params) {
+  M  <- nrow(U)
+  D  <- ncol(U)
+  J  <- length(p)
+  tt_vec <- as.vector(tt)
+  dt <- mean(diff(tt_vec))
 
-  data <- compute_r_c_hat(U, tt, test_function_params$S, test_function_params$p)
-  radius_c <- data$rc
-  diameter <- 2 * radius_c + 1
-  dt <- mean(diff(tt))
-  r <- dt * radius_c
-  lin <- seq(-r, r, length.out = diameter)
-  xx <- lin[2:(diameter-1)]
+  # SSL change-point radius (sets the BL test-function support).
+  data_rc <- compute_r_c_hat(U, tt, test_function_params$S, test_function_params$p)
+  r_c     <- data_rc$rc
 
-  ph <- test_function_derivative(psi, radius_c, dt, order = 0)
-  php <- test_function_derivative(psi, radius_c, dt, order = 1)
-  phpp <- test_function_derivative(psi, radius_c, dt, order = 2)
-  phppp <- test_function_derivative(psi, radius_c, dt, order = 3)
-  phpppp <- test_function_derivative(psi, radius_c, dt, order = 4)
+  # Build BL test-function blocks at orders 0..4 for left and right sides.
+  bl_left  <- lapply(0:4, function(ord) build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "left"))
+  bl_right <- lapply(0:4, function(ord) build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "right"))
+  n_bl <- nrow(bl_left[[1]])
+  K_bl <- 2L * n_bl
 
-  phxx     <- ph(xx)
-  scale    <- sqrt(sum(phxx^2))
+  # Trapezoid endpoint weights on BL rows (so V_BL %*% F is the trapezoid sum
+  # the EM correction is derived for).
+  apply_trap <- function(B) { B[, 1] <- B[, 1] * 0.5; B[, M] <- B[, M] * 0.5; B }
+  V_BL  <- rbind(apply_trap(bl_left[[1]]), apply_trap(bl_right[[1]]))   # K_bl x M
+  Vp_BL <- rbind(apply_trap(bl_left[[2]]), apply_trap(bl_right[[2]]))   # K_bl x M
 
-  # Store scaled phi derivatives as a named list — extensible to any order
-  phi_rows <- list(
-    phi0 = c(0, phxx               / scale, 0),
-    phi1 = c(0, php(xx)            / scale, 0),
-    phi2 = c(0, phpp(xx)           / scale, 0),
-    phi3 = c(0, phppp(xx)          / scale, 0),
-    phi4 = c(0, phpppp(xx)         / scale, 0)
+  # Endpoint phi^(0..4) per BL row (raw, used by boundary terms and EM).
+  bl_phi_t1 <- matrix(0, nrow = K_bl, ncol = 5)
+  bl_phi_tM <- matrix(0, nrow = K_bl, ncol = 5)
+  for (ord in 0:4) {
+    bl_phi_t1[1:n_bl,           ord + 1] <- bl_left [[ord + 1]][, 1]
+    bl_phi_tM[1:n_bl,           ord + 1] <- bl_left [[ord + 1]][, M]
+    bl_phi_t1[(n_bl + 1L):K_bl, ord + 1] <- bl_right[[ord + 1]][, 1]
+    bl_phi_tM[(n_bl + 1L):K_bl, ord + 1] <- bl_right[[ord + 1]][, M]
+  }
+
+  reconstruct_U <- function(theta) {
+    U_hat <- U
+    U_hat[1, ] <- theta[seq_len(D)]
+    U_hat[M, ] <- theta[(D + 1L):(2L * D)]
+    U_hat
+  }
+
+  residual_fn <- function(theta) {
+    U_hat <- reconstruct_U(theta)
+
+    # F(p, U_hat, t) on the t-grid: build_fn returns M x D (do_transpose = TRUE).
+    input  <- rbind(matrix(rep(p, M), nrow = J), t(U_hat), matrix(tt_vec, nrow = 1L))
+    F_eval <- f_(input)
+
+    trap_phiF  <- dt * (V_BL  %*% F_eval)        # K_bl x D
+    trap_phipU <- dt * (Vp_BL %*% U_hat)         # K_bl x D
+    bdry       <- bl_phi_t1[, 1] %o% U_hat[1, ] - bl_phi_tM[, 1] %o% U_hat[M, ]
+
+    u_t1 <- as.vector(U_hat[1, ])
+    u_tM <- as.vector(U_hat[M, ])
+    inp_t1 <- matrix(c(p, u_t1, tt_vec[1]), ncol = 1L)
+    inp_tM <- matrix(c(p, u_tM, tt_vec[M]), ncol = 1L)
+    fd_t1 <- list(as.vector(f_(inp_t1)), as.vector(dF_dt_(inp_t1)),
+                  as.vector(d2F_dt2_(inp_t1)), as.vector(d3F_dt3_(inp_t1)))
+    fd_tM <- list(as.vector(f_(inp_tM)), as.vector(dF_dt_(inp_tM)),
+                  as.vector(d2F_dt2_(inp_tM)), as.vector(d3F_dt3_(inp_tM)))
+
+    EM <- matrix(0, nrow = K_bl, ncol = D)
+    for (k in seq_len(K_bl)) {
+      phi_t1_k <- as.list(bl_phi_t1[k, ])
+      phi_tM_k <- as.list(bl_phi_tM[k, ])
+      g1_t1 <- g_deriv_at_endpoint(phi_t1_k, fd_t1, u_t1, order = 1L)
+      g1_tM <- g_deriv_at_endpoint(phi_tM_k, fd_tM, u_tM, order = 1L)
+      g3_t1 <- g_deriv_at_endpoint(phi_t1_k, fd_t1, u_t1, order = 3L)
+      g3_tM <- g_deriv_at_endpoint(phi_tM_k, fd_tM, u_tM, order = 3L)
+      EM[k, ] <- -(dt^2 / 12) * (g1_tM - g1_t1) + (dt^4 / 720) * (g3_tM - g3_t1)
+    }
+
+    r_aug <- trap_phiF + trap_phipU + bdry + EM   # K_bl x D
+    as.vector(r_aug)
+  }
+
+  # Warm start from the observed corner values.
+  theta0 <- c(as.vector(U[1, ]), as.vector(U[M, ]))
+  fit    <- nls.lm(par = theta0, fn = residual_fn)
+
+  u0hat <- as.numeric(fit$par[seq_len(D)])
+  uMhat <- as.numeric(fit$par[(D + 1L):(2L * D)])
+  U_hat <- U
+  U_hat[1, ] <- u0hat
+  U_hat[M, ] <- uMhat
+
+  list(
+    U_hat = U_hat,
+    u0hat = u0hat,
+    uMhat = uMhat,
+    r_c   = r_c
   )
-
-  n_bl <- max(1L, floor(radius_c / 5))
-  step <- max(1L, floor(radius_c / n_bl) - 2)
-  l <- length(phi_rows$phi0)
-
-  # Build test function derivative matrices
-  make_V <- function(row_vals) {
-    V <- matrix(0, nrow = n_bl, ncol = mp1)
-    for (i in seq_len(n_bl)) {
-      shift     <- radius_c + 1 - (i - 1) * step
-      trimmed   <- row_vals[shift:l]
-      s         <- length(trimmed)
-      if (s > 0) V[i, 1:s] <- trimmed
-    }
-    V
-  }
-
-  Vs <- lapply(phi_rows, make_V)
-
-  B        <- Vs$phi0[, 1]
-  Q        <- diag(c(0.5, rep(1, mp1 - 2), 0.5) * dt)
-  p_mat    <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-  input    <- rbind(p_mat, t(U), matrix(tt, nrow = 1L))
-  Fp       <- f_(input)
-  residual <- -(Vs$phi0 %*% Q %*% Fp + Vs$phi1 %*% Q %*% U)
-  u00      <- solve(crossprod(B), t(B) %*% residual)
-
-  # g derivative at t0 — takes named list of phi scalars and f-derivative quantities
-  # g^(n) = Σ_{k=0}^{n} C(n,k) φ^(k+1) f^(n-k)  +  φ^(n+1) u (from product rule on φf, plus derivative of φ′u term)
-  g_deriv_at_t0 <- function(phi_scalars, f_derivs, u0_vec, order) {
-    # phi_scalars[[k+1]] = φ^(k);  f_derivs[[m+1]] = d^m f/dt^m
-    # g = φF + φ'u, to calcualte g^(n) use Leibniz on each term:
-    #   d^n[φF]/dt^n = Σ_{k=0}^n C(n,k) φ^(k) F^(n-k)
-    #   d^n[φ'u]/dt^n = φ^(n+1)u + Σ_{k=0}^{n-1} C(n,k) φ^(k+1) F^(n-k-1) (using u^(0)=u, u^(m)=F^(m-1) for m≥1)
-    n  <- order
-    result <- phi_scalars[[n + 2]] * u0_vec          # φ^(n+1)·u
-    for (k in seq(0, n)) {
-      result <- result + choose(n, k) * phi_scalars[[k + 1]] * f_derivs[[n - k + 1]] # d^n[φF]/dt^n
-    }
-    if (n >= 1) { 
-      for (k in seq(0, n - 1)){
-        result <- result + choose(n, k) * phi_scalars[[k + 2]] * f_derivs[[n - k]] # remaining d^n[φ'u]/dt^n terms
-      }
-    }
-    result
-  }
-
-  un0 <- U[1,]
-  t0  <- tt[1]
-
-  for (iter in seq_len(5)) {
-    input <- c(p, un0, t0)
-
-    f_derivs <- list(
-      as.vector(f_(input)),
-      as.vector(dF_dt_(input)),
-      as.vector(d2F_dt2_(input)),
-      as.vector(d3F_dt3_(input))
-    )
-
-    make_g_deriv <- function(ord)
-      matrix(t(vapply(seq_along(B), function(row) {
-        phi_scalars <- lapply(Vs, function(V) V[row, 1])
-        g_deriv_at_t0(phi_scalars, f_derivs, as.vector(un0), order = ord)
-      }, numeric(D))), nrow = length(B), ncol = D)
-
-    gprime0  <- make_g_deriv(1)
-    g3prime0 <- make_g_deriv(3)
-
-    un0 <- solve(crossprod(B), t(B) %*% (residual - dt^2/12 * gprime0 + dt^4/720 * g3prime0))
-  }
-
-  return(as.numeric(un0))
 }
 
 # EM-corrected LS solve for u_k, iterating 3 times.
