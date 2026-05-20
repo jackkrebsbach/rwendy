@@ -45,23 +45,23 @@ cat(sprintf("N = %d   n = %d   nr = %.2f   σ = %.4f\n", N, npoints, nr, noise_s
 
 # --- Solve ---
 res_irls <- solveWendy(f, U, tt, method = "IRLS")
-res_root <- solveWendy(f, U, tt, method = "JOINT")
+res_mle  <- solveWendy(f, U, tt, method = "MLE")
 
 cat(sprintf("p*    = %.4f\n",             p_star))
 cat(sprintf("IRLS  p̂ = %.4f   rel_err = %.4f\n", res_irls$phat, rel_err(res_irls$phat, p_star)))
-cat(sprintf("JOINT  p̂ = %.4f   rel_err = %.4f\n", res_root$phat, rel_err(res_root$phat, p_star)))
+cat(sprintf("MLE   p̂ = %.4f   rel_err = %.4f\n", res_mle$phat,  rel_err(res_mle$phat,  p_star)))
 
 # --- Reconstructed trajectory from p̂ ---
 sol_irls <- deSolve::ode(y = u0, times = as.vector(tt), func = modelODE, parms = res_irls$phat)[, -1]
-sol_root <- deSolve::ode(y = u0, times = as.vector(tt), func = modelODE, parms = res_root$phat)[, -1]
+sol_mle  <- deSolve::ode(y = u0, times = as.vector(tt), func = modelODE, parms = res_mle$phat)[, -1]
 
 # --- Plot first two dimensions ---
 df <- data.frame(
   t      = rep(as.vector(tt), 4),
-  u      = c(U_true[, 1], U[, 1], sol_irls[, 1], sol_root[, 1]),
-  label  = rep(c("True", "Noisy", "IRLS", "JOINT"), each = npoints)
+  u      = c(U_true[, 1], U[, 1], sol_irls[, 1], sol_mle[, 1]),
+  label  = rep(c("True", "Noisy", "IRLS", "MLE"), each = npoints)
 )
-df$label <- factor(df$label, levels = c("Noisy", "True", "IRLS", "JOINT"))
+df$label <- factor(df$label, levels = c("Noisy", "True", "IRLS", "MLE"))
 
 ggplot(df, aes(x = t, y = u, colour = label)) +
   geom_point(data = subset(df, label == "Noisy"),
@@ -69,10 +69,10 @@ ggplot(df, aes(x = t, y = u, colour = label)) +
   geom_line(data = subset(df, label != "Noisy"),
             linewidth = 0.8) +
   scale_colour_manual(values = c(Noisy = "grey70", True = "steelblue",
-                                 IRLS = "forestgreen", JOINT = "firebrick")) +
+                                 IRLS = "forestgreen", MLE = "firebrick")) +
   labs(title = sprintf("Lorenz 96 (N=%d) — u₁ trajectory", N),
-       subtitle = sprintf("p* = %.1f  |  IRLS p̂ = %.4f  |  JOINT p̂ = %.4f",
-                          p_star, res_irls$phat, res_root$phat),
+       subtitle = sprintf("p* = %.1f  |  IRLS p̂ = %.4f  |  MLE p̂ = %.4f",
+                          p_star, res_irls$phat, res_mle$phat),
        x = "Time", y = "u₁", colour = NULL) +
   theme_bw() +
   theme(legend.position = "bottom")

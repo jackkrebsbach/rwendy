@@ -37,7 +37,7 @@ U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 control <- list(optimize = TRUE)
-res <- solveWendy(f, U, p0=rep(1, length(p_star)), tt, method = "JOINT", control = control)
+res <- solveWendy(f, U, p0=rep(1, length(p_star)), tt, method = "MLE", control = control)
 
 rel_err(res$phat, p_star)
 
