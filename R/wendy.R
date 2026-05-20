@@ -263,7 +263,9 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   }
   
   boundary_state <- if (control$estimate_u0 && method != "OE") {
-    estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, control)
+    # BL radius: SSL change-point (res$rc) when using SSL, MSG min_radius otherwise.
+    r_c_bl <- if (identical(control$test_fun_type, "SSL")) res$rc else res$min_radius
+    estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl)
   } else NULL
   state <- if (control$estimate_U_star && method != "OE") {
     if (identical(control$smoother, "erts") && !is.null(res$phat)) {

@@ -88,20 +88,36 @@ build_em_correction <- function(bl_phi_t1, bl_phi_tM,
 #' @return Named list with U_hat (full M x D state, interior verbatim, corners
 #'   replaced), u0hat (= U_hat[1, ]), uMhat (= U_hat[M, ]), and r_c.
 #' @export
-estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_params) {
+estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c) {
   M  <- nrow(U)
   D  <- ncol(U)
   J  <- length(p)
   tt_vec <- as.vector(tt)
   dt <- mean(diff(tt_vec))
 
-  # SSL change-point radius (sets the BL test-function support).
-  data_rc <- compute_r_c_hat(U, tt, test_function_params$S, test_function_params$p)
-  r_c     <- data_rc$rc
+  # r_c sets the BL test-function support (passed in by caller: SSL change-point
+  # radius if test_fun_type == "SSL", else the MSG min radius).  Clamp so the
+  # left/right windows don't overlap.
+  r_c <- min(r_c, floor((M - 1L) / 2L))
+
+  # Variable layout: theta = [vec(U_left); vec(U_right)], each r_c x D.
+  l_idx   <- seq_len(r_c)
+  r_idx   <- seq(M - r_c + 1L, M)
+  int_idx <- seq(r_c + 1L, M - r_c)
+  n_l     <- length(l_idx) * D
+  n_r     <- length(r_idx) * D
+
+  # Use n_bl = r_c BL test functions per side so K_bl * D = 2 * r_c * D matches
+  # the number of variables (the full BL window).  With the default n_bl ≈ r_c/5
+  # the system is severely underdetermined once we expand from 2 corner rows to
+  # the full r_c rows on each side.
+  n_bl_per_side <- max(1L, as.integer(r_c))
 
   # Build BL test-function blocks at orders 0..4 for left and right sides.
-  bl_left  <- lapply(0:4, function(ord) build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "left"))
-  bl_right <- lapply(0:4, function(ord) build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "right"))
+  bl_left  <- lapply(0:4, function(ord)
+    build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "left",  n_bl = n_bl_per_side))
+  bl_right <- lapply(0:4, function(ord)
+    build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "right", n_bl = n_bl_per_side))
   n_bl <- nrow(bl_left[[1]])
   K_bl <- 2L * n_bl
 
@@ -121,10 +137,14 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
     bl_phi_tM[(n_bl + 1L):K_bl, ord + 1] <- bl_right[[ord + 1]][, M]
   }
 
+  U_interior <- U[int_idx, , drop = FALSE]
+
   reconstruct_U <- function(theta) {
+    U_l <- matrix(theta[seq_len(n_l)],       nrow = length(l_idx), ncol = D)
+    U_r <- matrix(theta[n_l + seq_len(n_r)], nrow = length(r_idx), ncol = D)
     U_hat <- U
-    U_hat[1, ] <- theta[seq_len(D)]
-    U_hat[M, ] <- theta[(D + 1L):(2L * D)]
+    U_hat[l_idx, ] <- U_l
+    U_hat[r_idx, ] <- U_r
     U_hat
   }
 
@@ -163,21 +183,21 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_
     as.vector(r_aug)
   }
 
-  # Warm start from the observed corner values.
-  theta0 <- c(as.vector(U[1, ]), as.vector(U[M, ]))
+  # Warm start from the input rows in the BL window.
+  theta0 <- c(as.vector(U[l_idx, ]), as.vector(U[r_idx, ]))
   fit    <- nls.lm(par = theta0, fn = residual_fn)
 
-  u0hat <- as.numeric(fit$par[seq_len(D)])
-  uMhat <- as.numeric(fit$par[(D + 1L):(2L * D)])
-  U_hat <- U
-  U_hat[1, ] <- u0hat
-  U_hat[M, ] <- uMhat
+  U_hat       <- reconstruct_U(fit$par)
+  U_left_hat  <- U_hat[l_idx, , drop = FALSE]
+  U_right_hat <- U_hat[r_idx, , drop = FALSE]
 
   list(
-    U_hat = U_hat,
-    u0hat = u0hat,
-    uMhat = uMhat,
-    r_c   = r_c
+    U_hat       = U_hat,
+    U_left_hat  = U_left_hat,           # r_c x D — refined left BL window
+    U_right_hat = U_right_hat,          # r_c x D — refined right BL window
+    u0hat       = U_left_hat[1L, ],     # back-compat: corner of left window
+    uMhat       = U_right_hat[r_c, ],   # back-compat: corner of right window
+    r_c         = r_c
   )
 }
 
@@ -277,80 +297,5 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
     P_filt   = P_filt,
     u_pred   = u_pred,
     P_pred   = P_pred
-  )
-}
-
-# Joint state-parameter Ensemble Kalman Filter (stochastic EnKF).
-# Augmented state: [u(t); p]. Parameters are treated as constant between steps.
-# Returns list(U_star, p, p_ens) — smoothed state mean, parameter mean, full parameter ensemble.
-wendy_enkf <- function(p, U, tt, f_, sigma = NULL, N_e = 100, u0 = NULL) {
-  mp1 <- nrow(U)
-  D   <- ncol(U)
-  J   <- length(p)
-  tt  <- as.vector(tt)
-
-  noise_sd <- mean(as.numeric(if (!is.null(sigma)) sigma else estimate_std(U, k = 6)))
-  R_obs    <- noise_sd^2 * diag(D)
-
-  u0_init <- if (!is.null(u0)) as.numeric(u0) else as.vector(U[1, ])
-  if (length(u0_init) != D)
-    stop(sprintf("u0 must have length D = %d", D))
-
-  p_sd  <- pmax(abs(p) * 0.1, 1e-6)
-  u0_sd <- rep(noise_sd, D)
-
-  ens <- rbind(
-    u0_init + matrix(rnorm(D * N_e) * u0_sd, D, N_e),
-    p       + matrix(rnorm(J * N_e, sd = p_sd), J, N_e)
-  )
-
-  rk4_step <- function(u, pi, t, dt) {
-    k1 <- as.vector(f_(matrix(c(pi, u,                  t         ), ncol = 1)))
-    k2 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k1,     t + 0.5*dt), ncol = 1)))
-    k3 <- as.vector(f_(matrix(c(pi, u + 0.5*dt*k2,     t + 0.5*dt), ncol = 1)))
-    k4 <- as.vector(f_(matrix(c(pi, u +     dt*k3,     t +     dt), ncol = 1)))
-    u + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
-  }
-
-  solve_safe <- function(A, b) {
-    tryCatch(solve(A, b), error = function(e) MASS::ginv(A) %*% b)
-  }
-
-  U_mean       <- matrix(0, mp1, D)
-  U_mean[1, ]  <- rowMeans(ens[seq_len(D), , drop = FALSE])
-
-  for (k in seq_len(mp1 - 1L)) {
-    dt_k <- tt[k + 1L] - tt[k]
-
-    ens_f <- ens
-    for (i in seq_len(N_e)) {
-      u_i <- ens[seq_len(D), i]
-      p_i <- ens[D + seq_len(J), i]
-      ens_f[seq_len(D), i] <- tryCatch(
-        rk4_step(u_i, p_i, tt[k], dt_k),
-        error = function(e) u_i
-      )
-    }
-
-    y_k    <- as.vector(U[k + 1L, ])
-    mean_f <- rowMeans(ens_f)
-    A_f    <- ens_f - mean_f
-    H_ens  <- ens_f[seq_len(D), , drop = FALSE]
-    A_H    <- H_ens - rowMeans(H_ens)
-
-    C_uy <- (A_f %*% t(A_H)) / (N_e - 1)
-    C_yy <- (A_H %*% t(A_H)) / (N_e - 1) + R_obs
-
-    K      <- C_uy %*% solve_safe(C_yy, diag(D))
-    y_pert <- y_k + matrix(rnorm(D * N_e, sd = noise_sd), D, N_e)
-    ens    <- ens_f + K %*% (y_pert - H_ens)
-
-    U_mean[k + 1L, ] <- rowMeans(ens[seq_len(D), , drop = FALSE])
-  }
-
-  list(
-    U_star = U_mean,
-    p      = rowMeans(ens[D + seq_len(J), , drop = FALSE]),
-    p_ens  = t(ens[D + seq_len(J), , drop = FALSE])
   )
 }

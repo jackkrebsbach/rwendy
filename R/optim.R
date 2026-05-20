@@ -64,12 +64,20 @@ gauss_newton_iterate <- function(target_fn, theta0,
   theta_w
 }
 
-# Gauss-Newton joint state and parameter estimate
+# Gauss-Newton joint state and parameter estimate.
+# state_smoothness (numeric, default 0): if > 0, augments the residual vector
+# with sqrt(state_smoothness) * vec(D2 U), where D2 is the per-column 2nd-
+# difference operator on U.  Minimizing ||r_aug||^2 then includes the term
+# state_smoothness * sum_{d, k} (U[k+1,d] - 2 U[k,d] + U[k-1,d])^2 — a discrete
+# smoothness penalty on every state column.  Lets gn() replace the upstream
+# ERTS / GP pre-smoother by absorbing the regularization in one solve.
 gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10,
-               lambda = 1e-8, alpha = 0, sigma = NULL){
-  D  <- ncol(U)
-  Vp <- as.array(V_prime$contiguous())
-  V  <- as.array(V$contiguous())
+               lambda = 1e-8, alpha = 0, sigma = NULL,
+               state_smoothness = 0){
+  D   <- ncol(U)
+  mp1 <- nrow(U)
+  Vp  <- as.array(V_prime$contiguous())
+  V   <- as.array(V$contiguous())
 
   u0_vec <- as.vector(U)
   nu <- length(u0_vec)
@@ -84,10 +92,25 @@ gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10,
     f_(rbind(p_mat, tU, ttt))
   }
 
+  use_smooth_pen <- isTRUE(state_smoothness > 0) && mp1 >= 3L
+  sqrt_lam_s     <- if (use_smooth_pen) sqrt(state_smoothness) else 0
+
+  d2_cols <- function(U_mat) {
+    # Per-column central 2nd difference; returns (mp1 - 2) x D.
+    U_mat[3:mp1, , drop = FALSE] -
+      2 * U_mat[2:(mp1 - 1L), , drop = FALSE] +
+      U_mat[1:(mp1 - 2L),    , drop = FALSE]
+  }
+
   joint_target <- function(theta) {
     U_cur <- matrix(theta[seq_len(nu)], ncol = D)
     p_cur <- theta[nu + seq_len(np)]
-    as.vector(Vp %*% U_cur + V %*% F_(U_cur, p_cur))
+    base  <- as.vector(Vp %*% U_cur + V %*% F_(U_cur, p_cur))
+    if (use_smooth_pen) {
+      c(base, sqrt_lam_s * as.vector(d2_cols(U_cur)))
+    } else {
+      base
+    }
   }
 
   theta0  <- c(u0_vec, p)
@@ -96,61 +119,6 @@ gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10,
                                    penalty_mask = mask, theta_ref = theta0,
                                    max_iter = max_iter, tol = tol,
                                    lambda = lambda, alpha = alpha, sigma = sigma)
-
-  list(Uhat = matrix(theta_w[seq_len(nu)], ncol = D),
-       p    = theta_w[nu + seq_len(np)])
-}
-
-# GLS-Gauss-Newton joint state and parameter estimate.
-# Variant of gn(): weights the normal equations by S(p)^{-1}, evaluated once
-# at the initial p (held fixed across iterations as a preconditioner). No
-# Tikhonov penalty on the state, no Broyden safety floor — intentionally
-# minimal so it's easy to compare against gn().
-gls_gn <- function(p, U, tt, f_, V, V_prime, S,
-                   max_iter = 100, tol = 1e-8, lambda = 1e-8){
-  D  <- ncol(U)
-  Vp <- as.array(V_prime$contiguous())
-  V  <- as.array(V$contiguous())
-
-  u0_vec <- as.vector(U)
-  nu <- length(u0_vec)
-  np <- length(p)
-
-  F_ <- function(U, p){
-    mp1   <- nrow(U)
-    J     <- length(p)
-    tU    <- t(U)
-    ttt   <- matrix(tt, nrow = 1L)
-    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
-    f_(rbind(p_mat, tU, ttt))
-  }
-
-  joint_target <- function(theta) {
-    U_cur <- matrix(theta[seq_len(nu)], ncol = D)
-    p_cur <- theta[nu + seq_len(np)]
-    as.vector(-Vp %*% U_cur - V %*% F_(U_cur, p_cur))
-  }
-
-  theta_w <- c(u0_vec, p)
-  G_w     <- joint_target(theta_w)
-  J_w     <- jacobian(joint_target, theta_w)
-
-  S_inv <- solve(as.array(S(p)$contiguous()))
-
-  for (iter in seq_len(max_iter)) {
-    JtSiJ <- t(J_w) %*% S_inv %*% J_w
-    delta <- solve_pd(JtSiJ, t(J_w) %*% S_inv %*% G_w, lambda)
-    theta_new <- theta_w - delta
-
-    G_new <- joint_target(theta_new)
-    s <- -delta; y <- G_new - G_w
-    J_w <- J_w + ((y - J_w %*% s) %*% t(s)) / as.numeric(t(s) %*% s)
-
-    theta_w <- theta_new
-    G_w     <- G_new
-
-    if (max(abs(delta)) < tol) break
-  }
 
   list(Uhat = matrix(theta_w[seq_len(nu)], ncol = D),
        p    = theta_w[nu + seq_len(np)])
@@ -583,8 +551,6 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
         sigma = ctx$estimated_sd, poly_degree = ee_degree)
 }
 
-# OLS fallback for linear-in-p methods that need a warm-start p0 (MLE, IRLS,
-# HYBRID, JOINT stage 1). NIRLS/NOLS use user-supplied or EE p0 directly.
 .ols_warmstart <- function(ctx, G_cont, b_cont) {
   ols(G_cont, b_cont, ctx$system$L)$p
 }
@@ -643,14 +609,12 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
 # JOINT: MLE-warm-started Gauss-Newton on the joint (U, p) residual, with an
 # optional boundary-refinement second pass.
 #   stage 1: MLE on p (with OLS warm-start for linear-in-p) + state smoother
-#   stage 2: gn() / gls_gn() for MSG or gn_bl() for SSL+BL — joint U and p
+#   stage 2: gn() for MSG or gn_bl() for SSL+BL — joint U and p
 #   stage 3 (optional, two_stage = TRUE): gn_boundary refines corner U rows
-# control$gn_method ("std" default, or "gls") selects the MSG stage-2 solver.
 .run_joint <- function(ctx, p0, G_cont, b_cont) {
   control <- ctx$control
   sys     <- ctx$system
   is_ssl  <- identical(control$test_fun_type, "SSL")
-  use_gls <- identical(control$gn_method, "gls")
 
   # Use the grid that V/V_prime were built on. For lognormal this is already
   # log-space (wendy_data is built post preprocess_data); for sparse data it is
@@ -661,21 +625,29 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   if (ctx$lip && is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
   p <- mle(p0, sys$wnll, sys$J_wnll, sys$H_wnll, sys$S, sys$Jp_r, control)$p
 
-  smooth <- if (identical(control$smoother, "erts")) {
+  # control$state_smoothness (numeric, default 0): when > 0 AND the MSG std
+  # gn() path is in use, skip the ERTS/GP pre-smoother and instead embed a
+  # 2nd-difference smoothness penalty inside gn() itself (one solve over the
+  # joint (U, p) augmented residual).  Falls back to the pre-smoother on the
+  # SSL+BL branch because gn_bl doesn't yet support the inline penalty.
+  state_smoothness <- control$state_smoothness %||% 0
+  use_inline_smooth <- isTRUE(state_smoothness > 0) && !is_ssl
+
+  smooth <- if (use_inline_smooth) {
+    list(U_star = U_gn)        # raw — gn() will regularize internally
+  } else if (identical(control$smoother, "erts")) {
     wendy_erts(U_gn, ctx$f_, ctx$J_u, tt_gn, p, control, sigma = ctx$sig)
   } else {
     gp_smooth(U_gn, tt_gn, sigma2_n = as.numeric(ctx$sig)^2)
   }
 
   res1 <- if (is_ssl) {
-    if (use_gls) warning("gn_method = 'gls' has no SSL variant; falling back to gn_bl.", call. = FALSE)
     sj <- ctx$system_joint
     gn_bl(p, smooth$U_star, tt_gn, sj$build_compute_b, sj$g,
           alpha = control$gn_alpha %||% 0, sigma = ctx$sig)
-  } else if (use_gls) {
-    gls_gn(p, smooth$U_star, tt_gn, ctx$f_, ctx$V, ctx$V_prime, sys$S)
   } else {
     gn(p, smooth$U_star, tt_gn, ctx$f_, ctx$V, ctx$V_prime,
+       state_smoothness = state_smoothness,
        alpha = control$gn_alpha %||% 0, sigma = ctx$sig)
   }
 

@@ -2,6 +2,7 @@
 # %%
 # library(wendy)
 library(deSolve)
+library(uGMAR)
 library(devtools)
 library(ggplot2)
 
@@ -14,16 +15,16 @@ f <- function(u, p, t) {
 p_star <- c(1, 1/10)
 u0 <- c(0.1)
 p0 <- c(1.1, 0.2)
-npoints <- 10
+npoints <- 256
 t_span <- c(0.0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
-sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
+sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-14)
 
 set.seed(8675309 + 1)
 
-nr <- 0.55
+nr <- 0.2
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -45,18 +46,7 @@ p0 = t(matrix(c(10, 10, 1.5, 1.5, 0.5, 0.5, 2, 2, 5,
 
 time <- system.time({
   res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian",
-   control = list(
-                      estimate_U_star = FALSE,
-                      optimize = TRUE,
-                    # interpolation_method = "linear"
-                    # interpolation_method = c("poly_ls_3", "gp", "linear")
-                    # interpolation_method = c("poly_ls_3")
-                    # test_fun_type = "SSL",
-                    # interpolation_method = c("gp"),
-                    # two_stage = TRUE,
-                    # include_boundary_layer = FALSE 
-                    # gn_method = "gls"
-                   ))
+                control = list(estimate_U_star = FALSE, optimize = TRUE, test_fun_type = "SSL"))
 })
 
 t_eval2 <- seq(t_span[1], t_span[2], length.out = npoints);
