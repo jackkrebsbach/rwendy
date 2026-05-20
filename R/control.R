@@ -19,13 +19,12 @@ default_control <- list(
   max_test_fun_condition_number = 1e4, # Truncate SVD of the test function matrices based on the condition number
   min_test_fun_info_number = 0.95, # Cumulative sum of the singular values
   min_number_points = 256, # integer: target number of data points after interpolating
-  max_points_interp = 25, # integer: only interpolate data when number of data points is less than this
+  max_points_interp = 25, # integer: maximum number of points in the data to interpolate 
   interpolation_method = NULL,  # "gp", "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
   fixed_radius = NULL, # integer: fix the base test-function radius, bypassing aujko-selection
   use_interp_uncertainty = TRUE, # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
   smoother = "erts", # JOINT: state smoother — "gp" (Matern 5/2) or "erts" (EKF/RTS)
   gn_alpha = 0,  # JOINT: Tikhonov weight penalising state departure from smoother estimate
-  gn_method = "std",  # JOINT (MSG only): "std" -> gn() with adaptive state penalty; "gls" -> gls_gn() weighted by S(p)^{-1}
   two_stage = TRUE, # JOINT: after MSG gn, refine boundary rows with a lazily-built SSL+BL gn_boundary pass
   include_boundary_layer = FALSE, # JOINT: augment test-function matrices with boundary-layer rows + EM correction (MSG only)
   n_bl = 5, # integer: number of BL test functions per side; NULL uses heuristic max(1, floor(radius/5))

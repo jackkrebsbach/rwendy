@@ -25,9 +25,10 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-12)
 
-nr <- 0.15
+# nr <- 0.15
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
+noise_sd <- 0.05
 
 set.seed(8675309)
 
@@ -39,7 +40,9 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0 = FALSE))
+time <- system.time({
+  res <- solveWendy(f, U, tt, method = "MLE", control = list(estimate_u0 = FALSE))
+})
 
 # sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[, -1]
 
@@ -61,40 +64,41 @@ res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_u0 = FALSE)
 #    name = "fit"
 #  )
 
-res2 <- solveWendy(f, U, tt, method = "JOINT",
-  control = list(
-      test_fun_type = "SSL",
-      include_boundary_layer = TRUE,
-      alpha_gn = 0
-    )
-  )
+# res2 <- solveWendy(f, U, tt, method = "JOINT",
+#   control = list(
+#       test_fun_type = "SSL",
+#       include_boundary_layer = TRUE,
+#       alpha_gn = 0
+#     )
+#   )
 
-res3 <- solveWendy(f, U, tt, method = "JOINT",
-  control = list(
-      test_fun_type = "SSL",
-      include_boundary_layer = FALSE,
-      alpha_gn = 0
-    )
-  )
+# res3 <- solveWendy(f, U, tt, method = "JOINT",
+#   control = list(
+#       test_fun_type = "SSL",
+#       include_boundary_layer = FALSE,
+#       alpha_gn = 0
+#     )
+#   )
 
-res4 <- solveWendy(f, U, tt, method = "JOINT",
-  control = list(
-      test_fun_type = "MSG",
-      alpha_gn = 0
-    )
-  )
+# res4 <- solveWendy(f, U, tt, method = "JOINT",
+#   control = list(
+#       test_fun_type = "MSG",
+#       alpha_gn = 0
+#     )
+#   )
 
 cat(sprintf("\np̂₁ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
 cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res$phat, p_star)))
+cat(sprintf("\n     time = %.4f", time[1]))
 
-cat(sprintf("\np̂₂ = [%s]", paste(sprintf("%.3f", res2$phat), collapse = ", ")))
-cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res2$phat, p_star)))
+# cat(sprintf("\np̂₂ = [%s]", paste(sprintf("%.3f", res2$phat), collapse = ", ")))
+# cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res2$phat, p_star)))
 
-cat(sprintf("\np̂₃ = [%s]", paste(sprintf("%.3f", res3$phat), collapse = ", ")))
-cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res3$phat, p_star)))
+# cat(sprintf("\np̂₃ = [%s]", paste(sprintf("%.3f", res3$phat), collapse = ", ")))
+# cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res3$phat, p_star)))
 
-cat(sprintf("\np̂₄ = [%s]", paste(sprintf("%.3f", res4$phat), collapse = ", ")))
-cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res4$phat, p_star)))
+# cat(sprintf("\np̂₄ = [%s]", paste(sprintf("%.3f", res4$phat), collapse = ", ")))
+# cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res4$phat, p_star)))
 
 # cat(sprintf("True u₀ [%s] ", paste(sprintf("%.3f", u0), collapse = ", ")))
 
