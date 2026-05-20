@@ -24,7 +24,7 @@ NULL
 #'   columns are state variables.
 #' @param tt Numeric vector. Time points corresponding to rows of \code{U}.
 #' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
-#' @param method One of \code{"JOINT"}, \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
+#' @param method One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 #'   \code{"OE"}, or \code{"HYBRID"}.
 #' @param control Named list of control parameters; merged with \code{default_control}.
 #'
@@ -35,7 +35,7 @@ NULL
 #' }
 #'
 #' @export
-solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("JOINT", "IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
+solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
 
   check_suggested_packages()
 
@@ -117,7 +117,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
   if (method != "OE") {
     sig <- torch::torch_tensor(estimated_sd, dtype = torch::torch_float64(), device = device)
-
+    
     # When nrow(U) < max_points_interp we interpolate the sparse data.
     # Degree rationale: Gaussian uses max_order+1 because integrating a degree-d RHS
     # raises the trajectory degree by 1. For lognormal the log transform reduces the
@@ -125,7 +125,14 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     # noise-to-signal ratio is low (<= 0.1) the observations are clean enough that
     # linear interpolation between them suffices.
     if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
-      control$interpolation_method <- "gp"
+      nsr <- min(estimated_sd / apply(U, 2, sd))
+      if (nsr <= 0.15) {
+        control$interpolation_method <- "linear"
+      } else {
+        max_order     <- detect_max_state_order(f_orig_expr, u_expr)
+        interp_degree <- if (noise_dist == "lognormal") max_order else max_order + 1L
+        control$interpolation_method <- paste0("poly_ls_", interp_degree)
+      }
     }
 
     if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
@@ -142,14 +149,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     })
 
     system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty, device)
-
-    wendy_problems_joint <- lapply(wendy_data, function(d) {
-      build_wendy_problem_joint(d, f_, J_u, J_uu, J_up, J_p, J_pp, J_upp,
-                                dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_,
-                                J = J, lip = lip, sig = sig, device = device, control = control)
-    })
-
-    system_joint <- build_wendy_system_joint(wendy_problems_joint, lip, control$diag_reg, control$use_interp_uncertainty, device)
 
     p1 <- wendy_problems[[1]]
 
@@ -178,8 +177,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     res$rc_errors   <- p1$rc_errors
     res$rc_radii    <- p1$rc_radii
     res$wendy_problems       <- wendy_problems
-    res$wendy_problems_joint <- wendy_problems_joint
-    res$system_joint         <- system_joint
     res$wendy_data           <- wendy_data
     res$U              <- p1$U
     res$tt             <- wendy_data[[1]]$tt
@@ -190,7 +187,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
   opt_ctx <- list(
     system = if (method != "OE") system else NULL,
-    system_joint = if (method != "OE") system_joint else NULL,
     method = method,
     f = f,
     U_orig = U_orig,
@@ -250,7 +246,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
     res$phat <- best$p
     res$data <- best$data
-    res$Uhat <- if (noise_dist == "lognormal") exp(best$data$Uhat) else best$data$Uhat
     res$multistart_results <- all_results
     res$multistart_objectives <- objectives
   } else {
@@ -259,7 +254,6 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     result  <- .run_wendy_optimization(opt_ctx, p0_vec)
     res$phat <- result$p
     res$data <- result$data
-    res$Uhat <- if (noise_dist == "lognormal") exp(result$data$Uhat) else result$data$Uhat
   }
   
   boundary_state <- if (control$estimate_u0 && method != "OE") {

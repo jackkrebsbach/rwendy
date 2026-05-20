@@ -23,10 +23,8 @@ default_control <- list(
   interpolation_method = NULL,  # "gp", "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
   fixed_radius = NULL, # integer: fix the base test-function radius, bypassing aujko-selection
   use_interp_uncertainty = TRUE, # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-  smoother = "erts", # JOINT: state smoother — "gp" (Matern 5/2) or "erts" (EKF/RTS)
-  gn_alpha = 0,  # JOINT: Tikhonov weight penalising state departure from smoother estimate
-  two_stage = TRUE, # JOINT: after MSG gn, refine boundary rows with a lazily-built SSL+BL gn_boundary pass
-  include_boundary_layer = FALSE, # JOINT: augment test-function matrices with boundary-layer rows + EM correction (MSG only)
+  smoother = "erts", # state smoother used by estimate_U_star — "gp" (Matern 5/2) or "erts" (EKF/RTS)
+  include_boundary_layer = FALSE, # augment SSL test-function matrices with boundary-layer rows + EM correction
   n_bl = 5, # integer: number of BL test functions per side; NULL uses heuristic max(1, floor(radius/5))
   device = "cpu", # If GPUs are available use "cuda"; resolved to a torch device lazily inside solveWendy
   apply_fn = NULL # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply

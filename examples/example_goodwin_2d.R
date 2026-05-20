@@ -32,7 +32,7 @@ noise <- matrix(rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd), nro
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, p0=p0, method = "JOINT", control = list(optimize = TRUE))
+res <- solveWendy(f, U, tt, p0=p0, method = "MLE", control = list(optimize = TRUE))
 
 # sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)[,-1]
 
