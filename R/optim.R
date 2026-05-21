@@ -2,7 +2,6 @@
 irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- nrow(G)
   alphaIdm <- reg * diag(rep(1, dm))
-  W_mat <- if (!is.null(W)) as.array(W) else NULL
   p <- if(is.null(p0)) lm.fit(G, b)$coefficients else p0
   n <- 0
   SW <- Inf
@@ -13,15 +12,13 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     pn1 <- p
     n <- n + 1
 
-    # We solve the weighted least squares problem
+    # Weighted least squares via Cholesky: with S = R^T R upper-triangular R,
+    # solve R^{-T} G p = R^{-T} b in unweighted form.
     # https://en.wikipedia.org/wiki/Weighted_least_squares
-    # GᵀS⁻¹G = GᵀS⁻¹b, S can be factored using the Cholesky decomposition of S = RᵀR
-    # Gᵀ(RᵀR)⁻¹G = Gᵀ(RᵀR)⁻¹b which reduces to (GᵀR⁻¹)R⁻ᵀG =(GᵀR⁻¹)R⁻ᵀb
-    # Thus we solve the least squares problem R⁻ᵀG = R⁻ᵀb where R is upper triangular matrix
-    Ln <- as.array(L(p)$contiguous())
-    Sn <- if (!is.null(W_mat)) (1 - reg) * Ln %*% W_mat %*% t(Ln) + alphaIdm
-          else                 (1 - reg) * Ln %*% t(Ln) + alphaIdm
-    RT <- t(chol(Sn)) # S = RᵀR R is upper triangular
+    Ln <- L(p)
+    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln)) + alphaIdm
+          else             (1 - reg) * tcrossprod(Ln)     + alphaIdm
+    RT <- t(chol(Sn)) # S = R^T R, R upper triangular
     G_ <- forwardsolve(RT, G)
     b_ <- forwardsolve(RT, b)
     p <- lm.fit(G_, b_)$coefficients
@@ -71,7 +68,6 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
 nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   dm <- length(b)
   alphaIdm <- reg * diag(rep(1, dm))
-  W_mat <- if (!is.null(W)) as.array(W) else NULL
   p <- p0
   n <- 0
   SW <- Inf
@@ -82,22 +78,20 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     pn1 <- p
     n <- n + 1
 
-    # We solve the nonlinear weighted least squares problem
-    # we have the R⁻ᵀb = R⁻ᵀg(p)
-    # r = R⁻ᵀ(g(p) - b) and want to minimize  1⁄2 ||r||²
+    # Nonlinear weighted least squares: minimize 0.5 ||R^{-T} (g(p) - b)||^2
 
     weighted_residual <- function(p, RT){
-      forwardsolve(RT, as.array(g(p)$contiguous()) - b)
+      forwardsolve(RT, g(p) - b)
     }
 
     weighted_residual_jacobian <- function(p, RT){
-      forwardsolve(RT, as.array(Jp_r(p)$contiguous()))
+      forwardsolve(RT, Jp_r(p))
     }
 
-    Ln <- as.array(L(p)$contiguous())
-    Sn <- if (!is.null(W_mat)) (1 - reg) * Ln %*% W_mat %*% t(Ln) + alphaIdm
-          else                 (1 - reg) * Ln %*% t(Ln) + alphaIdm
-    RT <- t(chol(Sn)) # S = RᵀR R is upper triangular
+    Ln <- L(p)
+    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln)) + alphaIdm
+          else             (1 - reg) * tcrossprod(Ln)     + alphaIdm
+    RT <- t(chol(Sn)) # S = R^T R, R upper triangular
 
     p <- nls.lm(p, lower = NULL, upper = NULL, function(p){weighted_residual(p, RT)}, function(p){weighted_residual_jacobian(p, RT)})$par
 
@@ -145,12 +139,8 @@ ols <- function(G, b, L, reg = 10e-10){
 
 # Weak ordinary nonlinear least squares
 nols <- function(g, b, L, Jp_r, p0, reg = 10e-10){
-  residual <- function(p){
-    as.array(g(p)$contiguous() - b)
-  }
-  residual_jacobian <- function(p){
-    as.array(Jp_r(p)$contiguous())
-  }
+  residual          <- function(p) g(p) - b
+  residual_jacobian <- function(p) Jp_r(p)
   p <- nls.lm(p0, lower = NULL, upper = NULL, residual, residual_jacobian)$par
   return(list(p = p))
 }
@@ -197,7 +187,7 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
   modelRun <- function(theta) {
     parms <- theta[1:J]
     u0    <-  theta[(J + 1):(J + D)]
-    
+
     sol <- tryCatch({
       capture.output(
         result <- suppressWarnings(
@@ -214,14 +204,26 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
       out
   }
 
+  # On ODE failure, fall back to an Euler-style first-order expansion of the
+  # trajectory at t[1]: u(t) ≈ u0 + (t - t[1]) * f(u0, p, t[1]). This makes
+  # bad_model a smooth function of every theta component, and (unlike a flat
+  # 1e6 or any g(theta)*h(t) penalty) the resulting Jacobian has row x column
+  # entanglement so it is full rank and not parallel to fvec. The 1e6 offset
+  # keeps failed evaluations dominant over any feasible solution.
   costFn <- function(theta) {
     out <- modelRun(theta)
     if (is.null(out)) {
+      parms <- theta[1:J]
+      u0    <- theta[(J + 1):(J + D)]
+      f0    <- tryCatch(as.vector(f(u0, parms, tt[1])),
+                        error = function(e) rep(0, D))
       bad_model <- obs
-      bad_model[, -1] <- 1e6
-      return(FME::modCost(model = bad_model, obs = obs))  
+      for (d in seq_len(D)) {
+        bad_model[[paste0("x", d)]] <- 1e6 + u0[d] + (tt - tt[1]) * f0[d]
+      }
+      return(FME::modCost(model = bad_model, obs = obs))
     }
-    FME::modCost(model = out, obs = obs)         
+    FME::modCost(model = out, obs = obs)
   }
 
   fit <- tryCatch({
@@ -282,9 +284,9 @@ ee_linear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, poly
   input <- rbind(matrix(0, nrow = J, ncol = n_mid), t(grid$u_mid), matrix(grid$t_mid, nrow = 1))
   # Affine offset: b(u,t) = f(u, 0, t). For purely linear problems this is zero.
   f0     <- f_(input)
-  jp_raw <- J_p(input)  # n_mid x (D*J), D-outer J-inner per row
+  jp_raw <- J_p(input)  # n_mid x (D*J), column-major (d, j) d-fast per row
   A_mat  <- do.call(rbind, lapply(seq_len(n_mid), function(i) {
-    matrix(jp_raw[i, ], nrow = D, ncol = J, byrow = TRUE)
+    matrix(jp_raw[i, ], nrow = D, ncol = J)  # d-fast: A[d, j] = df_d/dp_j
   }))
   lm.fit(A_mat, as.vector(t(grid$dudt - f0)))$coefficients
 }
@@ -301,9 +303,9 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   }
   dm_residual <- function(p) as.vector(t(f_(build_input(p)) - dudt))
   dm_jacobian <- function(p) {
-    jp_raw <- J_p(build_input(p))  # n_mid x (D*J), D-outer J-inner per row
+    jp_raw <- J_p(build_input(p))  # n_mid x (D*J), column-major (d, j) d-fast per row
     do.call(rbind, lapply(seq_len(n_mid), function(i) {
-      matrix(jp_raw[i, ], nrow = D, ncol = J, byrow = TRUE)
+      matrix(jp_raw[i, ], nrow = D, ncol = J)
     }))
   }
   nls.lm(rep(1, J), fn = dm_residual, jac = dm_jacobian)$par
@@ -389,11 +391,14 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   if (is.null(runner)) stop("Unknown method: ", method, call. = FALSE)
 
   if (is.null(p0) && (!ctx$lip || method == "OE")) {
+    warning("p0 not supplied with a nonlinear-in-parameters system; ",
+            "initializing p0 with strong-form Equation Error.",
+            call. = FALSE)
     p0 <- .ee_init_p0(ctx)
   }
 
-  G_cont <- if (method != "OE") as.array(ctx$system$G$contiguous()) else NULL
-  b_cont <- if (method != "OE") as.array(ctx$system$b$contiguous()) else NULL
+  G_cont <- if (method != "OE") ctx$system$G else NULL
+  b_cont <- if (method != "OE") ctx$system$b else NULL
 
   data <- runner(ctx, p0, G_cont, b_cont)
 

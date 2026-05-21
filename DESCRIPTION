@@ -23,7 +23,7 @@ Imports:
     minpack.lm,
     numDeriv,
     numbers,
-    stats
-Suggests:
-    torch,
-    symengine
+    stats,
+    symengine,
+    deSolve,
+    FME

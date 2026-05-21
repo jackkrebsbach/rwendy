@@ -15,7 +15,6 @@ build_wendy_problem(
   J,
   lip,
   sig,
-  device,
   control
 )
 }
@@ -29,9 +28,7 @@ matrix), var (mp1 x D variance matrix).}
 
 \item{lip}{Logical; TRUE when f is linear in parameters.}
 
-\item{sig}{Torch scalar: estimated noise SD.}
-
-\item{device}{Torch device.}
+\item{sig}{Numeric vector: estimated noise SD (length 1 or D).}
 
 \item{control}{Control list (uses $test_fun_type, $use_interp_uncertainty, etc.).}
 }

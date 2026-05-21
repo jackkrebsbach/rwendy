@@ -8,16 +8,57 @@ wendy_erts(
   U,
   f_,
   J_u,
-  J_t,
   tt,
   p,
   test_function_params,
-  dF_dt_ = NULL,
-  d2F_dt2_ = NULL,
-  d3F_dt3_ = NULL,
-  sigma = NULL
+  sigma = NULL,
+  u0_init = NULL,
+  P0_init = NULL,
+  param_cov = NULL,
+  J_p = NULL
 )
 }
+\arguments{
+\item{U}{Numeric matrix (mp1 x D) of noisy observations.}
+
+\item{f_}{Callable f(p, u, t) RHS evaluator built from the symbolic engine.}
+
+\item{J_u}{Callable Jacobian d f / d u evaluator from the symbolic engine.}
+
+\item{tt}{Numeric vector of time points (length mp1).}
+
+\item{p}{Numeric vector of parameter estimates.}
+
+\item{test_function_params}{Unused; retained for API compatibility.}
+
+\item{sigma}{Optional scalar or per-state noise SD; if NULL it is estimated
+from U via \code{estimate_std}.}
+
+\item{u0_init}{Optional length-D vector to seed the filter at \code{tt[1]}
+(e.g. \code{estimate_u0()$u0hat}). Defaults to \code{U[1, ]}.}
+
+\item{P0_init}{Optional D x D prior covariance for \code{u0_init}. When
+\code{u0_init} is supplied, defaults to \code{0.1 * sigma^2 I_D} (more
+confident than the raw observation); otherwise \code{sigma^2 I_D}.}
+
+\item{param_cov}{Optional J x J parameter covariance \eqn{\hat{C}}.}
+
+\item{J_p}{Optional callable returning the D x J Jacobian
+\eqn{\nabla_p f(p, u, t)} (flattened d-fast, like the rest of the package).}
+}
+\value{
+Named list with U_star (smoothed state), P_smooth (posterior
+  covariance), and the intermediate filter/predictor states.
+}
 \description{
-Estimate the state using the RTS smoother
+Extended Kalman filter forward pass followed by a Rauch-Tung-Striebel
+backward smoother on the parameter-conditioned dynamics.
+}
+\details{
+When \code{param_cov} and \code{J_p} are both supplied, the process
+covariance at step k is propagated from the WENDy parameter covariance:
+\deqn{Q_k = (\Delta t_k)^2 \, \nabla_p f(\hat{p}, u_k, t_k) \, \hat{C} \,
+       \nabla_p f(\hat{p}, u_k, t_k)^T,}
+which absorbs parameter uncertainty into the predict step. Without them,
+\code{Q_k} falls back to the naive \code{(0.1 sigma)^2 I_D}.
 }

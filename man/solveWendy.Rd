@@ -10,7 +10,7 @@ solveWendy(
   tt,
   p0 = NULL,
   noise_dist = c("addgaussian", "lognormal"),
-  method = c("ROOT", "IRLS", "MLE", "OLS", "OE", "HYBRID"),
+  method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"),
   control = NULL
 )
 }
@@ -29,10 +29,16 @@ nonlinear least squares, and OE solvers; computed automatically when \code{NULL}
 
 \item{noise_dist}{One of \code{"addgaussian"} (default) or \code{"lognormal"}.}
 
-\item{method}{One of \code{"ROOT"}, \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
+\item{method}{One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 \code{"OE"}, or \code{"HYBRID"}.}
 
 \item{control}{Named list of control parameters; merged with \code{default_control}.}
+}
+\value{
+An object of class \code{wendy} with elements including \code{phat}
+  (the parameter estimate), \code{wnll}/\code{J_wnll}/\code{H_wnll} (callables
+  for the weak NLL and its derivatives), and the assembled \code{V},
+  \code{V_prime}, \code{S}, and \code{L} components.
 }
 \description{
 Estimates parameters of a system of ordinary differential equations (ODEs).
@@ -44,4 +50,35 @@ trust-region optimization algorithm.
   \item Builds symbolic expressions and derivatives of the ODE system (\eqn{f}, Jacobians, Hessians).
   \item Constructs weak negative log-likelihood and functionals based on observed (noisy) data.
 }
+}
+\examples{
+# Logistic growth: u' = p1*u - p2*u^2 (linear in p; p_star = (1, 1/10)).
+f <- function(u, p, t) c(p[1] * u[1] - p[2] * u[1]^2)
+p_star  <- c(1, 1/10)
+u0      <- c(0.1)
+npoints <- 128
+t_eval  <- seq(0, 10, length.out = npoints)
+
+modelODE <- function(tvec, state, parameters) {
+  list(as.vector(f(state, parameters, tvec)))
+}
+sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
+
+# Additive Gaussian noise at 5\% of the RMS signal level.
+set.seed(8675309 + 1)
+U_vec    <- as.vector(sol[, -1])
+noise_sd <- 0.05 * sqrt(mean(U_vec^2))
+U  <- sol[, 2, drop = FALSE] + rnorm(npoints, sd = noise_sd)
+tt <- sol[, 1, drop = FALSE]
+
+res <- solveWendy(
+  f, U, tt,
+  method     = "IRLS",
+  noise_dist = "addgaussian",
+  control    = list(estimate_U_star = FALSE, optimize = TRUE,
+                    test_fun_type   = "SSL",  estimate_u0 = TRUE)
+)
+res$phat                       # ~ c(1, 0.1)
+rel_err(res$phat, p_star)
+
 }

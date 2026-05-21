@@ -8,15 +8,14 @@
 #' @param f_,J_u,J_up,J_p,J_pp,J_upp  Callable symbolic derivatives.
 #' @param J       Number of parameters.
 #' @param lip     Logical; TRUE when f is linear in parameters.
-#' @param sig     Torch scalar: estimated noise SD.
-#' @param device  Torch device.
+#' @param sig     Numeric vector: estimated noise SD (length 1 or D).
 #' @param control Control list (uses $test_fun_type, $use_interp_uncertainty, etc.).
 #' @return A list of class "WENDyProblem".
 #' @keywords internal
-build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, device, control) {
+build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control) {
   U   <- wendy_data$U
   tt  <- as.vector(wendy_data$tt)
-  dt     <- mean(diff(tt))
+  dt  <- mean(diff(tt))
   var <- wendy_data$var
   D   <- ncol(U)
   mp1 <- nrow(U)
@@ -24,75 +23,61 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   if (is.null(control$radius_min_time)) control$radius_min_time <- 2 * dt
   if (is.null(control$radius_max_time)) control$radius_max_time <- floor((mp1 - 1) / 2) * dt
 
-  if (sig$numel() != D) {
-    sig <- sig * torch::torch_ones(D, dtype = torch::torch_float64(), device = device)
-  }
+  if (length(sig) != D) sig <- rep(sig[1], D)
 
   tf <- if (control$test_fun_type == "SSL") {
     build_full_test_function_matrices_ssl(U, tt, control)
   } else {
     build_full_test_function_matrices_msg(U, tt, control, control$compute_svd)
   }
-  K   <- nrow(tf$V)
+  K  <- nrow(tf$V)
+  V  <- tf$V
+  Vp <- tf$V_prime
 
-  V  <- torch::torch_tensor(tf$V, dtype = torch::torch_float64(), device = device)
-  Vp <- torch::torch_tensor(tf$V_prime, dtype = torch::torch_float64(), device = device)
+  F_ <- build_F(U, tt, f_, J)
+  G  <- build_G_matrix(V, U, tt, F_, J)
+  g0 <- as.vector(V %*% F_(rep(0, J)))
 
-  F_ <- build_F(U, tt, f_, J, device)
+  g <- if (!lip) build_g(V, F_) else build_g_linear(G)
 
-  G  <- build_G_matrix(V, U, tt, F_, J, device)
-  g0 <- torch::torch_mm(V, F_(rep(0, J)))$reshape(c(-1))
+  b_raw <- -as.vector(Vp %*% U)
+  b     <- if (!lip) b_raw else b_raw - g0
 
-  g <- if (!lip) {
-    local({ Vt <- V; Fl <- F_
-      function(p) torch::torch_matmul(Vt, Fl(p))$reshape(c(-1))
-    })
-  } else {
-    build_g_linear(G, device)
-  }
-
-  U_tensor <- torch::torch_tensor(U, dtype = torch::torch_float64(), device = device)
-  b_raw    <- -1 * torch::torch_mm(Vp, U_tensor)$reshape(c(-1))
-  b        <- if (!lip) b_raw else b_raw - g0
-
-  Jp_r <- if (!lip) build_Jp_r(J_p,  K, D, J, mp1, V, U, tt, device)
+  Jp_r <- if (!lip) build_Jp_r(J_p, K, D, J, mp1, V, U, tt)
           else      build_Jp_r_linear(G)
 
-  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt, device)
+  Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
 
-  L0 <- build_L0(K, D, mp1, Vp, sig, device)
+  L0 <- build_L0(K, D, mp1, Vp, sig)
 
-  L <- if (!lip) build_L(      U, tt, J_u,  K, V, L0, sig, J, device)
-       else      build_L_linear(U, tt, J_u,  K, V, L0, sig, J, device)
+  L <- if (!lip) build_L(       U, tt, J_u, K, V, L0, sig, J)
+       else      build_L_linear(U, tt, J_u, K, V, L0, sig, J)
 
-  Jp_L <- if (!lip) build_Jp_L(      U, tt, J_up, K, J, D, V,  sig, device)
-          else      build_Jp_L_linear(U, tt, J_u,  K, V, L0, sig, J, device)
+  Jp_L <- if (!lip) build_Jp_L(       U, tt, J_up, K, J, D, V, sig)
+          else      build_Jp_L_linear(U, tt, J_u,  K, V, L0, sig, J)
 
-  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig, device)
+  Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 
+  # W is the (mp1*D) diagonal of the interpolation-uncertainty weighting,
+  # stored as a vector to avoid materializing a dense diagonal matrix.
+  # Column-major flatten of var (mp1 x D) gives W in the (m, b) order, m fast,
+  # matching the column index convention for L.
   W <- if (isTRUE(control$use_interp_uncertainty) && !is.null(var)) {
-    var_vec <- c(t(var))
-    torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
+    as.vector(var)
   } else {
     NULL
   }
 
   structure(
     list(
-      # Data
       U = U, tt = tt, var = var,
-      # Test-function tensors and dimensions
-      V = V, Vp = Vp, K = K, D = D, mp1 = mp1, J = J, min_radius = tf$min_radius, rc = tf$radius_c, 
-      # Minimum radius selection (MSG)
-       min_radius_errors = tf$min_radius_errors, min_radius_radii = tf$min_radius_radii,
-      # Change point radius selection (SSL)
+      V = V, Vp = Vp, K = K, D = D, mp1 = mp1, J = J,
+      min_radius = tf$min_radius, rc = tf$radius_c,
+      min_radius_errors = tf$min_radius_errors, min_radius_radii = tf$min_radius_radii,
       rc_errors = tf$rc_errors, rc_radii = tf$rc_radii,
-      # Residual components
       F_ = F_, g = g, g0 = g0, b = b, G = G,
       Jp_r = Jp_r, Hp_r = Hp_r,
-      # Covariance factor components
       L0 = L0, L = L, Jp_L = Jp_L, Hp_L = Hp_L,
-      # Variance weights
       W = W
     ),
     class = "WENDyProblem"
@@ -109,10 +94,10 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
 #' @param wendy_problems  List of WENDyProblem objects.
 #' @param lip             Logical; TRUE when f is linear in parameters.
 #' @param diag_reg        Diagonal regularisation added to S.
-#' @param use_interp_uncertainty    Logical; if TRUE build block-diagonal W from per-problem variances.
-#' @param device          Torch device.
+#' @param use_interp_uncertainty    Logical; if TRUE assemble a length-(M*mp1*D)
+#'   W vector from per-problem variances.
 #' @keywords internal
-build_wendy_system <- function(wendy_problems, lip, diag_reg, use_interp_uncertainty, device) {
+build_wendy_system <- function(wendy_problems, lip, diag_reg, use_interp_uncertainty) {
   J      <- wendy_problems[[1]]$J
   D      <- wendy_problems[[1]]$D
   mp1    <- wendy_problems[[1]]$mp1
@@ -134,35 +119,39 @@ build_wendy_system <- function(wendy_problems, lip, diag_reg, use_interp_uncerta
   } else {
     g_fns <- lapply(wendy_problems, `[[`, "g")
     g     <- local({ gs <- g_fns
-      function(p) torch::torch_cat(lapply(gs, function(gi) gi(p)))
+      function(p) do.call(c, lapply(gs, function(gi) gi(p)))
     })
 
-    b <- torch::torch_cat(lapply(wendy_problems, `[[`, "b"))
-    G <- torch::torch_cat(lapply(wendy_problems, `[[`, "G"), dim = 1L)
+    b <- do.call(c,    lapply(wendy_problems, `[[`, "b"))
+    G <- do.call(rbind, lapply(wendy_problems, `[[`, "G"))
 
     Jp_r_fns <- lapply(wendy_problems, `[[`, "Jp_r")
-    Jp_r     <- local({ 
-      fns <- Jp_r_fns
-      function(p){ 
-        torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L)
-      }
+    Jp_r     <- local({ fns <- Jp_r_fns
+      function(p) do.call(rbind, lapply(fns, function(fn) fn(p)))
     })
 
     Hp_r_fns <- lapply(wendy_problems, `[[`, "Hp_r")
-    Hp_r     <- local({ 
-      fns <- Hp_r_fns
-      function(p){ 
-        torch::torch_cat(lapply(fns, function(fn) fn(p)), dim = 1L)
+    Hp_r     <- local({ fns <- Hp_r_fns
+      function(p) {
+        parts <- lapply(fns, function(fn) fn(p))
+        first_dim <- sum(vapply(parts, function(a) dim(a)[1], integer(1)))
+        out <- array(0, c(first_dim, dim(parts[[1]])[2], dim(parts[[1]])[3]))
+        off <- 0L
+        for (a in parts) {
+          n <- dim(a)[1]
+          out[(off + 1L):(off + n), , ] <- a
+          off <- off + n
+        }
+        out
       }
     })
 
-    L    <- build_L_block(lapply(wendy_problems, `[[`, "L"),    K_list, D, mp1,    device)
-    Jp_L <- build_Jp_L_block(lapply(wendy_problems, `[[`, "Jp_L"), K_list, D, mp1, J, device)
-    Hp_L <- build_Hp_L_block(lapply(wendy_problems, `[[`, "Hp_L"), K_list, D, mp1, J, device)
+    L    <- build_L_block(lapply(wendy_problems, `[[`, "L"),    K_list, D, mp1)
+    Jp_L <- build_Jp_L_block(lapply(wendy_problems, `[[`, "Jp_L"), K_list, D, mp1, J)
+    Hp_L <- build_Hp_L_block(lapply(wendy_problems, `[[`, "Hp_L"), K_list, D, mp1, J)
 
     W <- if (isTRUE(use_interp_uncertainty) && !is.null(wendy_problems[[1]]$W)) {
-      var_vec <- unlist(lapply(wendy_problems, function(pr) c(t(pr$var))))
-      torch::torch_diag(torch::torch_tensor(var_vec, dtype = torch::torch_float64(), device = device))
+      do.call(c, lapply(wendy_problems, function(pr) pr$W))
     } else {
       NULL
     }

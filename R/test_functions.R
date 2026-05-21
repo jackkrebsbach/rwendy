@@ -105,7 +105,8 @@ build_full_test_function_matrix <- function(test_function, tt, radii, order = 0)
 # lands at column 1+(i-1)*step (left) or mp1-(i-1)*step (right); the support is
 # clipped to [1, mp1]. Returned matrix is RAW (no trapezoid endpoint weight, no dt).
 build_boundary_layer_block <- function(test_function, tt, radius, order = 0,
-                                       side = c("left", "right"), n_bl = NULL) {
+                                       side = c("left", "right"), n_bl = NULL,
+                                       step = NULL) {
   side <- match.arg(side)
   dt   <- mean(diff(tt))
   mp1  <- length(tt)
@@ -119,19 +120,20 @@ build_boundary_layer_block <- function(test_function, tt, radius, order = 0,
   row_full <- c(0, ph_d(xx) / norm_factor, 0)   # length = diameter, zero at ends
 
   n_bl <- if (!is.null(n_bl)) max(1L, as.integer(n_bl)) else max(1L, floor(radius / 5))
-  step <- max(1L, floor(radius / n_bl) - 2L)
+  step <- if (!is.null(step)) max(1L, as.integer(step))
+          else max(1L, floor(radius / n_bl) - 2L)
 
   V <- matrix(0, nrow = n_bl, ncol = mp1)
   for (i in seq_len(n_bl)) {
     if (side == "left") {
       shift_start <- max(1L, radius + 1L - (i - 1L) * step)
-      slice       <- row_full[shift_start:diameter]
-      s           <- min(length(slice), mp1)
+      slice <- row_full[shift_start:diameter]
+      s <- min(length(slice), mp1)
       V[i, 1:s]   <- slice[1:s]
     } else {
       shift_end <- min(diameter, radius + 1L + (i - 1L) * step)
-      slice     <- row_full[1:shift_end]
-      s         <- min(length(slice), mp1)
+      slice <- row_full[1:shift_end]
+      s <- min(length(slice), mp1)
       V[i, (mp1 - s + 1L):mp1] <- slice[(length(slice) - s + 1L):length(slice)]
     }
   }
@@ -194,55 +196,12 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
   V  <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 0)
   Vp <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 1)
 
-  K_interior <- nrow(V)
-  K_bl       <- 0L
-  bl_phi_t1  <- NULL
-  bl_phi_tM  <- NULL
-  # SSL uses the "sum" convention (no dt in V), so the IBP boundary terms and
-  # the EM correction (both absolute units) need to be scaled by 1/dt to match.
-  bdry_scale <- 1.0 / dt
+  # Integral convention: V %*% F approximates ∫ phi(t) F(t) dt directly.
+  V  <- V  * dt
+  Vp <- Vp * dt
 
-  if (isTRUE(control$include_boundary_layer)) {
-    max_em_order <- 4L
-    bl_per_order <- lapply(0:max_em_order, function(ord) {
-      rbind(
-        build_boundary_layer_block(psi, tt, radius_c, order = ord, side = "left",  n_bl = control$n_bl),
-        build_boundary_layer_block(psi, tt, radius_c, order = ord, side = "right", n_bl = control$n_bl)
-      )
-    })
-    names(bl_per_order) <- paste0("phi", 0:max_em_order)
-    K_bl <- nrow(bl_per_order$phi0)
-
-    bl_phi_t1 <- vapply(bl_per_order, function(B) B[, 1],   numeric(K_bl))
-    bl_phi_tM <- vapply(bl_per_order, function(B) B[, mp1], numeric(K_bl))
-    colnames(bl_phi_t1) <- colnames(bl_phi_tM) <- paste0("phi", 0:max_em_order)
-
-    # Apply trapezoid endpoint weights (x0.5 at columns 1 and mp1) to BL rows
-    # only. This is needed so that V_BL %*% F matches the trapezoid sum that
-    # the Euler-Maclaurin correction is derived for; without it the residual
-    # picks up an O(h) artifact from the missing endpoint half-weight. Interior
-    # SSL phi vanishes at the endpoints, so the same operation on interior rows
-    # would be a no-op (we skip it).
-    apply_trap_weights <- function(B) {
-      B[, 1]   <- B[, 1]   * 0.5
-      B[, mp1] <- B[, mp1] * 0.5
-      B
-    }
-
-    # Append BL rows in the SSL convention (no dt scaling on the integration
-    # block). The boundary terms and EM correction are still scaled by 1/dt via
-    # bdry_scale below to compensate for SSL's missing h.
-    V  <- rbind(V,  apply_trap_weights(bl_per_order$phi0))
-    Vp <- rbind(Vp, apply_trap_weights(bl_per_order$phi1))
-  }
-
-  return(list(
-    V = V, V_prime = Vp, radius_c = radius_c, rc_errors = rc_errors, rc_radii = rc_radii,
-    K_interior = K_interior, K_bl = K_bl,
-    bl_phi_t1 = bl_phi_t1, bl_phi_tM = bl_phi_tM,
-    bdry_scale = bdry_scale
-  ))
-
+  list(V = V, V_prime = Vp, radius_c = radius_c,
+       rc_errors = rc_errors, rc_radii = rc_radii)
 }
 
 build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = TRUE) {
@@ -304,11 +263,6 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
 
   # cat(sprintf("  Radii [%s]\n", paste(radii_filtered, collapse = ", ")))
 
-  if (isTRUE(control$include_boundary_layer)) {
-    stop("control$include_boundary_layer is only supported with test_fun_type = 'SSL'. ",
-         "MSG builds its modes via SVD compression, which does not compose with raw BL rows.")
-  }
-
   V_ <- build_full_test_function_matrix(test_fun, tt, radii_filtered, order = 0)
   V_prime_ <- build_full_test_function_matrix(test_fun, tt, radii_filtered, order = 1)
 
@@ -320,12 +274,7 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
       min_radius_errors = min_radius_errors,
       min_radius_radii = min_radius_radii,
       min_radius_ix = min_radius_ix,
-      min_radius = min_radius,
-      K_interior = nrow(V_),
-      K_bl = 0L,
-      bl_phi_t1 = NULL,
-      bl_phi_tM = NULL,
-      bdry_scale = 1.0
+      min_radius = min_radius
     ))
   }
 
@@ -387,12 +336,7 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
     singular_values = singular_values[1:K],
     condition_numbers = condition_numbers[1:K],
     info_numbers = info_numbers[1:K],
-    K = K,
-    K_interior = K,
-    K_bl = 0L,
-    bl_phi_t1 = NULL,
-    bl_phi_tM = NULL,
-    bdry_scale = 1.0
+    K = K
   ))
 }
 

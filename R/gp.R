@@ -30,10 +30,14 @@ matern52_matrix <- function(tt1, tt2, sigma2, ell) {
   sigma2 * (1 + sqrt(5) * r + 5 * r^2 / 3) * exp(-sqrt(5) * r)
 }
 
-#' Matern 5/2 cross-covariance  cov(f(tt1), f'(tt2))
+#' Matern 5/2 cross-covariance cov(f(tt1), f'(tt2))
 #'
 #' Derivative is with respect to the second argument.
+#' @param tt1,tt2 Numeric vectors of time points.
+#' @param sigma2  Signal variance (> 0).
+#' @param ell     Length scale (> 0).
 #' @return Matrix of size length(tt1) x length(tt2).
+#' @keywords internal
 matern52_Kfd <- function(tt1, tt2, sigma2, ell) {
   tau <- outer(tt1, tt2, "-")     # tau = t1 - t2
   r   <- abs(tau) / ell
@@ -42,9 +46,13 @@ matern52_Kfd <- function(tt1, tt2, sigma2, ell) {
   (5 * sigma2 / (3 * ell^2)) * tau * (1 + sqrt(5) * r) * e
 }
 
-#' Matern 5/2 derivative kernel  cov(f'(tt1), f'(tt2))
+#' Matern 5/2 derivative kernel cov(f'(tt1), f'(tt2))
 #'
+#' @param tt1,tt2 Numeric vectors of time points.
+#' @param sigma2  Signal variance (> 0).
+#' @param ell     Length scale (> 0).
 #' @return Matrix of size length(tt1) x length(tt2).
+#' @keywords internal
 matern52_Kdd <- function(tt1, tt2, sigma2, ell) {
   tau <- outer(tt1, tt2, "-")
   r   <- abs(tau) / ell
@@ -90,7 +98,7 @@ gp_log_ml <- function(log_theta, tt, y) {
 
 #' Optimise Matern 5/2 GP hyperparameters via marginal likelihood
 #'
-#' Uses a grid of initial length scales (t_range * 2^{0,-1,...,-(n_scales-1)})
+#' Uses a grid of initial length scales (t_range times 2^(-i) for i=0..n_scales-1)
 #' so that both slow and fast features are candidates, then adds random
 #' restarts for robustness.
 #'

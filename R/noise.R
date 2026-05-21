@@ -41,7 +41,12 @@ fdcoeffF <- function(k, xbar, x) {
   return(C)
 }
 
-#' @export
+#' Estimate noise standard deviation via convolution with a high-order finite-difference filter.
+#'
+#' @param U Numeric matrix of observations (rows = time points, cols = states).
+#' @param k Integer; order of the finite-difference filter (default 6).
+#' @return Numeric vector of length \code{ncol(U)}: per-state noise SD estimates.
+#' @keywords internal
 estimate_std <- function(U, k = 6) {
   D <- ncol(U)
   std_vec <- numeric(D)

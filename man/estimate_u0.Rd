@@ -2,10 +2,57 @@
 % Please edit documentation in R/wendy_filter.R
 \name{estimate_u0}
 \alias{estimate_u0}
-\title{Estimate the initial condition using Euler-MacLaurin Trapezoid correction on the function g(t) := φ(t)f(p,u,t) + φ′(t)u(t)}
+\title{Estimate u0 and/or uM by minimising the augmented BL weak residual.}
 \usage{
-estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, test_function_params)
+estimate_u0(
+  U,
+  f_,
+  dF_dt_,
+  d2F_dt2_,
+  d3F_dt3_,
+  tt,
+  p,
+  r_c,
+  corners = c("both", "u0", "uM"),
+  n_bl_per_side = NULL
+)
+}
+\arguments{
+\item{U}{Numeric matrix (M x D) of observed states.}
+
+\item{f_}{Callable f(p, u, t) RHS evaluator built from the symbolic engine.}
+
+\item{dF_dt_, d2F_dt2_, d3F_dt3_}{Callable evaluators for the first, second,
+and third total time derivatives of f along the trajectory.}
+
+\item{tt}{Numeric vector or column matrix of time points (length M).}
+
+\item{p}{Numeric vector of parameter estimates.}
+
+\item{r_c}{Integer; SSL change-point radius (BL window size).}
+
+\item{corners}{One of `"both"`, `"u0"`, `"uM"`; selects which corner rows
+are treated as unknowns. Defaults to `"both"`.}
+
+\item{n_bl_per_side}{Optional integer; number of BL test functions per side.
+Defaults to `max(3, ceiling(r_c / 4))` — empirically near-optimal across
+logistic and Lotka-Volterra benchmarks under uniform placement.}
+}
+\value{
+Named list with `U_hat` (full M x D state, interior verbatim, corner
+  rows replaced by the LS estimate where applicable), `u0hat` (= `U_hat[1, ]`),
+  `uMhat` (= `U_hat[M, ]`), `r_c`, and `corners`.
 }
 \description{
-Estimate the initial condition using Euler-MacLaurin Trapezoid correction on the function g(t) := φ(t)f(p,u,t) + φ′(t)u(t)
+Builds SSL boundary-layer test functions at the SSL change-point radius r_c,
+assembles the augmented residual (trapezoid + 2-term Euler-Maclaurin) and
+optimises the corner rows of U via Levenberg-Marquardt. Which corners are
+treated as unknowns is controlled by `corners`:
+  - `"both"` (default): both U[1, ] and U[M, ] are optimised (2*D unknowns).
+  - `"u0"`: only U[1, ] is optimised; U[M, ] is held at its observed value.
+  - `"uM"`: only U[M, ] is optimised; U[1, ] is held at its observed value.
+The interior of U (rows 2..M-1) is held at its observed values throughout.
+With K_bl*D ~ 20+ residual equations and up to 2*D unknowns, the LS is
+overdetermined and needs no regularisation; warm-started from the observed
+corner values.
 }
