@@ -4,13 +4,7 @@
 \alias{build_wendy_system}
 \title{Assemble a list of WENDy problems into system}
 \usage{
-build_wendy_system(
-  wendy_problems,
-  lip,
-  diag_reg,
-  use_interp_uncertainty,
-  device
-)
+build_wendy_system(wendy_problems, lip, diag_reg, use_interp_uncertainty)
 }
 \arguments{
 \item{wendy_problems}{List of WENDyProblem objects.}
@@ -19,9 +13,8 @@ build_wendy_system(
 
 \item{diag_reg}{Diagonal regularisation added to S.}
 
-\item{use_interp_uncertainty}{Logical; if TRUE build block-diagonal W from per-problem variances.}
-
-\item{device}{Torch device.}
+\item{use_interp_uncertainty}{Logical; if TRUE assemble a length-(M*mp1*D)
+W vector from per-problem variances.}
 }
 \description{
 Returns a plain list with everything the optimizers need:

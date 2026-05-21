@@ -41,5 +41,6 @@ sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 plot(U[,1],U[,2], cex = 0.5)
 points(sol_hat[,2], sol_hat[,3], cex = 0.5, col = "red")
 
-plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors, log = "y")
-abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
+cat(sprintf("\np̂ = [%s]  rel_err = %.4f\n",
+            paste(sprintf("%.4f", res$phat), collapse = ", "),
+            rel_err(res$phat, p_star)))

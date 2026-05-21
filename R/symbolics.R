@@ -32,23 +32,20 @@ detect_max_state_order <- function(f_expr, u_expr) {
 }
 
 compute_symbolic_jacobian <- function(f_expr, vars) {
+  # Build derivatives in column-major flat order: state index fastest, var index slowest.
+  # array(deriv_flat, c(dims, n_vars)) then yields arr[i, ..., v] = ∂f_i / ∂vars[v]
+  # under R's native column-major reshape — no torch row-major translation needed.
   dims <- dim(f_expr)
-
   if (is.null(dims)) dims <- length(f_expr)
-
   n_vars <- length(vars)
   f_flat <- as.vector(f_expr)
 
-  deriv_list <- lapply(f_flat, function(f_i) {
-    lapply(vars, function(v) symengine::D(f_i, v))
+  deriv_list <- lapply(vars, function(v) {
+    lapply(f_flat, function(f_i) symengine::D(f_i, v))
   })
 
   deriv_flat <- unlist(deriv_list, recursive = FALSE)
-  out_dims <- c(dims, n_vars)
-
-  J <- array(deriv_flat, dim = out_dims)
-
-  return(J)
+  array(deriv_flat, dim = c(dims, n_vars))
 }
 
 
