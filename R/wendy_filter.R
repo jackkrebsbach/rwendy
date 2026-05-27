@@ -74,188 +74,9 @@ build_em_correction <- function(bl_phi_t1, bl_phi_tM,
   }
 }
 
-#' Estimate u0 and/or uM by minimising the augmented BL weak residual.
+#' Estimate u(0) via iterative defect-correction on left BL test functions
 #'
-#' Builds SSL boundary-layer test functions at the SSL change-point radius r_c,
-#' assembles the augmented residual (trapezoid + 2-term Euler-Maclaurin) and
-#' optimises the corner rows of U via Levenberg-Marquardt. Which corners are
-#' treated as unknowns is controlled by `corners`:
-#'   - `"both"` (default): both U[1, ] and U[M, ] are optimised (2*D unknowns).
-#'   - `"u0"`: only U[1, ] is optimised; U[M, ] is held at its observed value.
-#'   - `"uM"`: only U[M, ] is optimised; U[1, ] is held at its observed value.
-#' The interior of U (rows 2..M-1) is held at its observed values throughout.
-#' With K_bl*D ~ 20+ residual equations and up to 2*D unknowns, the LS is
-#' overdetermined and needs no regularisation; warm-started from the observed
-#' corner values.
-#'
-#' @param U Numeric matrix (M x D) of observed states.
-#' @param f_ Callable f(p, u, t) RHS evaluator built from the symbolic engine.
-#' @param dF_dt_,d2F_dt2_,d3F_dt3_ Callable evaluators for the first, second,
-#'   and third total time derivatives of f along the trajectory.
-#' @param tt Numeric vector or column matrix of time points (length M).
-#' @param p Numeric vector of parameter estimates.
-#' @param r_c Integer; SSL change-point radius (BL window size).
-#' @param corners One of `"both"`, `"u0"`, `"uM"`; selects which corner rows
-#'   are treated as unknowns. Defaults to `"both"`.
-#' @param n_bl_per_side Optional integer; number of BL test functions per side.
-#'   Defaults to `max(3, ceiling(r_c / 4))` — empirically near-optimal across
-#'   logistic and Lotka-Volterra benchmarks under uniform placement.
-#' @return Named list with `U_hat` (full M x D state, interior verbatim, corner
-#'   rows replaced by the LS estimate where applicable), `u0hat` (= `U_hat[1, ]`),
-#'   `uMhat` (= `U_hat[M, ]`), `r_c`, and `corners`.
-#' @export
-estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
-                        corners = c("both", "u0", "uM"),
-                        n_bl_per_side = NULL) {
-  corners <- match.arg(corners)
-  M  <- nrow(U)
-  D  <- ncol(U)
-  J  <- length(p)
-  tt_vec <- as.vector(tt)
-  dt <- mean(diff(tt_vec))
-
-  # Largest allowed radius so left/right windows never overlap.
-  r_c <- min(r_c, floor((M - 1L) / 2L))
-
-  # Default count empirically optimal at r_c/4 across logistic and LV; lower
-  # bound at 3 because anything fewer underdetermines the placement spread.
-  n_bl_per_side <- if (is.null(n_bl_per_side)) {
-    max(3L, as.integer(ceiling(r_c / 4)))
-  } else {
-    max(1L, as.integer(n_bl_per_side))
-  }
-
-  # Uniform placement: peaks evenly spaced across the BL window so the basis
-  # spans the whole window instead of collapsing onto the corner.
-  step <- max(1L, as.integer(floor((r_c - 1L) / max(1L, n_bl_per_side - 1L))))
-
-  bl_left  <- lapply(0:4, function(ord)
-    build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "left",
-                               n_bl = n_bl_per_side, step = step))
-  bl_right <- lapply(0:4, function(ord)
-    build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "right",
-                               n_bl = n_bl_per_side, step = step))
-  n_bl <- nrow(bl_left[[1]])
-  K_bl <- 2L * n_bl
-
-  # Trapezoid endpoint weights so V_BL %*% F matches the trapezoid sum
-  # the Euler-Maclaurin correction is derived for.
-  apply_trap <- function(B) { B[, 1] <- B[, 1] * 0.5; B[, M] <- B[, M] * 0.5; B }
-  V_BL  <- rbind(apply_trap(bl_left[[1]]), apply_trap(bl_right[[1]]))   # K_bl x M
-  Vp_BL <- rbind(apply_trap(bl_left[[2]]), apply_trap(bl_right[[2]]))   # K_bl x M
-
-  # Endpoint phi^(0..4) per BL row (raw, used by boundary terms and EM).
-  bl_phi_t1 <- matrix(0, nrow = K_bl, ncol = 5)
-  bl_phi_tM <- matrix(0, nrow = K_bl, ncol = 5)
-  for (ord in 0:4) {
-    bl_phi_t1[1:n_bl,           ord + 1] <- bl_left [[ord + 1]][, 1]
-    bl_phi_tM[1:n_bl,           ord + 1] <- bl_left [[ord + 1]][, M]
-    bl_phi_t1[(n_bl + 1L):K_bl, ord + 1] <- bl_right[[ord + 1]][, 1]
-    bl_phi_tM[(n_bl + 1L):K_bl, ord + 1] <- bl_right[[ord + 1]][, M]
-  }
-
-  # theta layout depends on `corners`: "both" => c(U[1, ], U[M, ]) (2*D),
-  # "u0" => U[1, ] only (D), "uM" => U[M, ] only (D). Whichever corner is not
-  # being optimised stays at its observed value; the interior of U is always
-  # held at its observed values.
-  residual_fn <- function(theta) {
-    U_hat <- U
-    if (corners == "both") {
-      U_hat[1, ] <- theta[1:D]
-      U_hat[M, ] <- theta[D + 1:D]
-    } else if (corners == "u0") {
-      U_hat[1, ] <- theta[1:D]
-    } else {
-      U_hat[M, ] <- theta[1:D]
-    }
-
-    input  <- rbind(matrix(rep(p, M), nrow = J), t(U_hat), matrix(tt_vec, nrow = 1L))
-    F_eval <- f_(input)
-
-    trap_phiF  <- dt * (V_BL  %*% F_eval)        # K_bl x D
-    trap_phipU <- dt * (Vp_BL %*% U_hat)         # K_bl x D
-    bdry       <- bl_phi_t1[, 1] %o% U_hat[1, ] - bl_phi_tM[, 1] %o% U_hat[M, ]
-
-    u_t1 <- as.vector(U_hat[1, ])
-    u_tM <- as.vector(U_hat[M, ])
-    inp_t1 <- matrix(c(p, u_t1, tt_vec[1]), ncol = 1L)
-    inp_tM <- matrix(c(p, u_tM, tt_vec[M]), ncol = 1L)
-    fd_t1 <- list(as.vector(f_(inp_t1)), as.vector(dF_dt_(inp_t1)),
-                  as.vector(d2F_dt2_(inp_t1)), as.vector(d3F_dt3_(inp_t1)))
-    fd_tM <- list(as.vector(f_(inp_tM)), as.vector(dF_dt_(inp_tM)),
-                  as.vector(d2F_dt2_(inp_tM)), as.vector(d3F_dt3_(inp_tM)))
-
-    EM <- matrix(0, nrow = K_bl, ncol = D)
-    for (k in seq_len(K_bl)) {
-      phi_t1_k <- as.list(bl_phi_t1[k, ])
-      phi_tM_k <- as.list(bl_phi_tM[k, ])
-      g1_t1 <- g_deriv_at_endpoint(phi_t1_k, fd_t1, u_t1, order = 1L)
-      g1_tM <- g_deriv_at_endpoint(phi_tM_k, fd_tM, u_tM, order = 1L)
-      g3_t1 <- g_deriv_at_endpoint(phi_t1_k, fd_t1, u_t1, order = 3L)
-      g3_tM <- g_deriv_at_endpoint(phi_tM_k, fd_tM, u_tM, order = 3L)
-      EM[k, ] <- -(dt^2 / 12) * (g1_tM - g1_t1) + (dt^4 / 720) * (g3_tM - g3_t1)
-    }
-
-    as.vector(trap_phiF + trap_phipU + bdry + EM)
-  }
-
-  theta0 <- switch(corners,
-                   both = c(U[1, ], U[M, ]),
-                   u0   = as.numeric(U[1, ]),
-                   uM   = as.numeric(U[M, ]))
-
-  fit <- nls.lm(par = theta0, fn = residual_fn,
-                control = nls.lm.control(maxiter = 100))
-
-  U_hat <- U
-  if (corners == "both") {
-    U_hat[1, ] <- fit$par[1:D]
-    U_hat[M, ] <- fit$par[D + 1:D]
-  } else if (corners == "u0") {
-    U_hat[1, ] <- fit$par[1:D]
-  } else {
-    U_hat[M, ] <- fit$par[1:D]
-  }
-
-  # Asymptotic NLS covariance: Cov(theta_hat) = s^2 * (J^T J)^{-1}, where
-  # fit$hessian = J^T J (verified empirically for minpack.lm) and s^2 is the
-  # residual variance at the optimum. Slice into u0 / uM blocks per `corners`.
-  n_res <- length(fit$fvec)
-  n_par <- length(fit$par)
-  df    <- max(1L, n_res - n_par)
-  s2    <- sum(fit$fvec^2) / df
-  cov_full <- tryCatch(
-    s2 * solve(fit$hessian + 1e-12 * diag(n_par)),
-    error = function(e) NULL
-  )
-  cov_u0 <- NULL
-  cov_uM <- NULL
-  if (!is.null(cov_full)) {
-    if (corners == "both") {
-      cov_u0 <- cov_full[1:D, 1:D, drop = FALSE]
-      cov_uM <- cov_full[D + 1:D, D + 1:D, drop = FALSE]
-    } else if (corners == "u0") {
-      cov_u0 <- cov_full
-    } else {
-      cov_uM <- cov_full
-    }
-  }
-
-  list(
-    U_hat   = U_hat,
-    u0hat   = U_hat[1, ],
-    uMhat   = U_hat[M, ],
-    cov_u0  = cov_u0,
-    cov_uM  = cov_uM,
-    r_c     = r_c,
-    corners = corners
-  )
-}
-
-#' Iterative defect-correction estimator for u(0) via left BL test functions
-#'
-#' Alternative to \code{estimate_u0}: instead of NLS over corner unknowns,
-#' iterate the linear least-squares system
+#' Iterates the linear least-squares system
 #' \deqn{B \, u_0^{(n+1)} = r_{\text{trap}} - \Delta_{EM}(u_0^{(n)})}
 #' where \eqn{B} is the column vector of \eqn{\psi_k(0)} for K_bl left BL
 #' test functions, \eqn{r_{\text{trap}}} is the fixed trapezoidal residual
@@ -265,10 +86,9 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
 #' \eqn{\kappa = O(h^2)}; typically 3-5 iterations.
 #'
 #' EM(2) keeps only the \eqn{h^2/12} correction (\eqn{O(h^4)} accuracy);
-#' EM(4) adds \eqn{h^4/720} (\eqn{O(h^6)}). Sign convention matches
-#' \code{estimate_u0}: the LEFT-BL boundary term is \eqn{B u_0}; right-side
-#' EM contributions vanish because left BL test functions and all their
-#' derivatives are zero at \eqn{t=T}.
+#' EM(4) adds \eqn{h^4/720} (\eqn{O(h^6)}). The LEFT-BL boundary term is
+#' \eqn{B u_0}; right-side EM contributions vanish because left BL test
+#' functions and all their derivatives are zero at \eqn{t=T}.
 #'
 #' @param U Numeric matrix (M x D) of observed states.
 #' @param f_,dF_dt_,d2F_dt2_,d3F_dt3_ Callable RHS and total time-derivative
@@ -277,8 +97,7 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
 #' @param p Numeric parameter vector \eqn{\hat\theta} (held fixed).
 #' @param r_c Integer; left BL window half-width.
 #' @param n_bl Optional integer; number of left BL test functions
-#'   (default \code{max(3, ceiling(r_c/4))}, same heuristic as
-#'   \code{estimate_u0}).
+#'   (default \code{max(3, ceiling(r_c/4))}).
 #' @param max_iter,tol Fixed-point iteration controls.
 #' @param em_order Either 2 or 4.
 #' @param update_trap_u0 Logical. If \code{FALSE} (slide-literal default), the
@@ -288,21 +107,31 @@ estimate_u0 <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
 #'   iteration and \eqn{r_{\text{trap}}} is recomputed; the integrand no
 #'   longer contains the noisy boundary observation but the contraction map
 #'   changes.
-#' @return Named list matching \code{estimate_u0}'s interface where applicable:
-#'   \code{U_hat} (U with row 1 replaced by \code{u0hat}), \code{u0hat},
-#'   \code{uMhat} (pass-through of observed \code{U[M, ]}; bldc does not
-#'   estimate the right corner), \code{cov_u0} (D x D diagonal from the
-#'   closed-form LS variance \eqn{s_d^2 / B^T B}), \code{cov_uM} (NULL),
-#'   plus method-specific fields \code{iters}, \code{converged},
+#' @param J_u Callable state Jacobian \eqn{\partial f/\partial u}
+#'   (\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
+#'   \eqn{[a,b] = \partial f_a/\partial u_b}). Used together with \code{sigma}
+#'   (when \code{update_trap_u0 = FALSE}) so that \code{cov_u0} is the
+#'   noise-channel propagation \eqn{\sum_m DU_m\,\mathrm{diag}(\sigma^2)\,DU_m^T}
+#'   rather than the over-conservative LS-residual variance.
+#' @param sigma Data-noise standard deviation, scalar or length-\eqn{D} (per
+#'   state), used to scale the noise-channel \code{cov_u0}.
+#' @return Named list with \code{U_hat} (U with row 1 replaced by
+#'   \code{u0hat}), \code{u0hat}, \code{cov_u0} (D x D covariance of
+#'   \eqn{\hat u_0}; the noise-channel propagation, falling back to the
+#'   LS-residual variance \eqn{s_d^2/B^TB} only when \code{update_trap_u0 = TRUE}
+#'   or \code{sigma} is degenerate),
+#'   \code{cov_u0_resid} (the LS-residual variance, always returned for
+#'   reference), \code{cov_method} (\code{"noise_propagation"} or
+#'   \code{"ls_residual"}), plus \code{iters}, \code{converged},
 #'   \code{diverged}, \code{u0_history}, \code{r_c}, \code{n_bl}, \code{K_bl},
 #'   \code{em_order}, \code{update_trap_u0}.
 #' @export
-estimate_u0_bldc <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
-                             n_bl           = NULL,
-                             max_iter       = 20L,
-                             tol            = 1e-12,
-                             em_order       = c(4L, 2L),
-                             update_trap_u0 = FALSE) {
+estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigma,
+                        n_bl           = NULL,
+                        max_iter       = 20L,
+                        tol            = 1e-12,
+                        em_order       = c(4L, 2L),
+                        update_trap_u0 = FALSE) {
   em_order <- as.integer(em_order[1])
   if (!em_order %in% c(2L, 4L)) {
     stop("em_order must be 2 or 4", call. = FALSE)
@@ -317,11 +146,10 @@ estimate_u0_bldc <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
   r_c  <- min(r_c, floor((M - 1L) / 2L))
   n_bl <- if (is.null(n_bl)) max(3L, as.integer(ceiling(r_c / 4)))
           else                max(1L, as.integer(n_bl))
-  step <- max(1L, as.integer(floor((r_c - 1L) / max(1L, n_bl - 1L))))
 
   bl_left <- lapply(0:4, function(ord)
-    build_boundary_layer_block(psi, tt_vec, r_c, order = ord, side = "left",
-                               n_bl = n_bl, step = step))
+    build_boundary_layer_block(psi, tt_vec, r_c, order = ord,
+                               side = "left", n_bl = n_bl))
   K_bl <- nrow(bl_left[[1]])
 
   apply_trap <- function(B) { B[, 1] <- B[, 1] * 0.5; B[, M] <- B[, M] * 0.5; B }
@@ -336,8 +164,7 @@ estimate_u0_bldc <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
   if (!is.finite(BtB) || BtB < .Machine$double.eps) {
     u0_obs <- as.numeric(U[1, ])
     U_hat <- U; U_hat[1, ] <- u0_obs
-    return(list(U_hat = U_hat, u0hat = u0_obs, uMhat = as.numeric(U[M, ]),
-                cov_u0 = NULL, cov_uM = NULL,
+    return(list(U_hat = U_hat, u0hat = u0_obs, cov_u0 = NULL,
                 iters = 0L, converged = FALSE, diverged = FALSE,
                 u0_history = matrix(u0_obs, nrow = 1),
                 r_c = r_c, n_bl = n_bl, K_bl = K_bl, em_order = em_order,
@@ -423,13 +250,16 @@ estimate_u0_bldc <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
 
   u0 <- best_u0
 
-  # Closed-form LS covariance for the K_bl x 1 per-state regression
-  # B * u0_d = rhs_d, where rhs_d = (r_trap - EM(u0))[, d]. With residuals
-  # e_d = B u0_d - rhs_d, the per-state residual variance is s_d^2 = ||e_d||^2
-  # / max(K_bl - 1, 1) and Var(u0_d) = s_d^2 / B^T B. Cross-state correlation
-  # is left as zero (data noise iid across states); off-diagonals would
-  # require the residual cross-covariance which we don't track here.
-  cov_u0 <- tryCatch({
+  # --- Covariance of u0hat ------------------------------------------------
+  #
+  # Residual-based closed-form LS variance (fallback): for the K_bl x 1
+  # per-state regression B u0_d = rhs_d, rhs_d = (r_trap - EM(u0))[, d], the
+  # per-state residual variance is s_d^2 = ||B u0_d - rhs_d||^2 / (K_bl - 1)
+  # and Var(u0_d) = s_d^2 / B^T B. This OVER-states Var(u0hat): the residual
+  # norm absorbs the DETERMINISTIC Euler-Maclaurin / trapezoidal truncation
+  # mismatch on top of the propagated noise (empirically ~1.8x too wide in
+  # SE, ~100% coverage of a nominal-95% interval on the logistic problem).
+  cov_u0_resid <- tryCatch({
     EM_final <- em_correction(u0)
     rhs      <- r_trap - EM_final            # K_bl x D
     e        <- outer(B, u0) - rhs            # K_bl x D residuals
@@ -438,14 +268,68 @@ estimate_u0_bldc <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
     diag(s2 / BtB, nrow = D, ncol = D)
   }, error = function(err) NULL)
 
+  # Noise-channel propagation (preferred when J_u and sigma are supplied).
+  # u0 = B^T(r_trap - EM(u0)) / B^T B is a deterministic function of the data
+  # U. Differentiating the converged fixed-point relation
+  #   (B^T B) I u0 + B^T EM(u0) = B^T r_trap(U)
+  # w.r.t. U gives, for data entry (m, c),  (B^T B I + A) du0 = c^{(m,c)} with
+  #   A[d,e]      = sum_k B[k] dEM[k,d]/du0_e        (EM hits U only via u0),
+  #   c^{(m,c)}_d = -dt (B^T V_BL)[m] J_u(t_m)[d,c] - dt (B^T Vp_BL)[m] d_{dc},
+  # because r_trap = -dt V_BL f(p,U,t) - dt Vp_BL U and f(p, U[m,], t_m) is
+  # local in m with state Jacobian J_u. For per-state data noise with column
+  # variances diag(sigma^2) (sigma scalar or length-D),
+  #   Cov_noise(u0|p) = sum_m DU_m diag(sigma^2) DU_m^T,
+  #   DU_m = (B^TB I + A)^-1 C_m,
+  #   C_m  = -dt (B^T V_BL)[m] J_u(t_m) - dt (B^T Vp_BL)[m] I.
+  # Only the m within the (compact) BL window contribute. This reflects only
+  # sampling variability (calibrated ~95% coverage; validated against a
+  # numeric Jacobian to <0.5%). The parameter contribution J_p Cov(phat) J_p^T
+  # is left to the caller (negligible when p is well identified; the library
+  # reports the Fisher param cov separately). Only valid when r_trap depends on
+  # the raw data, i.e. !update_trap_u0.
+  # J_u and sigma are required; the noise-channel form is used whenever it is
+  # valid (raw-data residual, well-formed per-state sigma) and falls back to
+  # the LS-residual variance only for update_trap_u0 = TRUE or degenerate sigma.
+  I_D <- diag(D)
+  use_noiseprop <- length(sigma) %in% c(1L, D) && all(is.finite(sigma)) &&
+                   !update_trap_u0
+
+  cov_u0_noise <- if (use_noiseprop) tryCatch({
+    sig_vec <- if (length(sigma) == 1L) rep(sigma, D) else as.numeric(sigma)
+    Sig2    <- diag(sig_vec^2, nrow = D, ncol = D)
+    h <- 1e-6 * max(1, sqrt(sum(u0^2)))
+    A <- matrix(0, D, D)
+    for (e_i in seq_len(D)) {
+      up <- u0; up[e_i] <- up[e_i] + h
+      dn <- u0; dn[e_i] <- dn[e_i] - h
+      dEM_e    <- (em_correction(up) - em_correction(dn)) / (2 * h)  # K_bl x D
+      A[, e_i] <- as.numeric(crossprod(B, dEM_e))
+    }
+    Minv <- solve(BtB * I_D + A)
+    bV   <- as.numeric(crossprod(B, V_BL))   # length M  (= B^T V_BL)
+    bVp  <- as.numeric(crossprod(B, Vp_BL))  # length M  (= B^T Vp_BL)
+    acc  <- matrix(0, D, D)
+    for (m in seq_len(M)) {
+      if (bV[m] == 0 && bVp[m] == 0) next
+      Ju_m <- matrix(as.vector(J_u(c(p, U[m, ], tt_vec[m]))), D, D)
+      C_m  <- -dt * bV[m] * Ju_m - dt * bVp[m] * I_D
+      DU_m <- Minv %*% C_m
+      acc  <- acc + DU_m %*% Sig2 %*% t(DU_m)
+    }
+    acc
+  }, error = function(err) NULL) else NULL
+
+  cov_u0     <- if (!is.null(cov_u0_noise)) cov_u0_noise else cov_u0_resid
+  cov_method <- if (!is.null(cov_u0_noise)) "noise_propagation" else "ls_residual"
+
   U_hat <- U; U_hat[1, ] <- u0
 
   list(
     U_hat          = U_hat,
     u0hat          = u0,
-    uMhat          = as.numeric(U[M, ]),
     cov_u0         = cov_u0,
-    cov_uM         = NULL,
+    cov_u0_resid   = cov_u0_resid,
+    cov_method     = cov_method,
     iters          = iters,
     converged      = converged,
     diverged       = diverged,
@@ -456,73 +340,6 @@ estimate_u0_bldc <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
     em_order       = em_order,
     update_trap_u0 = update_trap_u0
   )
-}
-
-#' Propagate parameter sensitivity along a trajectory
-#'
-#' Solves the linear sensitivity ODE
-#' \deqn{\frac{d S}{d t} = J_u(u(t), \hat\theta, t)\, S + J_p(u(t), \hat\theta, t),
-#'        \quad S(0) = 0}
-#' along the supplied state trajectory using Heun's method (RK2). Returns the
-#' \eqn{D \times J} sensitivity matrix \eqn{S(t_k) = \partial u(t_k) / \partial
-#' \theta} at each grid time. No deSolve call — the right-hand side is
-#' evaluated via the analytic Jacobians \code{J_u} and \code{J_p} the
-#' symbolic engine already produced.
-#'
-#' When \code{param_cov} is supplied, also returns the trajectory variance
-#' contribution \eqn{P_{\text{param}}(t_k) = S(t_k)\, \hat C\, S(t_k)^T} as
-#' a \eqn{D \times D \times M} array; this stacks additively with the ERTS
-#' posterior \code{P_smooth} to give the total state band.
-#'
-#' @param U Numeric matrix (M x D) of state values along the trajectory; the
-#'   smoothed state \code{wendy_erts()$U_star} is the natural input.
-#' @param tt Numeric vector (length M) of time points.
-#' @param p Numeric parameter vector \eqn{\hat\theta}.
-#' @param J_u Callable Jacobian \eqn{\partial f / \partial u} (D*D flat,
-#'   d-fast within each row).
-#' @param J_p Callable Jacobian \eqn{\partial f / \partial p} (D*J flat,
-#'   d-fast within each row).
-#' @param param_cov Optional J x J parameter covariance \eqn{\hat C}; if
-#'   supplied, \code{P_param} is returned.
-#' @return List with \code{S} (length-M list of D x J matrices) and, when
-#'   \code{param_cov} is provided, \code{P_param} (M x D x D array).
-#' @export
-propagate_param_sensitivity <- function(U, tt, p, J_u, J_p, param_cov = NULL) {
-  tt <- as.vector(tt)
-  M  <- nrow(U)
-  D  <- ncol(U)
-  J  <- length(p)
-
-  S <- vector("list", M)
-  S[[1L]] <- matrix(0, D, J)
-
-  eval_AB <- function(u_pt, t_pt) {
-    inp <- c(p, as.numeric(u_pt), t_pt)
-    list(A = matrix(as.vector(J_u(inp)), D, D),
-         B = matrix(as.vector(J_p(inp)), D, J))
-  }
-
-  ab_prev <- eval_AB(U[1L, ], tt[1L])
-  for (k in seq_len(M - 1L)) {
-    dt_k    <- tt[k + 1L] - tt[k]
-    ab_next <- eval_AB(U[k + 1L, ], tt[k + 1L])
-    k1      <- ab_prev$A %*% S[[k]] + ab_prev$B
-    S_pred  <- S[[k]] + dt_k * k1
-    k2      <- ab_next$A %*% S_pred + ab_next$B
-    S[[k + 1L]] <- S[[k]] + 0.5 * dt_k * (k1 + k2)
-    ab_prev <- ab_next
-  }
-
-  out <- list(S = S)
-  if (!is.null(param_cov)) {
-    P_param <- array(0, c(M, D, D))
-    for (k in seq_len(M)) {
-      Sk <- S[[k]]
-      P_param[k,,] <- Sk %*% param_cov %*% t(Sk)
-    }
-    out$P_param <- P_param
-  }
-  out
 }
 
 #' Estimate the state using the RTS smoother
@@ -546,7 +363,7 @@ propagate_param_sensitivity <- function(U, tt, p, J_u, J_p, param_cov = NULL) {
 #' @param sigma Optional scalar or per-state noise SD; if NULL it is estimated
 #'   from U via \code{estimate_std}.
 #' @param u0_init Optional length-D vector to seed the filter at \code{tt[1]}
-#'   (e.g. \code{estimate_u0()$u0hat}). Defaults to \code{U[1, ]}.
+#'   (e.g. \code{estimate_IC()$u0hat}). Defaults to \code{U[1, ]}.
 #' @param P0_init Optional D x D prior covariance for \code{u0_init}. When
 #'   \code{u0_init} is supplied, defaults to \code{0.1 * sigma^2 I_D} (more
 #'   confident than the raw observation); otherwise \code{sigma^2 I_D}.

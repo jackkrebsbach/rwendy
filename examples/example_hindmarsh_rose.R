@@ -90,5 +90,5 @@ res <- solveWendy(f, U, tt, control = list(optimize = FALSE), method = "MLE")
 # cat("pstar:", paste(p_star, collapse = " "), "\n")
 # cat("p_hat:", paste(format(p_hat, digits = 3, scientific = FALSE), collapse = " "),"\n")
 
-plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
-abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
+plot(res$wendy_problem$min_radius_radii, res$wendy_problem$min_radius_errors)
+abline(v = res$wendy_problem$min_radius, col = "red")

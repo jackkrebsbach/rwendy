@@ -63,5 +63,5 @@ rel_err(res$phat, p_star)
 #     name = "fit"
 #   )
 
-# plot(res$wendy_problems[[1]]$min_radius_radii, res$wendy_problems[[1]]$min_radius_errors)
-# abline(v = res$wendy_problems[[1]]$min_radius, col = "red")
+# plot(res$wendy_problem$min_radius_radii, res$wendy_problem$min_radius_errors)
+# abline(v = res$wendy_problem$min_radius, col = "red")

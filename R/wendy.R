@@ -3,7 +3,7 @@
 #' @importFrom stats quantile median predict fft mvfft lm.fit shapiro.test sd rnorm optim setNames
 #' @importFrom utils modifyList tail capture.output
 #' @importFrom trust trust
-#' @importFrom minpack.lm nls.lm nls.lm.control
+#' @importFrom minpack.lm nls.lm
 #' @importFrom FME modCost modFit
 #' @importFrom numbers mGCD bernoulli_numbers
 NULL
@@ -63,8 +63,8 @@ NULL
 #'   f, U, tt,
 #'   method     = "IRLS",
 #'   noise_dist = "addgaussian",
-#'   control    = list(estimate_U_star = FALSE, optimize = TRUE,
-#'                     test_fun_type   = "SSL",  estimate_u0 = TRUE)
+#'   control    = list(estimate_trajectory = FALSE, optimize = TRUE,
+#'                     test_fun_type   = "SSL",  estimate_IC = TRUE)
 #' )
 #' res$phat                       # ~ c(1, 0.1)
 #' rel_err(res$phat, p_star)
@@ -166,21 +166,21 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     }
 
     if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
-      wendy_data <- list(none = list(U = U, tt = tt, var = NULL))
+      wendy_data <- list(U = U, tt = tt, var = NULL)
     } else {
-      methods <- control$interpolation_method
-      wendy_data <- setNames(lapply(methods, function(m) {interpolate_data(U, tt, m, control, sigma = estimated_sd)}), methods)
+      if (length(control$interpolation_method) != 1L) {
+        stop("control$interpolation_method must be a single method string.")
+      }
+      wendy_data <- interpolate_data(U, tt, control$interpolation_method, control, sigma = estimated_sd)
     }
 
-    D <- ncol(wendy_data[[1]]$U)
+    D <- ncol(wendy_data$U)
 
-    wendy_problems <- lapply(wendy_data, function(d) {
-      build_wendy_problem(d, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control)
-    })
+    wendy_problem <- build_wendy_problem(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control)
 
-    system <- build_wendy_system(wendy_problems, lip, control$diag_reg, control$use_interp_uncertainty)
+    system <- build_wendy_system(wendy_problem, lip, control$diag_reg, control$use_interp_uncertainty)
 
-    p1 <- wendy_problems[[1]]
+    p1 <- wendy_problem
 
     res$wnll    <- system$wnll
     res$J_wnll  <- system$J_wnll
@@ -206,12 +206,11 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     res$rc          <- p1$rc
     res$rc_errors   <- p1$rc_errors
     res$rc_radii    <- p1$rc_radii
-    res$wendy_problems       <- wendy_problems
-    res$wendy_data           <- wendy_data
+    res$wendy_problem  <- wendy_problem
+    res$wendy_data     <- wendy_data
     res$U              <- p1$U
-    res$tt             <- wendy_data[[1]]$tt
+    res$tt             <- wendy_data$tt
     res$var            <- p1$var
-    res$wendy_methods  <- names(wendy_data)
     res$W              <- system$W
   }
 
@@ -224,8 +223,8 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     U_processed  = U, # for lognormal: log-transformed + filtered; else same as U_orig
     tt_processed = as.vector(tt),
     # U/tt that match the V, V_prime grid (post-interpolation if it happened)
-    U_sys = if (method != "OE") wendy_data[[1]]$U else NULL,
-    tt_sys = if (method != "OE") as.vector(wendy_data[[1]]$tt) else NULL,
+    U_sys = if (method != "OE") wendy_data$U else NULL,
+    tt_sys = if (method != "OE") as.vector(wendy_data$tt) else NULL,
     lip = lip,
     f_orig_expr = f_orig_expr,
     u_expr = u_expr,
@@ -286,51 +285,37 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     res$data <- result$data
   }
   
-  boundary_state <- if (control$estimate_u0 && method != "OE") {
-    # BL radius: SSL change-point (res$rc) when using SSL, MSG min_radius otherwise.
-    r_c_bl <- if (identical(control$test_fun_type, "SSL")) res$rc else res$min_radius
-    u0_method <- control$u0_method %||% "bldc"
-    if (identical(u0_method, "bldc")) {
-      estimate_u0_bldc(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl)
+  boundary_state <- if (control$estimate_IC && method != "OE") {
+     if (identical(control$test_fun_type, "SSL")) {
+      r_c_bl <- res$rc
     } else {
-      estimate_u0(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl)
+      r_c_bl <- compute_r_c_hat(U, tt, control$S, control$p)$rc
     }
+    # n_bl deliberately omitted: estimate_IC uses its own max(3, ceiling(r_c/4))
+    # heuristic. control$n_bl drives only the SSL boundary-layer augmentation.
+    estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl,
+                update_trap_u0 = FALSE, J_u = J_u, sigma = estimated_sd)
   } else NULL
-  state <- if (control$estimate_U_star && method != "OE") {
+
+  state <- if (control$estimate_trajectory && method != "OE") {
     if (identical(control$smoother, "erts") && !is.null(res$phat)) {
-      # Parameter covariance from WENDy: linear-in-p uses the design matrix G,
-      # nonlinear uses Jp_r(p_hat); both give Ĉ = (·)^+ S(p̂) (·)^{+T}.
+      # Parameter covariance for ERTS process-noise input: Fisher form
+      # (Gᵀ S⁻¹ G)⁻¹.
       C_hat <- tryCatch({
         Sp <- res$S(res$phat)
         Gp <- if (lip) res$G else res$Jp_r(res$phat)
-        Gp_pinv <- MASS::ginv(Gp)
-        Gp_pinv %*% Sp %*% t(Gp_pinv)
+        R  <- chol(Sp)
+        solve(crossprod(Gp, backsolve(R, forwardsolve(t(R), Gp))))
       }, error = function(e) NULL)
       # Only seed the filter from u0hat when u0 was actually optimised in
-      # estimate_u0 (cov_u0 non-NULL); otherwise u0hat is just the noisy obs.
+      # estimate_IC (cov_u0 non-NULL); otherwise u0hat is just the noisy obs.
       u0_init <- if (!is.null(boundary_state$cov_u0)) boundary_state$u0hat else NULL
       P0_init <- boundary_state$cov_u0
-      erts <- wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = estimated_sd,
-                         u0_init   = u0_init,
-                         P0_init   = P0_init,
-                         param_cov = C_hat,
-                         J_p       = J_p)
-      # P_smooth is the posterior variance *conditional on* p_hat. Add the
-      # contribution from parameter uncertainty itself by propagating
-      # S(t) = ∂u/∂θ along the smoothed trajectory and stacking S Ĉ S^T.
-      # if (!is.null(C_hat)) {
-      #   sens <- tryCatch(
-      #     propagate_param_sensitivity(erts$U_star, tt, res$phat, J_u, J_p,
-      #                                 param_cov = C_hat),
-      #     error = function(e) NULL
-      #   )
-      #   if (!is.null(sens)) {
-      #     erts$P_param <- sens$P_param
-      #     erts$P_total <- erts$P_smooth + sens$P_param
-      #     erts$S_param <- sens$S
-      #   }
-      # }
-      erts
+      wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = estimated_sd,
+                 u0_init   = u0_init,
+                 P0_init   = P0_init,
+                 param_cov = C_hat,
+                 J_p       = J_p)
     } else {
       gp_smooth(U, tt, sigma2_n = as.numeric(sig)^2)
     }

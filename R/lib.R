@@ -69,16 +69,32 @@ summary.wendy <- function(object, ...) {
       J <- attr(object, "n_params")
       param_cov <- if (!is.null(object$data$cov)) object$data$cov[1:J, 1:J] else NULL
     } else {
-      # Compute parameter covariance using sandwich estimator:
-      # cov(p̂) = (GᵀG)⁻¹ GᵀS(p̂)G (GᵀG)⁻¹
-      # where G = Jp_r(p̂) is the Jacobian of the residual
-      # and S(p̂) is the covariance of the weak residual
-      G <- as.array(object$Jp_r(phat)$contiguous())
-      Sp <- as.array(object$S(phat)$contiguous())
+      # Fisher form (Gᵀ S(p̂)⁻¹ G)⁻¹: inverse Fisher information of the
+      # linear-Gaussian residual model and the asymptotic cov of the IRLS
+      # estimator.
+      G  <- object$Jp_r(phat)
+      Sp <- object$S(phat)
+      R  <- chol(Sp)
+      param_cov <- solve(crossprod(G, backsolve(R, forwardsolve(t(R), G))))
 
-      GTG <- t(G) %*% G
-      quad <- t(G) %*% Sp %*% G
-      param_cov <- solve(GTG, t(solve(GTG, t(quad))))
+      # Hybrid sandwich form  (Gᵀ S(p̂)⁻¹ G)⁻¹ is inverse Fisher information Matrix this underestimates the 
+      # variance of the estimtor
+      # Take advantage of the fact that b is linear in U
+      # b(U⋆+ ϵ) = 𝚽'U⋆ + 𝚽'ϵ  so it is easy to find cov(b(U⋆+ ϵ)) = 
+      # Thus we get a more complicated parameter covariance instead of collapsing to the GLS FIM
+      # This is derivaed from p̂ = (Gᵀ S(p̂)⁻¹ G)⁻¹GᵀS(p̂)⁻¹b
+      # M := (Gᵀ S(p̂)⁻¹ G)⁻¹GᵀS(p̂)⁻¹
+      # cov(p̂ | G) = σ^2 M 𝚽̇'𝚽̇'ᵀMᵀ when the measurement noise is isotropic
+      # sig <- object$sig
+      # Vp <- object$V_prime
+      # G  <- object$Jp_r(phat)
+      # Sp <- object$S(phat)
+      # R  <- chol(Sp)
+      # fim <- solve(crossprod(G, backsolve(R, forwardsolve(t(R), G))))
+      # term <- t(fim %*% t(G))
+      # M <- t(backsolve(R, forwardsolve(t(R), term)))
+      # MVp <- M %*% Vp
+      # param_cov <- sig^2 * MVp  %*% t(MVp)
     }
 
     std_errors <- if (!is.null(param_cov)) sqrt(diag(param_cov)) else rep(NA, length(phat))
@@ -260,8 +276,8 @@ residuals.wendy <- function(object, ...) {
 #' @return Numeric vector of weak residuals
 #' @export
 residuals_weighted <- function(object, ...) {
-  S_mat <- as.array(object$S(object$phat)$contiguous())
-  r     <- as.array((object$b - object$g(object$phat))$contiguous())
+  S_mat <- object$S(object$phat)
+  r     <- object$b - object$g(object$phat)
   RT    <- t(chol(S_mat))
   as.numeric(forwardsolve(RT, r))
 }

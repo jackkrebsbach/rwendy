@@ -1,7 +1,7 @@
 #' Build a WENDy problem from a dataset.
 #'
-#' WENDyProblem is constructed per dataset and they are later stacked by
-#' build_wendy_system().
+#' WENDyProblem is constructed from a single dataset and later assembled
+#' into a system by build_wendy_system().
 #'
 #' @param wendy_data  List with elements U (mp1 x D), tt (mp1-vector or column
 #'   matrix), var (mp1 x D variance matrix).
@@ -85,77 +85,32 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
 }
 
 
-#' Assemble a list of WENDy problems into system
+#' Assemble a WENDy problem into system
 #'
 #' Returns a plain list with everything the optimizers need:
 #'   g, b, G, Jp_r, Hp_r, L, Jp_L, Hp_L, W,
 #'   S, Jp_S, wnll, J_wnll, H_wnll, K, D, J.
 #'
-#' @param wendy_problems  List of WENDyProblem objects.
+#' @param wendy_problem   A WENDyProblem object.
 #' @param lip             Logical; TRUE when f is linear in parameters.
 #' @param diag_reg        Diagonal regularisation added to S.
-#' @param use_interp_uncertainty    Logical; if TRUE assemble a length-(M*mp1*D)
-#'   W vector from per-problem variances.
+#' @param use_interp_uncertainty  Logical; if TRUE pass through the problem's
+#'   W vector (variance weights).
 #' @keywords internal
-build_wendy_system <- function(wendy_problems, lip, diag_reg, use_interp_uncertainty) {
-  J      <- wendy_problems[[1]]$J
-  D      <- wendy_problems[[1]]$D
-  mp1    <- wendy_problems[[1]]$mp1
-  K_list <- sapply(wendy_problems, `[[`, "K")
-  K      <- sum(K_list)
-  M      <- length(wendy_problems)
+build_wendy_system <- function(wendy_problem, lip, diag_reg, use_interp_uncertainty) {
+  J   <- wendy_problem$J
+  D   <- wendy_problem$D
+  K   <- wendy_problem$K
 
-  if (M == 1L) {
-    prob <- wendy_problems[[1]]
-    g    <- prob$g
-    b    <- prob$b
-    G    <- prob$G
-    Jp_r <- prob$Jp_r
-    Hp_r <- prob$Hp_r
-    L    <- prob$L
-    Jp_L <- prob$Jp_L
-    Hp_L <- prob$Hp_L
-    W    <- prob$W
-  } else {
-    g_fns <- lapply(wendy_problems, `[[`, "g")
-    g     <- local({ gs <- g_fns
-      function(p) do.call(c, lapply(gs, function(gi) gi(p)))
-    })
-
-    b <- do.call(c,    lapply(wendy_problems, `[[`, "b"))
-    G <- do.call(rbind, lapply(wendy_problems, `[[`, "G"))
-
-    Jp_r_fns <- lapply(wendy_problems, `[[`, "Jp_r")
-    Jp_r     <- local({ fns <- Jp_r_fns
-      function(p) do.call(rbind, lapply(fns, function(fn) fn(p)))
-    })
-
-    Hp_r_fns <- lapply(wendy_problems, `[[`, "Hp_r")
-    Hp_r     <- local({ fns <- Hp_r_fns
-      function(p) {
-        parts <- lapply(fns, function(fn) fn(p))
-        first_dim <- sum(vapply(parts, function(a) dim(a)[1], integer(1)))
-        out <- array(0, c(first_dim, dim(parts[[1]])[2], dim(parts[[1]])[3]))
-        off <- 0L
-        for (a in parts) {
-          n <- dim(a)[1]
-          out[(off + 1L):(off + n), , ] <- a
-          off <- off + n
-        }
-        out
-      }
-    })
-
-    L    <- build_L_block(lapply(wendy_problems, `[[`, "L"),    K_list, D, mp1)
-    Jp_L <- build_Jp_L_block(lapply(wendy_problems, `[[`, "Jp_L"), K_list, D, mp1, J)
-    Hp_L <- build_Hp_L_block(lapply(wendy_problems, `[[`, "Hp_L"), K_list, D, mp1, J)
-
-    W <- if (isTRUE(use_interp_uncertainty) && !is.null(wendy_problems[[1]]$W)) {
-      do.call(c, lapply(wendy_problems, function(pr) pr$W))
-    } else {
-      NULL
-    }
-  }
+  g    <- wendy_problem$g
+  b    <- wendy_problem$b
+  G    <- wendy_problem$G
+  Jp_r <- wendy_problem$Jp_r
+  Hp_r <- wendy_problem$Hp_r
+  L    <- wendy_problem$L
+  Jp_L <- wendy_problem$Jp_L
+  Hp_L <- wendy_problem$Hp_L
+  W    <- if (isTRUE(use_interp_uncertainty)) wendy_problem$W else NULL
 
   S      <- build_S(L, W, diag_reg = diag_reg)
   Jp_S   <- build_J_S(L, Jp_L, J, K, D, W, diag_reg = diag_reg)

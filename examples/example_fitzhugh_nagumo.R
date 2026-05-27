@@ -33,7 +33,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_U_star = FALSE))
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_trajectory = FALSE))
 # res <- solveWendy(f, U, tt, p0=p0, method = "OE")
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 

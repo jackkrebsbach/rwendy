@@ -36,7 +36,7 @@ matrix), var (mp1 x D variance matrix).}
 A list of class "WENDyProblem".
 }
 \description{
-WENDyProblem is constructed per dataset and they are later stacked by
-build_wendy_system().
+WENDyProblem is constructed from a single dataset and later assembled
+into a system by build_wendy_system().
 }
 \keyword{internal}

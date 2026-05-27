@@ -35,7 +35,7 @@ wendy_erts(
 from U via \code{estimate_std}.}
 
 \item{u0_init}{Optional length-D vector to seed the filter at \code{tt[1]}
-(e.g. \code{estimate_u0()$u0hat}). Defaults to \code{U[1, ]}.}
+(e.g. \code{estimate_IC()$u0hat}). Defaults to \code{U[1, ]}.}
 
 \item{P0_init}{Optional D x D prior covariance for \code{u0_init}. When
 \code{u0_init} is supplied, defaults to \code{0.1 * sigma^2 I_D} (more
