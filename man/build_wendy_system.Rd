@@ -2,19 +2,19 @@
 % Please edit documentation in R/wendy_problem.R
 \name{build_wendy_system}
 \alias{build_wendy_system}
-\title{Assemble a list of WENDy problems into system}
+\title{Assemble a WENDy problem into system}
 \usage{
-build_wendy_system(wendy_problems, lip, diag_reg, use_interp_uncertainty)
+build_wendy_system(wendy_problem, lip, diag_reg, use_interp_uncertainty)
 }
 \arguments{
-\item{wendy_problems}{List of WENDyProblem objects.}
+\item{wendy_problem}{A WENDyProblem object.}
 
 \item{lip}{Logical; TRUE when f is linear in parameters.}
 
 \item{diag_reg}{Diagonal regularisation added to S.}
 
-\item{use_interp_uncertainty}{Logical; if TRUE assemble a length-(M*mp1*D)
-W vector from per-problem variances.}
+\item{use_interp_uncertainty}{Logical; if TRUE pass through the problem's
+W vector (variance weights).}
 }
 \description{
 Returns a plain list with everything the optimizers need:

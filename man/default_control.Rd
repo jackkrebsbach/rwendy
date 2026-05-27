@@ -5,7 +5,7 @@
 \alias{default_control}
 \title{Default control for solveWendy}
 \format{
-An object of class \code{list} of length 25.
+An object of class \code{list} of length 24.
 }
 \usage{
 default_control

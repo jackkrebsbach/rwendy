@@ -1,10 +1,9 @@
 #' Default control for solveWendy
 #' @export
 default_control <- list(
-  optimize = TRUE, # boolean: run IRLS or MLE optimzation for parameters 
-  estimate_u0 = FALSE, # Estimate the initial condition
-  u0_method = "bldc",  # "bldc" (iterative defect correction, default) or "nls"
-  estimate_U_star = FALSE, # Estimate the state using wendy_erts
+  optimize = TRUE, # boolean: run IRLS or MLE optimzation for parameters
+  estimate_IC = FALSE, # Estimate the initial condition
+  estimate_trajectory = FALSE, # Estimate the state trajectory using wendy_erts
   noise_sd = NA, # User can supply sd of the noise if known
   compute_svd = TRUE, # Compute the SVD on the test function matrices (MSG)
   diag_reg = 10e-10, # Regularization for covariance of the weak residual for stability
@@ -21,9 +20,11 @@ default_control <- list(
   min_test_fun_info_number = 0.95, # Cumulative sum of the singular values
   min_number_points = 256, # integer: target number of data points after interpolating
   max_points_interp = 25, # integer: maximum number of points in the data to interpolate 
-  interpolation_method = NULL,  # "gp", "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
+  interpolation_method = NULL,  # single string: "gp", "poly_ls_N", "spline", "linear", "cubic", "loess", or "kernel"
   fixed_radius = NULL, # integer: fix the base test-function radius, bypassing aujko-selection
   use_interp_uncertainty = TRUE, # logical: if TRUE weight covariance by interpolation uncertainty W_ii = var_ii / sigma^2
-  smoother = "erts", # state smoother used by estimate_U_star -- "gp" (Matern 5/2) or "erts" (EKF/RTS)
-  apply_fn = NULL # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
+  smoother = "erts", # state smoother used by estimate_trajectory -- "gp" (Matern 5/2) or "erts" (EKF/RTS)
+  apply_fn = NULL, # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
+  include_boundary_layer = FALSE, # augment SSL test-function matrices with boundary-layer rows + EM correction
+  n_bl = NULL # integer: BL test functions per side for the SSL augmentation; NULL uses the heuristic max(3, ceiling(radius/4)). Note: the IC estimate always uses this heuristic and ignores this control.
 )

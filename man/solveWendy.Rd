@@ -75,8 +75,8 @@ res <- solveWendy(
   f, U, tt,
   method     = "IRLS",
   noise_dist = "addgaussian",
-  control    = list(estimate_U_star = FALSE, optimize = TRUE,
-                    test_fun_type   = "SSL",  estimate_u0 = TRUE)
+  control    = list(estimate_trajectory = FALSE, optimize = TRUE,
+                    test_fun_type   = "SSL",  estimate_IC = TRUE)
 )
 res$phat                       # ~ c(1, 0.1)
 rel_err(res$phat, p_star)
