@@ -191,8 +191,14 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
     rc_radii <- data$radii
   }
 
-  V  <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 0)
-  Vp <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 1)
+  # psi shape parameter p (= control$p): higher p -> sharper, more concentrated
+  # test functions; lower p -> wider, flatter. Drives the SVD modes of the basis.
+  p_shape <- control$p %||% 16
+  psi_p   <- function(t, r) psi(t, r, p = p_shape)
+
+  V   <- build_full_test_function_matrix(psi_p, tt, c(radius_c), order = 0)
+  Vp  <- build_full_test_function_matrix(psi_p, tt, c(radius_c), order = 1)
+  Vpp <- build_full_test_function_matrix(psi_p, tt, c(radius_c), order = 2)
 
   K_interior <- nrow(V)
   K_bl       <- 0L
@@ -206,8 +212,8 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
     max_em_order <- 4L
     bl_per_order <- lapply(0:max_em_order, function(ord) {
       rbind(
-        build_boundary_layer_block(psi, tt, radius_c, order = ord, side = "left",  n_bl = control$n_bl),
-        build_boundary_layer_block(psi, tt, radius_c, order = ord, side = "right", n_bl = control$n_bl)
+        build_boundary_layer_block(psi_p, tt, radius_c, order = ord, side = "left",  n_bl = control$n_bl),
+        build_boundary_layer_block(psi_p, tt, radius_c, order = ord, side = "right", n_bl = control$n_bl)
       )
     })
     names(bl_per_order) <- paste0("phi", 0:max_em_order)
@@ -232,12 +238,13 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
     # Append BL rows in the SSL convention (no dt scaling on the integration
     # block). The boundary terms and EM correction are still scaled by 1/dt via
     # bdry_scale below to compensate for SSL's missing h.
-    V  <- rbind(V,  apply_trap_weights(bl_per_order$phi0))
-    Vp <- rbind(Vp, apply_trap_weights(bl_per_order$phi1))
+    V   <- rbind(V,   apply_trap_weights(bl_per_order$phi0))
+    Vp  <- rbind(Vp,  apply_trap_weights(bl_per_order$phi1))
+    Vpp <- rbind(Vpp, apply_trap_weights(bl_per_order$phi2))
   }
 
   return(list(
-    V = V, V_prime = Vp, radius_c = radius_c, rc_errors = rc_errors, rc_radii = rc_radii,
+    V = V, V_prime = Vp, V_pp = Vpp, radius_c = radius_c, rc_errors = rc_errors, rc_radii = rc_radii,
     K_interior = K_interior, K_bl = K_bl,
     bl_phi_t1 = bl_phi_t1, bl_phi_tM = bl_phi_tM,
     bdry_scale = bdry_scale
@@ -276,6 +283,10 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
+  # Radius selection is data-driven; under partial observation (JOINT) use only
+  # the observed columns. The test-function matrices themselves are grid-based.
+  U_rad <- if (!is.null(control$joint_observed)) U[, control$joint_observed, drop = FALSE] else U
+
   radii <- control$radius_params
   radius_min_time <- control$radius_min_time
   radius_max_time <- control$radius_max_time
@@ -301,14 +312,14 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   } else {
     if(control$test_fun == "phi"){
       # 𝜱
-      result <- find_min_radius_int_error(U, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 2)
+      result <- find_min_radius_int_error(U_rad, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 2)
       min_radius_int_error <- result$radii[result$index]
       min_radius_errors <- result$errors
       min_radius_radii <- result$radii
       min_radius_ix <- result$index
     } else {
       # 𝚿
-      result <- compute_r_c_hat(U, tt, control$S, control$p)
+      result <- compute_r_c_hat(U_rad, tt, control$S, control$p)
       min_radius_int_error <- result$rc
       min_radius_errors    <- result$errors
       min_radius_radii     <- result$radii
