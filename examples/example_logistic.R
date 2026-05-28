@@ -15,16 +15,16 @@ f <- function(u, p, t) {
 p_star <- c(1, 1/10)
 u0 <- c(0.1)
 p0 <- c(1.25, 0.25)
-npoints <- 128
+npoints <- 120
 t_span <- c(0.0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-14)
 
-set.seed(8675309)
+# set.seed(8675309 + 4)
 
-nr <- 0.35
+nr <- 0.15
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -40,7 +40,7 @@ tt <- sol[, 1, drop = FALSE]
 cat(sprintf("σ = %.2f", noise_sd))
 
 time <- system.time({
-  res <- solveWendy(f, U, tt, method = "IRLS",
+  res1 <- solveWendy(f, U, tt, method = "IRLS",
   control = list(
     estimate_IC         = TRUE,
     estimate_trajectory = TRUE,
@@ -89,9 +89,6 @@ tt_vec    <- as.vector(tt)
 #   cex = 0.8
 # )
 
-# cat(sprintf("\np̂ = [%s]  rel_err = %.4f\n",
-#             paste(sprintf("%.4f", res$phat), collapse = ", "),
-#             rel_err(res$phat, p_star)))
 
 # cat(sprintf("\nû₀ = [%s]  abs_err = %.4f",
 #             paste(sprintf("%.4f", res$u0hat), collapse = ", "),
@@ -119,18 +116,18 @@ tt_vec    <- as.vector(tt)
 
 # I <- V %*% VT
 
-res <- solveWendy(f, U, tt, method = "IRLS",
-  control = list(
-    optimize = FALSE,
-    test_fun_type   = "SSL",
-    include_boundary_layer = TRUE,
-    n_bl = 10
-  ))
+# res <- solveWendy(f, U, tt, method = "IRLS",
+#   control = list(
+#     optimize = FALSE,
+#     test_fun_type   = "SSL",
+#     include_boundary_layer = TRUE,
+#     n_bl = 10
+#   ))
 
-V <- t(svd(res$V)$v)
-c <- V %*% sol[,-1]
+# V <- t(svd(res$V)$v)
+# c <- V %*% sol[,-1]
 
-plot(t(V) %*% c)
+# plot(t(V) %*% c)
 
 # tt_vec <- as.vector(tt)
 # mp1    <- nrow(U)
@@ -149,3 +146,27 @@ plot(t(V) %*% c)
 # for (k in bl_right_idx) lines(tt_vec, V[k, ], col = "#d62728", lwd = 1.5)
 # legend("top", legend = c("left BL", "right BL"), horiz = TRUE,
 #        col = c("#1f77b4", "#d62728"), lwd = 1.5, bty = "n")
+
+res <- solveWendy(f, U, tt, method = "JOINT",
+                    control = list(
+                      joint_rank_tau = 0,
+                      joint_deriv_pen = 1e-4,
+                      joint_lambda = 1000,
+                      joint_deriv_ode = FALSE,
+                      joint_basis_rank = "full"
+                    )
+                )
+
+cat(sprintf("\np̂_JOINT = [%s]  rel_err = %.4f",
+            paste(sprintf("%.4f", res$phat), collapse = ", "),
+            rel_err(res$phat, p_star)))
+
+cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f\n",
+            paste(sprintf("%.4f", res1$phat), collapse = ", "),
+            rel_err(res1$phat, p_star)))
+
+state <- res$data$uhat
+
+plot(tt, U[,1], col = adjustcolor("blue", alpha.f = 0.3), cex = 0.5)
+lines(tt, state[,1], cex = 0.5, col = "blue")
+lines(tt, sol[,-1], cex = 0.5, col = "black")

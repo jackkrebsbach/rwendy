@@ -26,5 +26,14 @@ default_control <- list(
   smoother = "erts", # state smoother used by estimate_trajectory -- "gp" (Matern 5/2) or "erts" (EKF/RTS)
   apply_fn = NULL, # function: custom apply for multistart, e.g. parallel::mclapply or future.apply::future_lapply; NULL -> lapply
   include_boundary_layer = FALSE, # augment SSL test-function matrices with boundary-layer rows + EM correction
-  n_bl = NULL # integer: BL test functions per side for the SSL augmentation; NULL uses the heuristic max(3, ceiling(radius/4)). Note: the IC estimate always uses this heuristic and ignores this control.
+  n_bl = NULL, # integer: BL test functions per side for the SSL augmentation; NULL uses the heuristic max(3, ceiling(radius/4)). Note: the IC estimate always uses this heuristic and ignores this control.
+  joint_basis_rank = "auto", # integer, "auto", or "full": rank of the JOINT state basis (SVD modes of the SSL+BL matrix). "auto" keeps the data modes whose energy exceeds joint_rank_tau * noise floor (adapts to n, noise, and signal complexity -- prevents the large-n overfitting a full basis suffers); "full" = no cap (Kb = mp1); integer = top-r smooth modes
+  joint_rank_tau = 0, # numeric: threshold (in units of the per-mode noise floor sum_d sigma_d^2) for keeping a basis mode when joint_basis_rank = "auto". Larger = sparser basis / more smoothing
+  joint_basis_p = 16, # integer: shape p of the piecewise-polynomial test functions psi(t;r,p)=(1-(t/r)^2)^p used to build the JOINT state basis (before the SVD). Higher = sharper/narrower; lower = wider/flatter
+  joint_state_warmstart = FALSE, # logical: before the joint solve, re-initialise the state by optimising c alone with p held at p0 (ODE-consistent warm start), which can reduce joint iterations
+  joint_deriv_pen = 1e-4, # numeric >= 0: smoothness penalty rho*||uhat^(q)||^2 on a time-derivative of the basis expansion (via analytic test-function derivatives). 0 = off
+  joint_deriv_order = 2, # 1 or 2: derivative order for joint_deriv_pen. 2 = curvature ||uhat''||^2 (penalises wiggle, not trend -- recommended); 1 = ||uhat'||^2 (biases toward flat)
+  joint_deriv_ode = FALSE, # logical: make joint_deriv_pen ODE-aware -- penalise ||uhat^(q) - ODE^(q)(uhat,p)||^2 (q=1: f; q=2: dF/dt) instead of raw ||uhat^(q)||^2, so genuine ODE curvature is not penalised
+  joint_lambda = 1000, # numeric, or "auto": weight on the weak-residual term in the JOINT loss L(c,p) = lambda*||weak||^2 + ||uhat - U_obs||^2_{Sigma_eps^-1}. "auto" sets lambda = joint_lambda_scale / mean(diag(S(p_irls))), i.e. a dimensionless weight on the weak term whitened by its mean variance (scales like 1/sigma^2; more regularisation at low noise)
+  joint_lambda_scale = 300 # numeric: dimensionless weight B used when joint_lambda = "auto". B ~ 300 puts JOINT in the state-reconstruction plateau across logistic/LV/Lorenz and noise 2-20%
 )
