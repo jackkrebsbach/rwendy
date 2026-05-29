@@ -15,7 +15,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1/10)
 u0 <- c(0.1)
 p0 <- c(1.25, 0.25)
-npoints <- 120
+npoints <- 128
 t_span <- c(0.0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -24,7 +24,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rto
 
 # set.seed(8675309 + 4)
 
-nr <- 0.15
+nr <- 0.25
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -39,14 +39,14 @@ tt <- sol[, 1, drop = FALSE]
 
 cat(sprintf("σ = %.2f", noise_sd))
 
-time <- system.time({
-  res1 <- solveWendy(f, U, tt, method = "IRLS",
+res1 <- solveWendy(f, U, tt, method = "IRLS",
   control = list(
     estimate_IC         = TRUE,
     estimate_trajectory = TRUE,
     test_fun_type   = "MSG"
-  ))
-})
+))
+
+res2 <- solveWendy(f, U, tt, method = "MLE")
 
 t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
@@ -147,26 +147,22 @@ tt_vec    <- as.vector(tt)
 # legend("top", legend = c("left BL", "right BL"), horiz = TRUE,
 #        col = c("#1f77b4", "#d62728"), lwd = 1.5, bty = "n")
 
-res <- solveWendy(f, U, tt, method = "JOINT",
-                    control = list(
-                      joint_rank_tau = 0,
-                      joint_deriv_pen = 1e-4,
-                      joint_lambda = 1000,
-                      joint_deriv_ode = FALSE,
-                      joint_basis_rank = "full"
-                    )
-                )
+res <- solveWendy(f, U, tt, method = "JOINT")
+
+state <- res$data$uhat
+
+plot(tt, U[,1], col = adjustcolor("blue", alpha.f = 0.3), cex = 0.5)
+lines(res$tt, state[,1], cex = 0.5, col = "blue")
+lines(tt, sol[,-1], cex = 0.5, col = "black")
 
 cat(sprintf("\np̂_JOINT = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res$phat), collapse = ", "),
             rel_err(res$phat, p_star)))
 
-cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f\n",
+cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res1$phat), collapse = ", "),
             rel_err(res1$phat, p_star)))
 
-state <- res$data$uhat
-
-plot(tt, U[,1], col = adjustcolor("blue", alpha.f = 0.3), cex = 0.5)
-lines(tt, state[,1], cex = 0.5, col = "blue")
-lines(tt, sol[,-1], cex = 0.5, col = "black")
+cat(sprintf("\np̂_MLE   = [%s]  rel_err = %.4f\n",
+            paste(sprintf("%.4f", res2$phat), collapse = ", "),
+            rel_err(res2$phat, p_star)))

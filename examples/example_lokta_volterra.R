@@ -39,11 +39,12 @@ U <- sol[, -1] + noise
 # U[,1] <- mean(U[,2])
 tt <- matrix(sol[, 1], ncol = 1)
 
-res1 <- solveWendy(f, U, tt, method = "IRLS")
+res1  <- solveWendy(f, U, tt, method = "IRLS")
+res2  <- solveWendy(f, U, tt, method = "MLE")
+res   <- solveWendy(f, U, tt, method = "JOINT")
+resJS <- solveWendy(f, U, tt, method = "JSTATE")
 
-res <- solveWendy(f, U, tt, method = "JOINT")
-
-state <- res$data$uhat
+state <- resJS$data$uhat
 
 plot(tt, U[,1], col = adjustcolor("brown", alpha.f = 0.3), cex = 0.5,
    ylab = "State u₁ & u₂",
@@ -59,6 +60,14 @@ cat(sprintf("\np̂_JOINT = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res$phat), collapse = ", "),
             rel_err(res$phat, p_star)))
 
-cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f\n",
+cat(sprintf("\np̂_JSTATE = [%s]  rel_err = %.4f",
+            paste(sprintf("%.4f", resJS$phat), collapse = ", "),
+            rel_err(resJS$phat, p_star)))
+
+cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res1$phat), collapse = ", "),
             rel_err(res1$phat, p_star)))
+
+cat(sprintf("\np̂_MLE   = [%s]  rel_err = %.4f\n",
+            paste(sprintf("%.4f", res2$phat), collapse = ", "),
+            rel_err(res2$phat, p_star)))

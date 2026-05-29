@@ -25,9 +25,10 @@ NULL
 #' @param tt Numeric vector. Time points corresponding to rows of \code{U}.
 #' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
 #' @param method One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
-#'   \code{"OE"}, \code{"HYBRID"}, or \code{"JOINT"}.  \code{"JOINT"} jointly
-#'   estimates the state (in a test-function basis) and parameters by minimising
-#'   the weak-residual loss plus a noise-weighted data-fit term.
+#'   \code{"OE"}, \code{"HYBRID"}, \code{"JOINT"}, or \code{"JSTATE"}.
+#'   \code{"JOINT"} estimates state (in a test-function basis) and parameters
+#'   jointly. \code{"JSTATE"} optimises the state directly at every grid point
+#'   with a weak-second-derivative penalty for smoothing.
 #' @param control Named list of control parameters; merged with \code{default_control}.
 #'
 #' @details
@@ -72,20 +73,19 @@ NULL
 #' rel_err(res$phat, p_star)
 #'
 #' @export
-solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID", "JOINT"), control = NULL){
+solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID", "JOINT", "JSTATE"), control = NULL){
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
   control <- if(!is.null(control)) modifyList(default_control, control) else default_control
 
-  # JOINT estimates the weak residual and the IRLS warm start on MSG test
-  # functions (no boundary layer); SSL + boundary layers are used only to build
-  # the state basis (see .run_joint). Force the system build to MSG here.
-  if (method == "JOINT") {
+  # JOINT and JSTATE use MSG test functions for the weak residual and the IRLS
+  # warm start; the SSL build is reserved for their auxiliary matrices (JOINT's
+  # state basis, JSTATE's V_pp penalty). Force the system build to MSG.
+  if (method %in% c("JOINT", "JSTATE")) {
     if (!identical(control$test_fun_type, "MSG")) {
-      warning("JOINT uses MSG test functions for the weak residual and warm ",
-              "start; overriding test_fun_type to \"MSG\". SSL + boundary ",
-              "layers are used only for the state basis.", call. = FALSE)
+      warning(method, " uses MSG test functions for the weak residual and warm ",
+              "start; overriding test_fun_type to \"MSG\".", call. = FALSE)
     }
     control$test_fun_type <- "MSG"
   }
@@ -143,9 +143,11 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     d3F_dt3_ <- build_fn(d3F_sym, vars)  # d³f/dt³  (total)
   }
 
-  # Under partial observation (JOINT), estimate the noise level from the
-  # observed columns only -- the unobserved components carry no measurement.
-  joint_obs <- if (method == "JOINT") control$joint_observed else NULL
+  # Under partial observation (JOINT / JSTATE), estimate the noise level from
+  # the observed columns only -- the unobserved components carry no measurement.
+  joint_obs <- if (method == "JOINT")  control$joint_observed
+               else if (method == "JSTATE") control$jstate_observed
+               else NULL
   U_est     <- if (!is.null(joint_obs)) U[, joint_obs, drop = FALSE] else U
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
