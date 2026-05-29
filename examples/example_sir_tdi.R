@@ -12,7 +12,7 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-npoints <- 512  
+npoints <- 256
 p_star = c(0.2, 1.5, 0.074, 0.113, 0.0024)
 p0 <- c(0.1, 2.5, 0.1, 0.1, 0.001)
 u0 <- c(1, 0, 0)
@@ -35,7 +35,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 # tt <- matrix(sol[, 1], ncol = 1)
 
 # Log Normal Noise
-nr <- 0.5
+nr <- 0.25
 noise_sd <- nr
 U <- sol[, -1] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
 tt <- matrix(sol[, 1], ncol = 1)
@@ -51,7 +51,7 @@ points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))
 
 legend("topright", legend = c("Susceptible", "Infected", "Recovered"), col = c("black", "red", "blue"), lwd = 1)
 
-res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "lognormal")
+res <- solveWendy(f, U, tt, p0 = p0, method = "IRLS", noise_dist = "lognormal")
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = res$phat)
 

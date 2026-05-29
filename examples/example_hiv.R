@@ -1,8 +1,9 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
 
+invisible({devtools::load_all()})
 f <- function(u, p, t) {
    eta <- 9e-5 * (1 - 0.9 * cos(pi * t / 1000))
 
@@ -16,7 +17,7 @@ f <- function(u, p, t) {
 npoints <- 100
 t_span <- c(0, 20)
 p_star <- c(36, 0.108, 0.5, 5, 3)
-u0 <- param.true$x0
+u0 <- c(600, 30, 0.5)
 D <- length(u0)
 p0 <- c(38, 0.05, 0.25, 3, 2)
 
@@ -38,37 +39,27 @@ for(d in  seq(D)){
   U[,d] <- U_d + noise
 }
 
-# noise <- matrix(
-#   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = nr),
-#   nrow = nrow(sol)
-# )
-# U <- sol[, -1] + noise
-
-tt <- matrix(sol[, 1], ncol = 1)
-
-res <- solveWendy(f, U, tt, method = "MLE", noise_dist = "addgaussian",
-        control = list(test_fun_type = "MSG", radius_min_time = 0.01, radius_max_time = 5, optimize = FALSE))
-
-cat("pstar:", p_star, "\nphat :", res$phat)
+res <- solveWendy(f, U, tt, method = "IRLS")
 
 mpl_colors <- c("#1f77b4", "#ff7f0e", "#2ca02c")
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 U_hat <- sol_hat[,-1]
 U_star <- sol[,-1]
 
-par(mfrow = c(3, 1), mar = c(4, 4, 2, 1)) 
+tt <- as.vector(sol[, 1])
+par(mfrow = c(3, 1), mar = c(1, 2, 2, 1))
 for(d in seq(D)){
+  plot(tt, U_star[,d], ylab = paste0("u",d), col = "#000000", pch = 16)
+  points(tt, U[,d], col = mpl_colors[1], pch = 16)
+  points(tt, U_hat[,d], col = mpl_colors[2], pch = 16)
   legend(
     "topright",
     legend = c("Truth", "Noisy observation", "Estimated"),
     col    = c("#000000", mpl_colors[1], mpl_colors[2]),
-    pch    = c(16, 16, 16),
+    pch    = c(16, 16, 16)
   )
-  plot(tt, U_star[,d], ylab = paste0("u",d))
-  points(tt, U[,d], col = mpl_colors[1])
-  points(tt, U_hat[,d], col = mpl_colors[2])
 }
 
-
-print(as.numeric(res$sig))
-print(noise_sd)
+cat(sprintf("\np̂ = [%s]  rel_err = %.4f",
+            paste(sprintf("%.4f", res$phat), collapse = ", "),
+            rel_err(res$phat, p_star)))
