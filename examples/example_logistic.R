@@ -147,18 +147,6 @@ tt_vec    <- as.vector(tt)
 # legend("top", legend = c("left BL", "right BL"), horiz = TRUE,
 #        col = c("#1f77b4", "#d62728"), lwd = 1.5, bty = "n")
 
-res <- solveWendy(f, U, tt, method = "JOINT")
-
-state <- res$data$uhat
-
-plot(tt, U[,1], col = adjustcolor("blue", alpha.f = 0.3), cex = 0.5)
-lines(res$tt, state[,1], cex = 0.5, col = "blue")
-lines(tt, sol[,-1], cex = 0.5, col = "black")
-
-cat(sprintf("\np̂_JOINT = [%s]  rel_err = %.4f",
-            paste(sprintf("%.4f", res$phat), collapse = ", "),
-            rel_err(res$phat, p_star)))
-
 cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res1$phat), collapse = ", "),
             rel_err(res1$phat, p_star)))

@@ -25,10 +25,7 @@ NULL
 #' @param tt Numeric vector. Time points corresponding to rows of \code{U}.
 #' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
 #' @param method One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
-#'   \code{"OE"}, \code{"HYBRID"}, \code{"JOINT"}, or \code{"JSTATE"}.
-#'   \code{"JOINT"} estimates state (in a test-function basis) and parameters
-#'   jointly. \code{"JSTATE"} optimises the state directly at every grid point
-#'   with a weak-second-derivative penalty for smoothing.
+#'   \code{"OE"}, or \code{"HYBRID"}.
 #' @param control Named list of control parameters; merged with \code{default_control}.
 #'
 #' @details
@@ -73,22 +70,11 @@ NULL
 #' rel_err(res$phat, p_star)
 #'
 #' @export
-solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID", "JOINT", "JSTATE"), control = NULL){
+solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
   control <- if(!is.null(control)) modifyList(default_control, control) else default_control
-
-  # JOINT and JSTATE use MSG test functions for the weak residual and the IRLS
-  # warm start; the SSL build is reserved for their auxiliary matrices (JOINT's
-  # state basis, JSTATE's V_pp penalty). Force the system build to MSG.
-  if (method %in% c("JOINT", "JSTATE")) {
-    if (!identical(control$test_fun_type, "MSG")) {
-      warning(method, " uses MSG test functions for the weak residual and warm ",
-              "start; overriding test_fun_type to \"MSG\".", call. = FALSE)
-    }
-    control$test_fun_type <- "MSG"
-  }
 
   U_orig   <- U
   tt_orig  <- as.vector(tt)
@@ -143,25 +129,17 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     d3F_dt3_ <- build_fn(d3F_sym, vars)  # d³f/dt³  (total)
   }
 
-  # Under partial observation (JOINT / JSTATE), estimate the noise level from
-  # the observed columns only -- the unobserved components carry no measurement.
-  joint_obs <- if (method == "JOINT")  control$joint_observed
-               else if (method == "JSTATE") control$jstate_observed
-               else NULL
-  U_est     <- if (!is.null(joint_obs)) U[, joint_obs, drop = FALSE] else U
-
   estimated_sd <- if (!is.na(control$noise_sd)) {
     control$noise_sd
   } else if (nrow(U) >= 20) {
-    estimate_std(U_est, k = 6)
+    estimate_std(U, k = 6)
   } else {
     # Standard SD estimation unreliable for sparse data; use poly LS residuals
     degree <- detect_max_state_order(f_orig_expr, u_expr) + if (noise_dist == "lognormal") 0L else 1L
     degree_interpolation <- paste0("poly_ls_", degree)
-    U_orig_est <- if (!is.null(joint_obs)) U_orig[, joint_obs, drop = FALSE] else U_orig
-    U_fit <- interpolate_to_grid(U_orig_est, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control = control)$U
-    df <- nrow(U_orig_est) - (degree + 1L)  # n - p unbiased estimator of the variance
-    sqrt(sum((U_orig_est - U_fit)^2) / df)
+    U_fit <- interpolate_to_grid(U_orig, tt_orig, tt_orig, degree_interpolation, substitute_data = FALSE, control = control)$U
+    df <- nrow(U_orig) - (degree + 1L)  # n - p unbiased estimator of the variance
+    sqrt(sum((U_orig - U_fit)^2) / df)
   }
 
   D <- ncol(U)
@@ -177,7 +155,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     # noise-to-signal ratio is low (<= 0.1) the observations are clean enough that
     # linear interpolation between them suffices.
     if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
-      nsr <- min(estimated_sd / apply(U_est, 2, sd))
+      nsr <- min(estimated_sd / apply(U, 2, sd))
       if (nsr <= 0.15) {
         control$interpolation_method <- "linear"
       } else {

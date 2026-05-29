@@ -382,9 +382,7 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   IRLS   = .run_irls,
   MLE    = .run_mle,
   OE     = .run_oe,
-  HYBRID = .run_hybrid,
-  JOINT  = .run_joint,
-  JSTATE = .run_jstate
+  HYBRID = .run_hybrid
 )
 
 .run_wendy_optimization <- function(ctx, p0) {

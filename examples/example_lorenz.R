@@ -39,16 +39,12 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-time <- system.time({
-  res <- solveWendy(f, U, tt, method = "IRLS",
-   control = list(test_fun_type = "MSG", estimate_IC = TRUE, estimate_trajectory = TRUE))
-})
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "MSG", estimate_IC = TRUE, estimate_trajectory = TRUE))
 
 resOE <- solveWendy(f, U, tt, p0 = p0, method = "OE")
 
-cat(sprintf("\np̂ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
-cat(sprintf("\n     rel error = %.4f", wendy::rel_err(res$phat, p_star)))
-# cat(sprintf("\n     time = %.4f", time[1]))
+cat(sprintf("\nIRLS p̂ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
+cat(sprintf("    rel error = %.4f", wendy::rel_err(res$phat, p_star)))
 
 cat(sprintf("\nOE p̂ = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", resOE$phat), collapse = ", "),
