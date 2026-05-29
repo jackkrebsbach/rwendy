@@ -283,9 +283,9 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
-  # Radius selection is data-driven; under partial observation (JOINT) use only
-  # the observed columns. The test-function matrices themselves are grid-based.
-  U_rad <- if (!is.null(control$joint_observed)) U[, control$joint_observed, drop = FALSE] else U
+  # Radius selection is data-driven. The test-function matrices themselves are
+  # grid-based.
+  U_rad <- U
 
   radii <- control$radius_params
   radius_min_time <- control$radius_min_time

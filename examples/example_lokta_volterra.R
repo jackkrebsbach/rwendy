@@ -41,28 +41,14 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 res1  <- solveWendy(f, U, tt, method = "IRLS")
 res2  <- solveWendy(f, U, tt, method = "MLE")
-res   <- solveWendy(f, U, tt, method = "JOINT")
-resJS <- solveWendy(f, U, tt, method = "JSTATE")
-
-state <- resJS$data$uhat
 
 plot(tt, U[,1], col = adjustcolor("brown", alpha.f = 0.3), cex = 0.5,
    ylab = "State u₁ & u₂",
   main = "Lokta Volterra")
 points(tt, U[,2], col = adjustcolor("blue", alpha.f = 0.3), cex = 0.5)
-lines(tt, state[,1], cex = 0.5, col = "brown")
-lines(tt, state[,2], cex = 0.5, col = "blue")
 
 lines(tt, sol[,-1][,1], cex = 0.5, col = "black")
 lines(tt, sol[,-1][,2], cex = 0.5, col = "black")
-
-cat(sprintf("\np̂_JOINT = [%s]  rel_err = %.4f",
-            paste(sprintf("%.4f", res$phat), collapse = ", "),
-            rel_err(res$phat, p_star)))
-
-cat(sprintf("\np̂_JSTATE = [%s]  rel_err = %.4f",
-            paste(sprintf("%.4f", resJS$phat), collapse = ", "),
-            rel_err(resJS$phat, p_star)))
 
 cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res1$phat), collapse = ", "),
