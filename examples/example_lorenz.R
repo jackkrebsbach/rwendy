@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 256
+npoints <- 512
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -39,27 +39,31 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "MSG", estimate_IC = TRUE, estimate_trajectory = TRUE))
+time <- system.time({
+  res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "MSG", estimate_IC = TRUE, estimate_trajectory = TRUE))
+})
 
-resOE <- solveWendy(f, U, tt, p0 = p0, method = "OE")
+print(time)
 
-cat(sprintf("\nIRLS p̂ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
-cat(sprintf("    rel error = %.4f", wendy::rel_err(res$phat, p_star)))
+# resOE <- solveWendy(f, U, tt, p0 = p0, method = "OE")
 
-cat(sprintf("\nOE p̂ = [%s]  rel_err = %.4f",
-            paste(sprintf("%.4f", resOE$phat), collapse = ", "),
-            rel_err(resOE$phat, p_star)))
+# cat(sprintf("\nIRLS p̂ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
+# cat(sprintf("    rel error = %.4f", wendy::rel_err(res$phat, p_star)))
 
-cat(sprintf("\nu₀ = [%s]",
-              paste(sprintf("%.4f",u0), collapse = ", ")))
+# cat(sprintf("\nOE p̂ = [%s]  rel_err = %.4f",
+#             paste(sprintf("%.4f", resOE$phat), collapse = ", "),
+#             rel_err(resOE$phat, p_star)))
 
-cat(sprintf("\nû₀ = [%s]",
-            paste(sprintf("%.4f", res$u0hat), collapse = ", ")))
+# cat(sprintf("\nu₀ = [%s]",
+#               paste(sprintf("%.4f",u0), collapse = ", ")))
 
-cat(sprintf("\nERTS û₀ = [%s]  rel_err = %.4f\n",
-            paste(sprintf("%.4f", res$state$U_star[1,]), collapse = ", "),
-            rel_err(res$state$U_star[1,], u0)))
+# cat(sprintf("\nû₀ = [%s]",
+#             paste(sprintf("%.4f", res$u0hat), collapse = ", ")))
+
+# cat(sprintf("\nERTS û₀ = [%s]  rel_err = %.4f\n",
+#             paste(sprintf("%.4f", res$state$U_star[1,]), collapse = ", "),
+#             rel_err(res$state$U_star[1,], u0)))
 
 
-cat(sprintf("\nOE û₀ = [%s]",
-              paste(sprintf("%.4f", resOE$data$u0), collapse = ", ")))
+# cat(sprintf("\nOE û₀ = [%s]",
+#               paste(sprintf("%.4f", resOE$data$u0), collapse = ", ")))

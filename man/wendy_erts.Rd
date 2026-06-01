@@ -15,7 +15,8 @@ wendy_erts(
   u0_init = NULL,
   P0_init = NULL,
   param_cov = NULL,
-  J_p = NULL
+  J_p = NULL,
+  fold_param_uncertainty = TRUE
 )
 }
 \arguments{
@@ -45,20 +46,40 @@ confident than the raw observation); otherwise \code{sigma^2 I_D}.}
 
 \item{J_p}{Optional callable returning the D x J Jacobian
 \eqn{\nabla_p f(p, u, t)} (flattened d-fast, like the rest of the package).}
+
+\item{fold_param_uncertainty}{Logical (default \code{TRUE}). When \code{TRUE}
+and \code{param_cov}/\code{J_p} are supplied, the parameter-sensitivity term
+\eqn{S_k \hat C S_k^T} is added to \code{P_smooth}; otherwise only the
+conditional posterior is returned.}
 }
 \value{
-Named list with U_star (smoothed state), P_smooth (posterior
-  covariance), and the intermediate filter/predictor states.
+Named list with \code{U_star} (smoothed state), \code{P_smooth}
+  (total posterior covariance), \code{P_smooth_cond} (the conditional-on-p̂
+  posterior), \code{P_smooth_param} (the parameter-uncertainty contribution,
+  or \code{NULL} when not folded), and the intermediate filter/predictor
+  states.
 }
 \description{
 Extended Kalman filter forward pass followed by a Rauch-Tung-Striebel
 backward smoother on the parameter-conditioned dynamics.
 }
 \details{
-When \code{param_cov} and \code{J_p} are both supplied, the process
-covariance at step k is propagated from the WENDy parameter covariance:
-\deqn{Q_k = (\Delta t_k)^2 \, \nabla_p f(\hat{p}, u_k, t_k) \, \hat{C} \,
-       \nabla_p f(\hat{p}, u_k, t_k)^T,}
-which absorbs parameter uncertainty into the predict step. Without them,
-\code{Q_k} falls back to the naive \code{(0.1 sigma)^2 I_D}.
+The reported posterior covariance follows the law of total variance,
+\deqn{\mathrm{Cov}(u_k^\star) = \mathrm{Cov}(u_k^\star \mid \hat p)
+       + S_k \, \hat C \, S_k^T,}
+splitting trajectory uncertainty into the conditional smoother posterior
+(data noise + model/discretization error) and the contribution of parameter
+uncertainty. The conditional pass uses a small model-error process noise
+\eqn{Q = (0.1\,\sigma)^2 I_D}; parameter uncertainty is folded in separately
+and \emph{coherently} via the sensitivity
+\eqn{S_k = \partial u_k^\star / \partial \hat p}, obtained by central
+differences of the smoothed mean over re-runs at \eqn{\hat p \pm h e_j}, with
+\eqn{\hat C} the WENDy parameter covariance. This replaces the earlier
+heuristic of injecting \eqn{(\Delta t_k)^2 \nabla_p f \,\hat C\, \nabla_p f^T}
+as predict-step process noise, which mis-modelled \eqn{\delta p} as an
+independent per-step draw (a random walk) rather than a single
+fixed-but-uncertain value affecting the whole trajectory coherently. Folding
+requires \code{param_cov} and \code{J_p}; when either is absent (or
+\code{fold_param_uncertainty = FALSE}) the conditional posterior is returned
+alone.
 }

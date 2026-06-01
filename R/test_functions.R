@@ -32,16 +32,16 @@ psi_hat <- function(freqs, radius, dt, T, C, p = 16){
 }
 
 test_function_derivative <- function(test_function, radius, dt, order) {
-  t <- symengine::S("t")
+  t <- sym_symbol("t")
   r <- radius * dt
   phi_sym <- test_function(t, r)
 
   phi_deriv_sym <- phi_sym
   for (i in seq_len(order)) {
-    phi_deriv_sym <- symengine::D(phi_deriv_sym, "t")
+    phi_deriv_sym <- sym_diff(phi_deriv_sym, t)
   }
 
-  symengine::lambdify(phi_deriv_sym, t)
+  sym_lambdify(phi_deriv_sym, t)
 }
 
 get_test_function_support_indices <- function(radius, len_tt) {
