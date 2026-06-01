@@ -526,11 +526,26 @@ compute_endpoint_derivatives <- function(U, dt, mus = c(1,2,1), S = 1){
   return(endpoints)
 }
 
+compute_last_bernoulli_num <- function(n) {
+  B <- numeric(n + 1)
+  B[1] <- 1
+  for (m in 1:n) {
+    B[m + 1] <- -1 /
+      (m + 1) *
+      sum(sapply(0:(m - 1), function(k) choose(m + 1, k) * B[k + 1]))
+  }
+  return(B[n + 1])
+}
+
 buildI <- function(freqs, S, dt, T, endpoint_derivatives_d) {
   I <- complex(length(freqs))
 
+  bernoulli_terms <- vapply(1:S, function(s) {
+    compute_last_bernoulli_num(2*s) / factorial(2*s) * dt^(2*s)
+  }, numeric(1))
+
   for(idx in seq_along(freqs)) {
-    n <- freqs[idx] 
+    n <- freqs[idx]
     In <- endpoint_derivatives_d[1] +
       sum(
         sapply(1:S, function(s) {
@@ -539,14 +554,11 @@ buildI <- function(freqs, S, dt, T, endpoint_derivatives_d) {
               choose(2*s, l) * ( (2 * pi * n * 1i) / T )^(2 * s - l) * endpoint_derivatives_d[l+1]
             })
           )
-          bn <- bernoulli_numbers(2*s)
-          last_bn <- bn[2 * s + 1, 1] / bn[2 * s + 1, 2]
-          bernoulli_term <- last_bn / factorial(2*s) * dt^(2*s)
-          
-          return(inner_sum * bernoulli_term)
+
+          return(inner_sum * bernoulli_terms[s])
         })
       )
-    
+
     I[idx] <- In
   }
   return(I)

@@ -96,6 +96,20 @@ sym_latex <- function(scalar) {
   if (sym_backend() == "native") native_latex(scalar) else symengine::codegen(scalar, "latex")
 }
 
+# DoubleVisitor opt level: a non-negative value JIT-compiles via LLVM (much
+# faster per eval), but symengine silently falls back to a tree-walking visitor
+# for negative values OR when it was built without LLVM. So use the JIT only
+# when LLVM is actually available, else -1. The (cheap) capability check is
+# cached; override the JIT level with options(wendy.symengine_llvm_opt_level=).
+sym_llvm_opt_level <- function() {
+  if (is.null(.wendy_sym$has_llvm))
+    .wendy_sym$has_llvm <- tryCatch(
+      isTRUE(symengine::symengine_have_component("llvm")),
+      error = function(e) FALSE)
+  if (.wendy_sym$has_llvm)
+    as.integer(getOption("wendy.symengine_llvm_opt_level", 3L)) else -1L
+}
+
 # Compile a symbolic vector/array into a vectorised numeric evaluator.
 # Contract: input (n_vars x n_pts) -> output (n_pts x n_out), n_out = #elements.
 sym_compile <- function(x, vars) {
@@ -103,7 +117,8 @@ sym_compile <- function(x, vars) {
   dims <- dim(x)
   expr_vec <- if (is.null(dims)) symengine::Vector(x) else symengine::Vector(array(x))
   visitor <- symengine::DoubleVisitor(expr_vec, args = vars,
-                                      perform_cse = TRUE, llvm_opt_level = -1L)
+                                      perform_cse = TRUE,
+                                      llvm_opt_level = sym_llvm_opt_level())
   function(input) symengine::visitor_call(visitor, input, do_transpose = TRUE)
 }
 

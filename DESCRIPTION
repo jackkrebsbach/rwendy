@@ -22,7 +22,6 @@ Imports:
     MASS,
     minpack.lm,
     numDeriv,
-    numbers,
     stats,
     deSolve,
     FME

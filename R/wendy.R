@@ -5,7 +5,6 @@
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm
 #' @importFrom FME modCost modFit
-#' @importFrom numbers mGCD bernoulli_numbers
 NULL
 
 

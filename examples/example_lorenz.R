@@ -40,7 +40,8 @@ U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 time <- system.time({
-  res <- solveWendy(f, U, tt, method = "IRLS", control = list(test_fun_type = "MSG", estimate_IC = TRUE, estimate_trajectory = TRUE))
+  res <- solveWendy(f, U, tt, method = "IRLS",
+   control = list(test_fun_type = "MSG", estimate_IC = TRUE, estimate_trajectory = TRUE))
 })
 
 print(time)
