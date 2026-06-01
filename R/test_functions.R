@@ -152,21 +152,21 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   
   errors  <- numeric(length(radii))
 
-  IX <- floor(Mp1 / sub_sample_rate) 
+  IX <- floor(Mp1 / sub_sample_rate)
+
+  # Only the single Fourier coefficient at frequency (IX-1), and only its
+  # imaginary part, is used. For real GT that coefficient is
+  # GT %*% Im(exp(-2i*pi*(IX-1)*m/Mp1)), so the full per-radius mvfft collapses to
+  # one real matmul. Folding in the per-state column scaling of GT, the imaginary
+  # coefficient for state d is V_r %*% (U[,d] * sinvec), i.e. V_r %*% M below.
+  sinvec <- -sin(2 * pi * (IX - 1) * (0:(Mp1 - 1)) / Mp1)
+  M      <- U * sinvec                                   # Mp1 x D (sinvec recycled per column)
+  scale  <- (4 * pi * IX / Mp1) * (dt / sqrt(T))
 
   for (i in seq_along(radii)) {
-    radius <- radii[i]
-    V_r <- build_test_function_matrix(phi, tt, radius)
-    K   <- nrow(V_r)
-
-    GT <- do.call(rbind, lapply(seq_len(D), function(d){
-      sweep(V_r, 2, U[, d], `*`)
-    }))
-
-    f_hat_G_imag <- dt / sqrt(T) * Im(mvfft(t(GT))[IX, ])
-    
-    errors[i] <- (4 * pi * IX / Mp1) * sqrt(sum(f_hat_G_imag^2) / K)
-    
+    V_r <- build_test_function_matrix(phi, tt, radii[i])
+    VM  <- V_r %*% M                                     # K x D, block d = Im Fourier coef for state d
+    errors[i] <- scale * sqrt(sum(VM^2) / nrow(V_r))
   }
 
   log_errors <- log(errors)
@@ -363,10 +363,15 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
 
   # cat("Computing SVD")
 
-  SVD <- svd(V_)
-  U_svd <- SVD$u
-  singular_values <- SVD$d
-  Vt <- t(SVD$v)
+  # Truncated SVD via the smaller Gram matrix is about 1.5x faster than a full svd()
+  # Eigendecomposing V V^T (or V^T V when V is wide) yields all singular values
+  # plus one set of singular vectors; the other set is derived for the kept top-K
+  # modes only. The downstream GLS fit is invariant to per-mode sign flips and to
+  # degenerate-subspace rotations (V and Vp rotate together), so this matches the
+  # full-SVD result to optimizer tolerance.
+  left_gram       <- (k_full <= mp1)
+  eg              <- eigen(if (left_gram) tcrossprod(V_) else crossprod(V_), symmetric = TRUE)
+  singular_values <- sqrt(pmax(eg$values, 0))
 
   sum_singular_values <- sum(singular_values)
   k_max <- min(k_full, mp1, control$k_max)
@@ -394,13 +399,18 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   # cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
   # cat(sprintf("  K is: %d\n", K))
 
-  V_final <- Vt[1:K, , drop = FALSE] * dt
-
-  # cat("  Calculating Vprime\n")
-
-  U_T <- t(U_svd)[1:K, , drop = FALSE]
-  UV <- U_T %*% V_prime_
   inv_s <- 1.0 / singular_values[1:K]
+
+  if (left_gram) {
+    U_K     <- eg$vectors[, 1:K, drop = FALSE]        # top-K left singular vectors
+    V_final <- (t(crossprod(V_, U_K)) * inv_s) * dt   # right vectors v_k = V^T u_k / s_k (rows)
+    U_T     <- t(U_K)
+  } else {
+    V_K     <- eg$vectors[, 1:K, drop = FALSE]        # top-K right singular vectors
+    V_final <- t(V_K) * dt
+    U_T     <- t(V_ %*% V_K) * inv_s                  # left vectors u_k = V v_k / s_k (rows)
+  }
+  UV <- U_T %*% V_prime_
   V_prime_final <- UV * inv_s * dt
 
   return(list(

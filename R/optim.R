@@ -1,7 +1,16 @@
+# Shapiro-Wilk p-value of IRLS residuals, robust to non-finite entries and to
+# shapiro.test()'s hard n <= 5000 cap (subsample evenly when larger). Returns 0
+# when the test is undefined (too few finite residuals or an NA result).
+.sw_pvalue <- function(residuals) {
+  rc <- residuals[is.finite(residuals)]
+  if (length(rc) < 3L) return(0)
+  if (length(rc) > 5000L) rc <- rc[round(seq.int(1, length(rc), length.out = 5000L))]
+  pv <- shapiro.test(rc)$p.value
+  if (is.na(pv)) 0 else pv
+}
+
 # Iterative (weak) re-weighted least squares
 irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
-  dm <- nrow(G)
-  alphaIdm <- reg * diag(rep(1, dm))
   p <- if(is.null(p0)) lm.fit(G, b)$coefficients else p0
   n <- 0
   SW <- Inf
@@ -16,11 +25,13 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     # solve R^{-T} G p = R^{-T} b in unweighted form.
     # https://en.wikipedia.org/wiki/Weighted_least_squares
     Ln <- L(p)
-    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln)) + alphaIdm
-          else             (1 - reg) * tcrossprod(Ln)     + alphaIdm
+    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln))
+          else             (1 - reg) * tcrossprod(Ln)
+    diag(Sn) <- diag(Sn) + reg            # + reg * I, without a dense dm×dm allocation
     RT <- t(chol(Sn)) # S = R^T R, R upper triangular
-    G_ <- forwardsolve(RT, G)
-    b_ <- forwardsolve(RT, b)
+    Gb_ <- forwardsolve(RT, cbind(G, b))  # single triangular solve for [G | b]
+    G_  <- Gb_[, seq_len(ncol(G)), drop = FALSE]
+    b_  <- Gb_[, ncol(G) + 1L]
     p <- lm.fit(G_, b_)$coefficients
 
     denom <- sqrt(sum(pn1^2))
@@ -28,15 +39,7 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     if (!is.finite(relative_change)) relative_change <- Inf
 
     residuals <- b_ - G_ %*% p
-    residuals_clean <- residuals[is.finite(residuals)]
-
-    if (length(residuals_clean) < 3) {
-      p_val <- 0
-    } else {
-      sw_test <- shapiro.test(residuals_clean)
-      p_val <- sw_test$p.value
-      if (is.na(p_val)) p_val <- 0
-    }
+    p_val <- .sw_pvalue(residuals)
     sw_pvalues[n] <- p_val
 
     if(n >= n0){
@@ -66,8 +69,6 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
 
 # Nonlinear iterative (weak) re-weighted least squares
 nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
-  dm <- length(b)
-  alphaIdm <- reg * diag(rep(1, dm))
   p <- p0
   n <- 0
   SW <- Inf
@@ -89,8 +90,9 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     }
 
     Ln <- L(p)
-    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln)) + alphaIdm
-          else             (1 - reg) * tcrossprod(Ln)     + alphaIdm
+    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln))
+          else             (1 - reg) * tcrossprod(Ln)
+    diag(Sn) <- diag(Sn) + reg            # + reg * I, without a dense dm×dm allocation
     RT <- t(chol(Sn)) # S = R^T R, R upper triangular
 
     p <- nls.lm(p, lower = NULL, upper = NULL, function(p){weighted_residual(p, RT)}, function(p){weighted_residual_jacobian(p, RT)})$par
@@ -100,9 +102,7 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     if (!is.finite(relative_change)) relative_change <- Inf
 
     residuals <- weighted_residual(p, RT)
-
-    sw_test <- shapiro.test(residuals)
-    p_val <- sw_test$p.value
+    p_val <- .sw_pvalue(residuals)
     sw_pvalues[n] <- p_val
 
     if(n >= n0){

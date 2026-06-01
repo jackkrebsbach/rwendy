@@ -76,9 +76,13 @@ build_L0 <- function(K, D, mp1, Vp, sig) {
 
 # L(p) where L(p)L(p)^T = S(p), covariance of the weak residual.
 build_L <- function(U, tt, J_u, K, V, L0, sig, J){
-  D   <- ncol(U); mp1 <- length(tt)
-  tU  <- t(U); ttt <- matrix(tt, nrow = 1L)
+  D   <- ncol(U)
+  mp1 <- length(tt)
+  tU  <- t(U)
+  ttt <- matrix(tt, nrow = 1L)
+
   if (length(sig) == 1L) sig <- rep(sig, D)
+
   function(p){
     p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
     input <- rbind(p_mat, tU, ttt)
@@ -95,8 +99,12 @@ build_L <- function(U, tt, J_u, K, V, L0, sig, J){
 
 # L(p) when f is linear in p: L(p) = sum_j p_j L1_j + L_affine + L0.
 build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
-  D   <- ncol(U); mp1 <- length(tt)
-  tU  <- t(U); ttt <- matrix(tt, nrow = 1L)
+
+  D   <- ncol(U)
+  mp1 <- length(tt)
+  tU  <- t(U)
+  ttt <- matrix(tt, nrow = 1L)
+
   if (length(sig) == 1L) sig <- rep(sig, D)
 
   build_L1_at <- function(p_val){
@@ -289,45 +297,65 @@ build_H_wnll <- function(S, Jp_S, L, Jp_L, Hp_L, Jp_r, Hp_r, g, b, J, W = NULL, 
     Sp <- S(p)
     Jp_Sp <- Jp_S(p) # (KD, KD, J)
 
-    LpW_t       <- if (!is.null(W)) W * t(Lp) else t(Lp)
     S_inv_solve <- make_S_inv_solver(Sp)
     S_inv_r     <- S_inv_solve(r)
 
+    LpW_t      <- if (!is.null(W)) W * t(Lp) else t(Lp)   # (mp1*D, KD)
+    LpWt_Sinvr <- as.vector(LpW_t %*% S_inv_r)            # (mp1*D,) for p2 %*% S_inv_r
+    G          <- S_inv_solve(Lp)                          # S^{-1} Lp (KD, mp1*D) for tr(S^{-1} p2)
+
+    # Per-parameter precomputations. Computing A_k = S^{-1} dS_k once (J solves)
+    # turns the O(J^2) inner work into O(KD^2)/O(KD*mp1*D) trace-of-product and
+    # matvec operations, instead of an O(KD^3) solve per (i,j) pair.
+    A          <- vector("list", J)   # A_k        = S^{-1} dS_k
+    tA         <- vector("list", J)   # t(A_k)
+    A_Sinvr    <- vector("list", J)   # A_k %*% S_inv_r
+    JpSp_Sinvr <- vector("list", J)   # dS_k %*% S_inv_r
+    Sinv_Jprp  <- vector("list", J)   # S^{-1} dr_k
+    Jp_Lp_W    <- vector("list", J)   # W-weighted dL_k
+    SinvJpLpW  <- vector("list", J)   # S^{-1} (W-weighted dL_k)
+    for (k in seq_len(J)) {
+      JpSp_k          <- Jp_Sp[, , k]
+      A[[k]]          <- S_inv_solve(JpSp_k)
+      tA[[k]]         <- t(A[[k]])
+      A_Sinvr[[k]]    <- A[[k]] %*% S_inv_r
+      JpSp_Sinvr[[k]] <- JpSp_k %*% S_inv_r
+      Sinv_Jprp[[k]]  <- S_inv_solve(Jp_rp[, k])
+      JpLp_k          <- Jp_Lp[, , k]
+      Jp_Lp_W[[k]]    <- if (!is.null(W)) sweep(JpLp_k, 2, W, "*") else JpLp_k
+      SinvJpLpW[[k]]  <- S_inv_solve(Jp_Lp_W[[k]])
+    }
+
     H_vals <- matrix(0, J, J)
-
     for (j in seq_len(J)) {
-      Jp_rp_j <- Jp_rp[, j]
-      Jp_Sp_j <- Jp_Sp[, , j]
-      Jp_Lp_j <- Jp_Lp[, , j]
-      Jp_Lp_j_W <- if (!is.null(W)) sweep(Jp_Lp_j, 2, W, "*") else Jp_Lp_j
-
-      shar_          <- S_inv_solve(Jp_Sp_j)
-      S_inv_rp_j     <- S_inv_solve(Jp_rp_j)
-      Jp_Sp_j_S_invr <- Jp_Sp_j %*% S_inv_r
-
       for (i in j:J) {
-        Jp_Sp_i <- Jp_Sp[, , i]
-        Jp_Lp_i <- Jp_Lp[, , i]
-        Jp_rp_i <- Jp_rp[, i]
-
-        term     <- Jp_Sp_i %*% shar_
         Hp_Lp_ji <- Hp_Lp[, , j, i]
 
-        p1       <- Jp_Lp_j_W %*% t(Jp_Lp_i)
-        p2       <- Hp_Lp_ji  %*% LpW_t
-        Hp_Sp_ji <- WEIGHT * (p1 + t(p1) + p2 + t(p2))
+        # M = p1 + p2,  p1 = Jp_Lp_j_W %*% t(Jp_Lp_i),  p2 = Hp_Lp_ji %*% LpW_t.
+        # Hp_Sp_ji = WEIGHT (M + M^T). Both uses of Hp_Sp_ji exploit symmetry:
+        #   x^T (M + M^T) x        = 2 x^T M x            (prt4)
+        #   tr(S^{-1} (M + M^T))   = 2 tr(S^{-1} M)       (logdet)
+        # so we never materialize M or its transpose.
+        p1Sv <- as.vector(Jp_Lp_W[[j]] %*% crossprod(Jp_Lp[, , i], S_inv_r))  # p1 %*% S_inv_r
+        p2Sv <- as.vector(Hp_Lp_ji %*% LpWt_Sinvr)                            # p2 %*% S_inv_r
+        prt4 <- -2 * WEIGHT * sum(S_inv_r * (p1Sv + p2Sv))
 
-        Hp_rp_ji   <- Hp_rp[, j, i]
-        inv_factor <- S_inv_solve(Jp_rp_i)
+        # tr(S^{-1} p1) = sum((S^{-1} dL_j_W) * dL_i);  tr(S^{-1} p2) via S^{-1} Lp = G
+        tr_p1 <- sum(SinvJpLpW[[j]] * Jp_Lp[, , i])
+        tr_p2 <- if (!is.null(W)) sum(sweep(G * Hp_Lp_ji, 2, W, "*")) else sum(G * Hp_Lp_ji)
+        tr_Sinv_Hp <- 2 * WEIGHT * (tr_p1 + tr_p2)
 
-        prt0 <- sum(Hp_rp_ji * S_inv_r)
-        prt1 <- -sum(S_inv_rp_j * (Jp_Sp_i %*% S_inv_r))
-        prt2 <- sum(Jp_rp_j * inv_factor)
-        prt3 <- -2 * sum(inv_factor * Jp_Sp_j_S_invr)
-        prt4 <- -sum(S_inv_r * (Hp_Sp_ji %*% S_inv_r))
-        prt5 <- 2 * sum(S_inv_r * (term %*% S_inv_r))
+        # term = dS_i %*% A_j:  tr(S^{-1} term) = tr(A_i A_j) = sum(A_i * t(A_j));
+        #                       term %*% S_inv_r = dS_i %*% (A_j %*% S_inv_r)
+        tr_Sinv_term <- sum(A[[i]] * tA[[j]])
+        prt5         <- 2 * sum(S_inv_r * (Jp_Sp[, , i] %*% A_Sinvr[[j]]))
 
-        logDetTerm <- -sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
+        logDetTerm <- -tr_Sinv_term + tr_Sinv_Hp
+
+        prt0 <- sum(Hp_rp[, j, i] * S_inv_r)
+        prt1 <- -sum(Sinv_Jprp[[j]] * JpSp_Sinvr[[i]])
+        prt2 <- sum(Jp_rp[, j] * Sinv_Jprp[[i]])
+        prt3 <- -2 * sum(Sinv_Jprp[[i]] * JpSp_Sinvr[[j]])
 
         Hij <- 0.5 * (2 * (prt0 + prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
         H_vals[j, i] <- Hij
@@ -351,36 +379,41 @@ build_H_wnll_linear <- function(S, Jp_S, L, Jp_L, Jp_r, g, b, J, W = NULL, diag_
     S_inv_solve <- make_S_inv_solver(Sp)
     S_inv_r     <- S_inv_solve(r)
 
+    # Linear-in-p: Hp_L = 0 and Hp_r = 0, so M = p1 only and prt0 drops. Same
+    # precompute-A_k strategy as build_H_wnll (no G / p2 terms needed).
+    A          <- vector("list", J)
+    tA         <- vector("list", J)
+    A_Sinvr    <- vector("list", J)
+    JpSp_Sinvr <- vector("list", J)
+    Sinv_Jprp  <- vector("list", J)
+    Jp_Lp_W    <- vector("list", J)
+    SinvJpLpW  <- vector("list", J)
+    for (k in seq_len(J)) {
+      JpSp_k          <- Jp_Sp[, , k]
+      A[[k]]          <- S_inv_solve(JpSp_k)
+      tA[[k]]         <- t(A[[k]])
+      A_Sinvr[[k]]    <- A[[k]] %*% S_inv_r
+      JpSp_Sinvr[[k]] <- JpSp_k %*% S_inv_r
+      Sinv_Jprp[[k]]  <- S_inv_solve(Jp_rp[, k])
+      JpLp_k          <- Jp_Lp[, , k]
+      Jp_Lp_W[[k]]    <- if (!is.null(W)) sweep(JpLp_k, 2, W, "*") else JpLp_k
+      SinvJpLpW[[k]]  <- S_inv_solve(Jp_Lp_W[[k]])
+    }
+
     H_vals <- matrix(0, J, J)
-
     for (j in seq_len(J)) {
-      Jp_rp_j <- Jp_rp[, j]
-      Jp_Sp_j <- Jp_Sp[, , j]
-      Jp_Lp_j <- Jp_Lp[, , j]
-      Jp_Lp_j_W <- if (!is.null(W)) sweep(Jp_Lp_j, 2, W, "*") else Jp_Lp_j
-
-      shar_          <- S_inv_solve(Jp_Sp_j)
-      S_inv_rp_j     <- S_inv_solve(Jp_rp_j)
-      Jp_Sp_j_S_invr <- Jp_Sp_j %*% S_inv_r
-
       for (i in j:J) {
-        Jp_Sp_i <- Jp_Sp[, , i]
-        Jp_Lp_i <- Jp_Lp[, , i]
-        Jp_rp_i <- Jp_rp[, i]
+        p1Sv <- as.vector(Jp_Lp_W[[j]] %*% crossprod(Jp_Lp[, , i], S_inv_r))
+        prt4 <- -2 * WEIGHT * sum(S_inv_r * p1Sv)
 
-        term     <- Jp_Sp_i %*% shar_
-        p1       <- Jp_Lp_j_W %*% t(Jp_Lp_i)
-        Hp_Sp_ji <- WEIGHT * (p1 + t(p1))
+        tr_Sinv_Hp   <- 2 * WEIGHT * sum(SinvJpLpW[[j]] * Jp_Lp[, , i])
+        tr_Sinv_term <- sum(A[[i]] * tA[[j]])
+        prt5         <- 2 * sum(S_inv_r * (Jp_Sp[, , i] %*% A_Sinvr[[j]]))
+        logDetTerm   <- -tr_Sinv_term + tr_Sinv_Hp
 
-        inv_factor <- S_inv_solve(Jp_rp_i)
-
-        prt1 <- -sum(S_inv_rp_j * (Jp_Sp_i %*% S_inv_r))
-        prt2 <- sum(Jp_rp_j * inv_factor)
-        prt3 <- -2 * sum(inv_factor * Jp_Sp_j_S_invr)
-        prt4 <- -sum(S_inv_r * (Hp_Sp_ji %*% S_inv_r))
-        prt5 <- 2 * sum(S_inv_r * (term %*% S_inv_r))
-
-        logDetTerm <- -sum(diag(S_inv_solve(term))) + sum(diag(S_inv_solve(Hp_Sp_ji)))
+        prt1 <- -sum(Sinv_Jprp[[j]] * JpSp_Sinvr[[i]])
+        prt2 <- sum(Jp_rp[, j] * Sinv_Jprp[[i]])
+        prt3 <- -2 * sum(Sinv_Jprp[[i]] * JpSp_Sinvr[[j]])
 
         Hij <- 0.5 * (2 * (prt1 + prt2) + prt3 + prt4 + prt5 + logDetTerm)
         H_vals[j, i] <- Hij
