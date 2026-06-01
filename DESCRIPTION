@@ -24,6 +24,7 @@ Imports:
     numDeriv,
     numbers,
     stats,
-    symengine,
     deSolve,
     FME
+Suggests:
+    symengine

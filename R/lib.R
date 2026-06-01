@@ -201,7 +201,7 @@ print.summary.wendy <- function(x, digits = 4, ...) {
 
 #' Format ODE system as human-readable string
 #'
-#' @param f_sym Symbolic expression vector from symengine
+#' @param f_sym Symbolic expression vector from the active symbolic backend
 #' @param format Output format: "latex" (default) or "ascii"
 #' @return Formatted string representation of the ODE system
 #' @keywords internal
@@ -209,20 +209,20 @@ format_ode_system <- function(f_sym, format = c("latex", "ascii")) {
   if(is.null(f_sym)) return(NULL)
 
   format <- match.arg(format)
-  D <- length(f_sym)
+  D <- sym_length(f_sym)
 
   if(format == "latex") {
     eqs <- sapply(1:D, function(i) {
       lhs <- paste0("\\frac{d u_", i, "}{dt}")
-      rhs <- symengine::codegen(f_sym[i], "latex")
+      rhs <- sym_latex(sym_elt(f_sym, i))
       paste0("  ", lhs, " &= ", rhs)
     })
     paste0("\\begin{align}\n", paste(eqs, collapse = " \\\\\n"), "\n\\end{align}")
   } else {
+    rhs_all <- sym_strings(f_sym)
     eqs <- sapply(1:D, function(i) {
       lhs <- paste0("du", i, "/dt")
-      rhs <- as.character(f_sym[i])
-      paste0("  ", lhs, " = ", rhs)
+      paste0("  ", lhs, " = ", rhs_all[i])
     })
     paste(eqs, collapse = "\n")
   }

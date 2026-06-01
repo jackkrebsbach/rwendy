@@ -87,9 +87,9 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
   # Compute symbolic variables, functions, and gradients of the r.h.s. u̇ = f(p,u,t)
   J <- detect_n_params(f)
-  u_expr <- do.call(c, lapply(1:ncol(U), function(i) symengine::S(paste0("u", i))))
-  p_expr <- do.call(c, lapply(seq_len(J), function(i) symengine::S(paste0("p", i))))
-  t_expr <- symengine::S("t")
+  u_expr <- sym_build(lapply(1:ncol(U), function(i) sym_symbol(paste0("u", i))))
+  p_expr <- sym_build(lapply(seq_len(J), function(i) sym_symbol(paste0("p", i))))
+  t_expr <- sym_symbol("t")
 
   f_orig_expr <- f(u_expr, p_expr, t_expr)
   f_expr <- switch(noise_dist, lognormal = lognormal_transform(f_orig_expr), f_orig_expr)
@@ -99,7 +99,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
 
   # A function is linear/affine in p iff all second-order mixed partials
   # ∂²f / ∂pᵢ ∂pⱼ are identically zero.
-  lip <- all(as.character(symengine::Vector(array(J_pp_sym))) == "0")
+  lip <- all(sym_strings(J_pp_sym) == "0")
 
   vars <- c(p_expr, u_expr, t_expr)
 
@@ -124,6 +124,8 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     dF_sym   <- compute_symbolic_total_time_deriv(f_expr,  u_expr, f_expr, t_expr)
     d2F_sym  <- compute_symbolic_total_time_deriv(dF_sym,  u_expr, f_expr, t_expr)
     d3F_sym  <- compute_symbolic_total_time_deriv(d2F_sym, u_expr, f_expr, t_expr)
+
+    # Total derivatives with respect to time
     dF_dt_   <- build_fn(dF_sym,  vars)  # d f/dt   (total, along trajectory)
     d2F_dt2_ <- build_fn(d2F_sym, vars)  # d²f/dt²  (total)
     d3F_dt3_ <- build_fn(d3F_sym, vars)  # d³f/dt³  (total)

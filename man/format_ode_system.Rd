@@ -7,7 +7,7 @@
 format_ode_system(f_sym, format = c("latex", "ascii"))
 }
 \arguments{
-\item{f_sym}{Symbolic expression vector from symengine}
+\item{f_sym}{Symbolic expression vector from the active symbolic backend}
 
 \item{format}{Output format: "latex" (default) or "ascii"}
 }
