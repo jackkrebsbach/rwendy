@@ -168,7 +168,8 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
                 iters = 0L, converged = FALSE, diverged = FALSE,
                 u0_history = matrix(u0_obs, nrow = 1),
                 r_c = r_c, n_bl = n_bl, K_bl = K_bl, em_order = em_order,
-                update_trap_u0 = update_trap_u0))
+                update_trap_u0 = update_trap_u0
+              ))
   }
 
   compute_r_trap <- function(U_in) {
@@ -347,12 +348,24 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 #' Extended Kalman filter forward pass followed by a Rauch-Tung-Striebel
 #' backward smoother on the parameter-conditioned dynamics.
 #'
-#' When \code{param_cov} and \code{J_p} are both supplied, the process
-#' covariance at step k is propagated from the WENDy parameter covariance:
-#' \deqn{Q_k = (\Delta t_k)^2 \, \nabla_p f(\hat{p}, u_k, t_k) \, \hat{C} \,
-#'        \nabla_p f(\hat{p}, u_k, t_k)^T,}
-#' which absorbs parameter uncertainty into the predict step. Without them,
-#' \code{Q_k} falls back to the naive \code{(0.1 sigma)^2 I_D}.
+#' The reported posterior covariance follows the law of total variance,
+#' \deqn{\mathrm{Cov}(u_k^\star) = \mathrm{Cov}(u_k^\star \mid \hat p)
+#'        + S_k \, \hat C \, S_k^T,}
+#' splitting trajectory uncertainty into the conditional smoother posterior
+#' (data noise + model/discretization error) and the contribution of parameter
+#' uncertainty. The conditional pass uses a small model-error process noise
+#' \eqn{Q = (0.1\,\sigma)^2 I_D}; parameter uncertainty is folded in separately
+#' and \emph{coherently} via the sensitivity
+#' \eqn{S_k = \partial u_k^\star / \partial \hat p}, obtained by central
+#' differences of the smoothed mean over re-runs at \eqn{\hat p \pm h e_j}, with
+#' \eqn{\hat C} the WENDy parameter covariance. This replaces the earlier
+#' heuristic of injecting \eqn{(\Delta t_k)^2 \nabla_p f \,\hat C\, \nabla_p f^T}
+#' as predict-step process noise, which mis-modelled \eqn{\delta p} as an
+#' independent per-step draw (a random walk) rather than a single
+#' fixed-but-uncertain value affecting the whole trajectory coherently. Folding
+#' requires \code{param_cov} and \code{J_p}; when either is absent (or
+#' \code{fold_param_uncertainty = FALSE}) the conditional posterior is returned
+#' alone.
 #'
 #' @param U Numeric matrix (mp1 x D) of noisy observations.
 #' @param f_ Callable f(p, u, t) RHS evaluator built from the symbolic engine.
@@ -370,15 +383,23 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 #' @param param_cov Optional J x J parameter covariance \eqn{\hat{C}}.
 #' @param J_p Optional callable returning the D x J Jacobian
 #'   \eqn{\nabla_p f(p, u, t)} (flattened d-fast, like the rest of the package).
-#' @return Named list with U_star (smoothed state), P_smooth (posterior
-#'   covariance), and the intermediate filter/predictor states.
+#' @param fold_param_uncertainty Logical (default \code{TRUE}). When \code{TRUE}
+#'   and \code{param_cov}/\code{J_p} are supplied, the parameter-sensitivity term
+#'   \eqn{S_k \hat C S_k^T} is added to \code{P_smooth}; otherwise only the
+#'   conditional posterior is returned.
+#' @return Named list with \code{U_star} (smoothed state), \code{P_smooth}
+#'   (total posterior covariance), \code{P_smooth_cond} (the conditional-on-p̂
+#'   posterior), \code{P_smooth_param} (the parameter-uncertainty contribution,
+#'   or \code{NULL} when not folded), and the intermediate filter/predictor
+#'   states.
 #' @export
 wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
                        sigma = NULL,
                        u0_init = NULL,
                        P0_init = NULL,
                        param_cov = NULL,
-                       J_p = NULL) {
+                       J_p = NULL,
+                       fold_param_uncertainty = TRUE) {
   tt   <- as.vector(tt)
   mp1  <- nrow(U)
   D    <- ncol(U)
@@ -389,77 +410,116 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
   noise_sd <- mean(noise_sd)
   R_obs    <- noise_sd^2 * I_D
 
-  use_param_Q <- !is.null(param_cov) && !is.null(J_p)
-  Q_default   <- (noise_sd * 0.1)^2 * I_D
+  # Model/discretization process noise for the conditional pass, modelled as a
+  # continuous-time diffusion: the per-step covariance is q_c * dt_k (a rate,
+  # state^2 per unit time), so the total injected over [0,T] is q_c*T and is
+  # INVARIANT to the sampling density. A constant per-step Q instead grows the
+  # total budget with the number of steps, letting a finer grid chase the noise
+  # (high-frequency wiggle that does not shrink as data is added). Parameter
+  # uncertainty is folded in coherently afterwards (law of total variance), not
+  # injected here as per-step process noise.
+  q_c <- (noise_sd * 0.1)^2
 
   u0 <- if (!is.null(u0_init)) as.vector(u0_init) else as.vector(U[1, ])
   P0 <- if (!is.null(P0_init)) P0_init
         else if (!is.null(u0_init)) 0.1 * noise_sd^2 * I_D
         else noise_sd^2 * I_D
 
-  S0           <- P0 + R_obs
-  K0           <- P0 %*% solve(S0)
-  u_filt       <- matrix(0, mp1, D)
-  u_filt[1, ]  <- u0 + K0 %*% (U[1, ] - u0)
-  P_filt       <- array(0, c(mp1, D, D))
-  P_filt[1,,]  <- (I_D - K0) %*% P0 %*% t(I_D - K0) + K0 %*% R_obs %*% t(K0)
+  # One EKF forward pass + RTS backward pass at a fixed parameter vector. The
+  # smoothed mean (U_star) is always returned; the posterior covariance arrays
+  # are built only when want_cov = TRUE (skipped for the sensitivity re-runs).
+  erts_pass <- function(p_use, want_cov) {
+    S0          <- P0 + R_obs
+    K0          <- P0 %*% solve(S0)
+    u_filt      <- matrix(0, mp1, D)
+    u_filt[1, ] <- u0 + K0 %*% (U[1, ] - u0)
+    P_filt      <- array(0, c(mp1, D, D))
+    P_filt[1,,] <- (I_D - K0) %*% P0 %*% t(I_D - K0) + K0 %*% R_obs %*% t(K0)
 
-  u_pred  <- matrix(0, mp1, D)
-  P_pred  <- array(0, c(mp1, D, D))
-  F_store <- array(0, c(mp1 - 1L, D, D))
+    u_pred  <- matrix(0, mp1, D)
+    P_pred  <- array(0, c(mp1, D, D))
+    F_store <- array(0, c(mp1 - 1L, D, D))
 
-  for (k in seq_len(mp1 - 1L)) {
-    dt_k <- tt[k + 1L] - tt[k]
-    uk   <- u_filt[k, ]
+    for (k in seq_len(mp1 - 1L)) {
+      dt_k <- tt[k + 1L] - tt[k]
+      uk   <- u_filt[k, ]
 
-    k1 <- as.vector(f_(matrix(c(p, uk,                    tt[k]          ), ncol = 1)))
-    k2 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k1,     tt[k]+0.5*dt_k ), ncol = 1)))
-    k3 <- as.vector(f_(matrix(c(p, uk + 0.5*dt_k*k2,     tt[k]+0.5*dt_k ), ncol = 1)))
-    k4 <- as.vector(f_(matrix(c(p, uk +     dt_k*k3,     tt[k]+    dt_k  ), ncol = 1)))
-    u_pred[k + 1L, ] <- uk + (dt_k / 6) * (k1 + 2*k2 + 2*k3 + k4)
+      k1 <- as.vector(f_(matrix(c(p_use, uk,                tt[k]          ), ncol = 1)))
+      k2 <- as.vector(f_(matrix(c(p_use, uk + 0.5*dt_k*k1, tt[k]+0.5*dt_k ), ncol = 1)))
+      k3 <- as.vector(f_(matrix(c(p_use, uk + 0.5*dt_k*k2, tt[k]+0.5*dt_k ), ncol = 1)))
+      k4 <- as.vector(f_(matrix(c(p_use, uk +     dt_k*k3, tt[k]+    dt_k  ), ncol = 1)))
+      u_pred[k + 1L, ] <- uk + (dt_k / 6) * (k1 + 2*k2 + 2*k3 + k4)
 
-    Ju_k <- matrix(as.vector(J_u(c(p, uk, tt[k]))), D, D)  # J[a, b] = df_a/du_b
-    Fk   <- I_D + dt_k * Ju_k
-    F_store[k,,] <- Fk
+      Ju_k <- matrix(as.vector(J_u(c(p_use, uk, tt[k]))), D, D)  # J[a, b] = df_a/du_b
+      Fk   <- I_D + dt_k * Ju_k
+      F_store[k,,] <- Fk
 
-    Q_k <- if (use_param_Q) {
-      Jp_k <- matrix(as.vector(J_p(c(p, uk, tt[k]))), D, J)  # J[a, j] = df_a/dp_j
-      (dt_k^2) * (Jp_k %*% param_cov %*% t(Jp_k))
-    } else {
-      Q_default
+      Pk_pred <- Fk %*% P_filt[k,,] %*% t(Fk) + (q_c * dt_k) * I_D
+      P_pred[k + 1L,,] <- Pk_pred
+
+      Sk               <- Pk_pred + R_obs
+      Kk               <- Pk_pred %*% solve(Sk)
+      innov            <- U[k + 1L, ] - u_pred[k + 1L, ]
+      u_filt[k + 1L, ] <- u_pred[k + 1L, ] + Kk %*% innov
+      P_filt[k + 1L,,] <- (I_D - Kk) %*% Pk_pred %*% t(I_D - Kk) + Kk %*% R_obs %*% t(Kk)
     }
 
-    Pk_pred <- Fk %*% P_filt[k,,] %*% t(Fk) + Q_k
-    P_pred[k + 1L,,] <- Pk_pred
+    u_smooth        <- matrix(0, mp1, D)
+    u_smooth[mp1, ] <- u_filt[mp1, ]
+    P_smooth <- if (want_cov) array(0, c(mp1, D, D)) else NULL
+    if (want_cov) P_smooth[mp1,,] <- P_filt[mp1,,]
 
-    Sk               <- Pk_pred + R_obs
-    Kk               <- Pk_pred %*% solve(Sk)
-    innov            <- U[k + 1L, ] - u_pred[k + 1L, ]
-    u_filt[k + 1L, ] <- u_pred[k + 1L, ] + Kk %*% innov
-    P_filt[k + 1L,,] <- (I_D - Kk) %*% Pk_pred %*% t(I_D - Kk) + Kk %*% R_obs %*% t(Kk)
+    for (k in seq(mp1 - 1L, 1L)) {
+      Pk <- P_filt[k,,]
+      Pp <- P_pred[k + 1L,,]
+      Fk <- F_store[k,,]
+
+      Gk <- Pk %*% t(Fk) %*% solve(Pp + 1e-10 * I_D)
+      u_smooth[k, ] <- u_filt[k, ] + Gk %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
+      if (want_cov)
+        P_smooth[k,,] <- Pk + Gk %*% (P_smooth[k + 1L,,] - Pp) %*% t(Gk)
+    }
+
+    list(U_star = u_smooth, P_smooth = P_smooth,
+         u_filt = u_filt, P_filt = P_filt, u_pred = u_pred, P_pred = P_pred)
   }
 
-  u_smooth         <- matrix(0, mp1, D)
-  P_smooth         <- array(0,  c(mp1, D, D))
-  u_smooth[mp1, ]  <- u_filt[mp1, ]
-  P_smooth[mp1,,]  <- P_filt[mp1,,]
+  # Conditional-on-p̂ pass: smoothed mean + conditional posterior covariance.
+  base     <- erts_pass(p, want_cov = TRUE)
+  u_smooth <- base$U_star
+  P_cond   <- base$P_smooth
 
-  for (k in seq(mp1 - 1L, 1L)) {
-    Pk <- P_filt[k,,]
-    Pp <- P_pred[k + 1L,,]
-    Fk <- F_store[k,,]
-
-    Gk <- Pk %*% t(Fk) %*% solve(Pp + 1e-10 * I_D)
-    u_smooth[k, ] <- u_filt[k, ] + Gk %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
-    P_smooth[k,,] <- Pk           + Gk %*% (P_smooth[k + 1L,,] - Pp) %*% t(Gk)
+  # Fold parameter uncertainty in coherently via the trajectory sensitivity
+  # S_k = ∂u*_k/∂p̂ (central differences over re-runs of the full smoother),
+  # adding S_k Ĉ S_k^T to the conditional posterior at every time step.
+  fold <- isTRUE(fold_param_uncertainty) && !is.null(param_cov) && !is.null(J_p)
+  P_param  <- NULL
+  P_smooth <- P_cond
+  if (fold) {
+    sens <- array(0, c(mp1, D, J))  # ∂u*_k/∂p̂_j
+    for (j in seq_len(J)) {
+      hj <- 1e-5 * max(1, abs(p[j]))
+      pp <- p; pp[j] <- pp[j] + hj
+      pm <- p; pm[j] <- pm[j] - hj
+      sens[, , j] <- (erts_pass(pp, FALSE)$U_star -
+                      erts_pass(pm, FALSE)$U_star) / (2 * hj)
+    }
+    P_param <- array(0, c(mp1, D, D))
+    for (k in seq_len(mp1)) {
+      Sk            <- matrix(sens[k, , ], D, J)
+      P_param[k,,]  <- Sk %*% param_cov %*% t(Sk)
+      P_smooth[k,,] <- P_cond[k,,] + P_param[k,,]
+    }
   }
 
   list(
-    U_star   = u_smooth,
-    P_smooth = P_smooth,
-    u_filt   = u_filt,
-    P_filt   = P_filt,
-    u_pred   = u_pred,
-    P_pred   = P_pred
+    U_star         = u_smooth,
+    P_smooth       = P_smooth,
+    P_smooth_cond  = P_cond,
+    P_smooth_param = P_param,
+    u_filt         = base$u_filt,
+    P_filt         = base$P_filt,
+    u_pred         = base$u_pred,
+    P_pred         = base$P_pred
   )
 }
