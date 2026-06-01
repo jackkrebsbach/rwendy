@@ -39,12 +39,13 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-time <- system.time({
-  res <- solveWendy(f, U, tt, method = "IRLS",
-   control = list(test_fun_type = "MSG", estimate_IC = TRUE, estimate_trajectory = TRUE))
-})
-
-print(time)
+res <- solveWendy(f, U, tt, method = "MLE",
+   control = list(test_fun_type = "MSG",
+                     k_max  = 200 ,
+                     estimate_IC = TRUE,
+                     estimate_trajectory = TRUE
+                  )
+        )
 
 # resOE <- solveWendy(f, U, tt, p0 = p0, method = "OE")
 
