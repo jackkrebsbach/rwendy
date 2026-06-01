@@ -76,25 +76,6 @@ summary.wendy <- function(object, ...) {
       Sp <- object$S(phat)
       R  <- chol(Sp)
       param_cov <- solve(crossprod(G, backsolve(R, forwardsolve(t(R), G))))
-
-      # Hybrid sandwich form  (Gᵀ S(p̂)⁻¹ G)⁻¹ is inverse Fisher information Matrix this underestimates the 
-      # variance of the estimtor
-      # Take advantage of the fact that b is linear in U
-      # b(U⋆+ ϵ) = 𝚽'U⋆ + 𝚽'ϵ  so it is easy to find cov(b(U⋆+ ϵ)) = 
-      # Thus we get a more complicated parameter covariance instead of collapsing to the GLS FIM
-      # This is derivaed from p̂ = (Gᵀ S(p̂)⁻¹ G)⁻¹GᵀS(p̂)⁻¹b
-      # M := (Gᵀ S(p̂)⁻¹ G)⁻¹GᵀS(p̂)⁻¹
-      # cov(p̂ | G) = σ^2 M 𝚽̇'𝚽̇'ᵀMᵀ when the measurement noise is isotropic
-      # sig <- object$sig
-      # Vp <- object$V_prime
-      # G  <- object$Jp_r(phat)
-      # Sp <- object$S(phat)
-      # R  <- chol(Sp)
-      # fim <- solve(crossprod(G, backsolve(R, forwardsolve(t(R), G))))
-      # term <- t(fim %*% t(G))
-      # M <- t(backsolve(R, forwardsolve(t(R), term)))
-      # MVp <- M %*% Vp
-      # param_cov <- sig^2 * MVp  %*% t(MVp)
     }
 
     std_errors <- if (!is.null(param_cov)) sqrt(diag(param_cov)) else rep(NA, length(phat))
