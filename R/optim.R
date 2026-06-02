@@ -1,6 +1,4 @@
-# Shapiro-Wilk p-value of IRLS residuals, robust to non-finite entries and to
-# shapiro.test()'s hard n <= 5000 cap (subsample evenly when larger). Returns 0
-# when the test is undefined (too few finite residuals or an NA result).
+# Robust Shapiro-Wilk p-value function
 .sw_pvalue <- function(residuals) {
   rc <- residuals[is.finite(residuals)]
   if (length(rc) < 3L) return(0)
@@ -80,11 +78,9 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     n <- n + 1
 
     # Nonlinear weighted least squares: minimize 0.5 ||R^{-T} (g(p) - b)||^2
-
     weighted_residual <- function(p, RT){
       forwardsolve(RT, g(p) - b)
     }
-
     weighted_residual_jacobian <- function(p, RT){
       forwardsolve(RT, Jp_r(p))
     }
@@ -169,9 +165,6 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
   J  <- length(p0)
   u0_init <- as.vector(U[1, ])
 
-  obs <- data.frame(time = tt)
-  for (d in seq_len(D)) obs[[paste0("x", d)]] <- U[, d]
-
   p_lower <- if (!is.null(lower)) lower else rep(-Inf, J)
   p_upper <- if (!is.null(upper)) upper else rep(Inf, J)
 
@@ -204,33 +197,45 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
       out
   }
 
+  # Residual vector (model - observed), stacked over all state columns. This is
+  # exactly what FME::modCost produced with its default unweighted/unscaled
+  # settings, but handed straight to nls.lm without the FME wrapper.
+  #
   # On ODE failure, fall back to an Euler-style first-order expansion of the
   # trajectory at t[1]: u(t) ≈ u0 + (t - t[1]) * f(u0, p, t[1]). This makes
-  # bad_model a smooth function of every theta component, and (unlike a flat
+  # the residuals a smooth function of every theta component, and (unlike a flat
   # 1e6 or any g(theta)*h(t) penalty) the resulting Jacobian has row x column
   # entanglement so it is full rank and not parallel to fvec. The 1e6 offset
   # keeps failed evaluations dominant over any feasible solution.
-  costFn <- function(theta) {
+  resFn <- function(theta) {
     out <- modelRun(theta)
     if (is.null(out)) {
       parms <- theta[1:J]
       u0    <- theta[(J + 1):(J + D)]
       f0    <- tryCatch(as.vector(f(u0, parms, tt[1])),
                         error = function(e) rep(0, D))
-      bad_model <- obs
+      bad_model <- matrix(0, nrow = length(tt), ncol = D)
       for (d in seq_len(D)) {
-        bad_model[[paste0("x", d)]] <- 1e6 + u0[d] + (tt - tt[1]) * f0[d]
+        bad_model[, d] <- 1e6 + u0[d] + (tt - tt[1]) * f0[d]
       }
-      return(FME::modCost(model = bad_model, obs = obs))
+      return(as.vector(bad_model - U))
     }
-    FME::modCost(model = out, obs = obs)
+    model <- as.matrix(out[, paste0("x", seq_len(D)), drop = FALSE])
+    as.vector(model - U)
   }
 
-  fit <- tryCatch({
-      FME::modFit(f = costFn, p = theta0, method = "Marq", lower = lower, upper = upper)
-  }, error = function(e) e)
-
   n_theta <- J + D
+
+  # Only pass box constraints when the user actually supplied finite bounds;
+  # otherwise leave them NULL so nls.lm runs unconstrained.
+  use_bounds <- any(is.finite(lower)) || any(is.finite(upper))
+  fit <- tryCatch({
+    if (use_bounds) {
+      nls.lm(par = theta0, lower = lower, upper = upper, fn = resFn)
+    } else {
+      nls.lm(par = theta0, fn = resFn)
+    }
+  }, error = function(e) e)
 
   if (inherits(fit, "error")) {
     return(list(
@@ -242,17 +247,22 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
     ))
   }
 
-  fit_summary <- suppressWarnings(summary(fit))
-  cov_scaled  <- fit_summary$cov.scaled
-  cov <- if (!is.null(cov_scaled) && !anyNA(cov_scaled)) cov_scaled else NULL
-  
+  # Scaled nonlinear-LS covariance (SSR / (N - npar)) * (JᵀJ)⁻¹, reproducing
+  # FME::modFit's summary$cov.scaled. fit$hessian is the Gauss-Newton JᵀJ.
+  n_res <- length(fit$fvec)
+  cov <- tryCatch({
+    resvar <- fit$deviance / (n_res - n_theta)
+    cov_scaled <- resvar * solve(fit$hessian)
+    if (!anyNA(cov_scaled)) cov_scaled else NULL
+  }, error = function(e) NULL)
+
   return(list(
     p          = fit$par[1:J],
     u0         = fit$par[(J + 1):(J + D)],
     cov        = cov,
     converged  = fit$info %in% c(1L, 2L, 3L),
-    iterations = fit_summary$niter,
-    ssr        = fit$ssr
+    iterations = fit$niter,
+    ssr        = fit$deviance
   ))
 }
 

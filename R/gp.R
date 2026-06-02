@@ -1,21 +1,6 @@
 
 # ---------------------------------------------------------------------------
-# Matern 5/2 kernel and GP inference
-#
-# Main interface:
-#   gp_smooth(U, tt, sigma2_n = NULL) -> list(U_star, dU_dt, hyperparams)
-#
-# U_star  : smoothed state  (drop-in for wendy_erts$U_star)
-# dU_dt   : posterior mean of df/dt at tt  (free derivative estimate)
-#
-# Each state dimension is treated as an independent GP.
-# Hyperparameters (sigma2, ell, sigma2_n) are optimised per dimension via
-# log marginal likelihood unless supplied by the caller.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Core kernel functions
+# Matern 5/2 kernel 
 # ---------------------------------------------------------------------------
 
 #' Matern 5/2 covariance matrix
@@ -233,18 +218,8 @@ gp_predict_deriv <- function(fit, tt_star) {
 }
 
 
-# ---------------------------------------------------------------------------
-# Main WENDy interface
-# ---------------------------------------------------------------------------
-
 #' Smooth a multi-dimensional state with independent Matern 5/2 GPs
-#'
-#' Drop-in replacement for \code{wendy_erts}: returns \code{$U_star} (smoothed
-#' state) and additionally \code{$dU_dt} (posterior mean of df/dt), which
-#' \code{wendy_erts} does not provide.
-#'
-#' Each state dimension is fit independently. Hyperparameters are optimised
-#' via marginal likelihood unless supplied via \code{hyperparams}.
+#' Each state dimension is fit independently.
 #'
 #' @param U           n x D matrix of noisy observations.
 #' @param tt          Length-n vector of time points.

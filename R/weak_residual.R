@@ -1,12 +1,3 @@
-# Weak residual components (column-major convention).
-#
-# Row layout for K*D-vectors and (K*D × mp1*D)-matrices:
-#   row r = k + (d-1)*K, k fast.   (equivalently: as.vector of a (K, D) matrix)
-# Column layout for (× mp1*D)-matrices:
-#   col c = m + (b-1)*mp1, m fast. (equivalently: as.vector of an (mp1, D) matrix)
-# Symbolic outputs (J_p, J_u, J_up, J_upp, J_pp) follow the same column-major
-# convention after the loop-order fix in compute_symbolic_jacobian.
-
 # F(p) ∈ ℝ^{mp1 × D}; columns are f_d(p, U, t) evaluated at the mp1 grid points.
 build_F <- function(U, tt, f_, J) {
   mp1 <- nrow(U); D <- ncol(U)
@@ -57,7 +48,7 @@ build_Jp_r_linear <- function(G) {
   function(p) G
 }
 
-# ∇_p ∇_p r(p) ∈ ℝ^{K*D × J × J}, Hessian of the weak residual.
+# ∇ₚ∇ₚr(p) ∈ ℝ^{K*D × J × J}, Hessian of the weak residual.
 build_Hp_r <- function(H_p, K, D, J, mp1, V, U, tt){
   tU  <- t(U); ttt <- matrix(tt, nrow = 1L)
   function(p){
@@ -228,7 +219,6 @@ build_J_S <- function(L, Jp_L, J, K, D, W = NULL, diag_reg = 1e-10){
 }
 
 # Cached Cholesky solver for repeated S^{-1} applications.
-# Returns a closure that applies S^{-1} to a vector or matrix.
 make_S_inv_solver <- function(Sp) {
   U_ <- tryCatch(chol(Sp), error = function(e) NULL)
   if (!is.null(U_)) {

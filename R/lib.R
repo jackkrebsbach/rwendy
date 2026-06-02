@@ -63,15 +63,14 @@ summary.wendy <- function(object, ...) {
 
     if (method %in% c("OE", "HYBRID")) {
       # OE / HYBRID: the final estimate comes from output_error, so use the
-      # scaled covariance from modFit, restricted to the parameter block
+      # scaled nonlinear-LS covariance, restricted to the parameter block
       # (excluding fitted initial conditions).  For HYBRID, WENDy only
       # provides the starting point; the OE estimator's curvature is reported.
       J <- attr(object, "n_params")
       param_cov <- if (!is.null(object$data$cov)) object$data$cov[1:J, 1:J] else NULL
     } else {
       # Fisher form (Gᵀ S(p̂)⁻¹ G)⁻¹: inverse Fisher information of the
-      # linear-Gaussian residual model and the asymptotic cov of the IRLS
-      # estimator.
+      # linear-Gaussian residual model
       G  <- object$Jp_r(phat)
       Sp <- object$S(phat)
       R  <- chol(Sp)
