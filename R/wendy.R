@@ -1,10 +1,8 @@
 #' @importFrom MASS ginv
-#' @importFrom numDeriv jacobian
 #' @importFrom stats quantile median predict fft mvfft lm.fit shapiro.test sd rnorm optim setNames
 #' @importFrom utils modifyList tail capture.output
 #' @importFrom trust trust
 #' @importFrom minpack.lm nls.lm
-#' @importFrom FME modCost modFit
 NULL
 
 

@@ -251,32 +251,6 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
   ))
 }
 
-# build_full_test_function_matrices_ssl <- function(U, tt, control) {
-
-#   dt <- mean(diff(tt))
-#   mp1 <- nrow(U)
-
-#   if (!is.null(control$fixed_radius)) {
-#     radius_c <- control$fixed_radius
-#     rc_errors <- NULL
-#     rc_radii <- NULL
-#   } else {
-#     data <- compute_r_c_hat(U, tt, control$S, control$p)
-#     radius_c <- data$rc
-#     rc_errors <- data$ehat
-#     rc_radii <- data$radii
-#   }
-
-#   V  <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 0)
-#   Vp <- build_full_test_function_matrix(psi, tt, c(radius_c), order = 1)
-
-#   # Integral convention: V %*% F approximates ∫ phi(t) F(t) dt directly.
-#   V  <- V  * dt
-#   Vp <- Vp * dt
-
-#   list(V = V, V_prime = Vp, radius_c = radius_c,
-#        rc_errors = rc_errors, rc_radii = rc_radii)
-# }
 
 build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = TRUE) {
   # cat("<< Building test matrices >>\n")

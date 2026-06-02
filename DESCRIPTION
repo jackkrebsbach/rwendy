@@ -21,9 +21,7 @@ Imports:
     trust,
     MASS,
     minpack.lm,
-    numDeriv,
     stats,
-    deSolve,
-    FME
+    deSolve
 Suggests:
     symengine

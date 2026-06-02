@@ -4,7 +4,6 @@
 library(deSolve)
 library(MASS)
 library(uGMAR)
-library(numDeriv)
 
 invisible({devtools::load_all()})
 
