@@ -1,5 +1,9 @@
 # WENDy
 
+[![Binder](https://mybinder.org/badge_logo.svg)](
+https://mybinder.org/v2/gh/jackkrebsbach/binder/HEAD?urlpath=notebooks/wendy_demo.ipynb
+)
+
 **Weak-form Estimation of Nonlinear Dynamics (WENDy)** is an algorithm for
 estimating the parameters of a system of ordinary differential equations (ODEs)
 from noisy time-series data.
