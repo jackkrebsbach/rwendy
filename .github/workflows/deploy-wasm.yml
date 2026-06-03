@@ -1,33 +1,15 @@
-# .github/workflows/deploy-wasm.yml
-name: Build and deploy Wasm R package
-
+# .github/workflows/deploy.yml
+name: Build and deploy wasm R package repository
 on:
   push:
-    branches: [main]
-
+    branches: [main, master]
+  workflow_dispatch:
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Wasm package
-        uses: r-wasm/actions/build-packages@v1
-        with:
-          packages: "."
-
-      - name: Deploy to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: "repo"
-
-  deploy:
-    needs: build
+  deploy-cran-repo:
+    uses: r-wasm/actions/.github/workflows/deploy-cran-repo.yml@v3
+    with:
+      packages: "jackkrebsbach/rwendy"
     permissions:
+      repository-projects: read
       pages: write
       id-token: write
-    environment:
-      name: github-pages
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/deploy-pages@v4
