@@ -23,7 +23,9 @@ NULL
 #' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
 #' @param method One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 #'   \code{"OE"}, or \code{"HYBRID"}.
-#' @param control Named list of control parameters; merged with \code{default_control}.
+#' @param control Named list of control parameters, as produced by
+#'   [wendy_control()]; entries supplied here override the defaults.
+#'   See [wendy_control()] for the documentation of each option.
 #'
 #' @details
 #' \itemize{
@@ -71,7 +73,16 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
-  control <- if(!is.null(control)) modifyList(default_control, control) else default_control
+  if (!is.null(control)) {
+    unknown <- setdiff(names(control), names(default_control))
+    if (length(unknown) > 0) {
+      stop("Unknown control parameter(s): ", paste(unknown, collapse = ", "),
+           ". See ?wendy_control for valid options.")
+    }
+    control <- modifyList(default_control, control)
+  } else {
+    control <- default_control
+  }
 
   U_orig   <- U
   tt_orig  <- as.vector(tt)

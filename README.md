@@ -125,8 +125,10 @@ res$state$U_star       # smoothed state trajectory
 
 ## Control options
 
-Fine-grained behavior is configured through the `control` list, which is merged
-with `default_control()`. Some commonly used options:
+Fine-grained behavior is configured through the `control` argument, which
+accepts a plain named list or a call to `wendy_control()`; entries you supply
+override the defaults. See `?wendy_control` for the full set of options.
+Some commonly used ones:
 
 | Option                  | Default | Description |
 |-------------------------|---------|-------------|

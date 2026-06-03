@@ -6,7 +6,7 @@ library(uGMAR)
 library(devtools)
 library(ggplot2)
 
-options(wendy.symbolic_backend = "symengine")
+options(wendy.symbolic_backend = "native")
 
 invisible({devtools::load_all()})
 
@@ -99,3 +99,6 @@ legend(
 cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res$phat), collapse = ", "),
             rel_err(res$phat, p_star)))
+
+
+print(time)

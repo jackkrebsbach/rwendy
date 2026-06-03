@@ -32,7 +32,9 @@ nonlinear least squares, and OE solvers; computed automatically when \code{NULL}
 \item{method}{One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 \code{"OE"}, or \code{"HYBRID"}.}
 
-\item{control}{Named list of control parameters; merged with \code{default_control}.}
+\item{control}{Named list of control parameters, as produced by
+[wendy_control()]; entries supplied here override the defaults.
+See [wendy_control()] for the documentation of each option.}
 }
 \value{
 An object of class \code{wendy} with elements including \code{phat}
