@@ -1,29 +1,4 @@
 # Symbolic engine ==============================================================
-#
-# WENDy needs a small set of symbolic operations on the ODE right-hand side
-# f(u, p, t): create symbols, differentiate, substitute, stringify, render LaTeX,
-# and compile to a fast numeric evaluator. These are provided by one of two
-# interchangeable backends:
-#
-#   * "symengine" - fast, LLVM-compiled, but a heavy external dependency.
-#   * "native"    - pure base-R fallback (the `rsym` class below), slower in
-#                    principle but dependency-free.
-#
-# The file is organised in four sections:
-#   1. Backend selection            - sym_backend()
-#   2. Primitive dispatch           - sym_*() generics routing to a backend
-#   3. Native backend               - the `rsym` S3 class + native_*() impls
-#   4. Backend-agnostic algorithms  - Jacobians, total time derivatives, etc.
-#
-# Sections 1-3 keep all representation details behind the sym_*() primitives, so
-# the algorithms in section 4 (and the callers in wendy.R) are written once and
-# work unchanged on either backend.
-#
-# Representation conventions:
-#   native    : scalars and vectors/arrays are `rsym` objects (shape via dim_sym).
-#   symengine : scalars are Basic; 1-D vectors are symengine Vectors; arrays are
-#               base-R list-arrays of Basic scalars (column-major).
-
 
 # 1. Backend selection ---------------------------------------------------------
 
@@ -159,7 +134,7 @@ rsym_exprs <- function(x) {
 
 #' @export
 Ops.rsym <- function(e1, e2) {
-  op <- .Generic
+  op <- get(".Generic")
   if (missing(e2)) {                       # unary + / -
     a <- .rsym_operand(e1)
     return(new_rsym(lapply(a, function(ai) call(op, ai))))
@@ -178,7 +153,7 @@ Ops.rsym <- function(e1, e2) {
 
 #' @export
 Math.rsym <- function(x, ...) {
-  op <- .Generic
+  op <- get(".Generic")
   new_rsym(lapply(rsym_exprs(x), function(xi) call(op, xi)))
 }
 

@@ -290,10 +290,10 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     } else {
       r_c_bl <- compute_r_c_hat(U, tt, control$S, control$p)$rc
     }
-    # n_bl deliberately omitted: estimate_IC uses its own max(3, ceiling(r_c/4))
+    # n_bl deliberately omitted: estimate_IC uses its own max(3, ceiling(r_c/8))
     # heuristic. control$n_bl drives only the SSL boundary-layer augmentation.
     estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl,
-                update_trap_u0 = FALSE, J_u = J_u, sigma = estimated_sd)
+                J_u = J_u, sigma = estimated_sd)
   } else NULL
 
   state <- if (control$estimate_trajectory && method != "OE") {

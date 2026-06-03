@@ -97,41 +97,37 @@ build_em_correction <- function(bl_phi_t1, bl_phi_tM,
 #' @param p Numeric parameter vector \eqn{\hat\theta} (held fixed).
 #' @param r_c Integer; left BL window half-width.
 #' @param n_bl Optional integer; number of left BL test functions
-#'   (default \code{max(3, ceiling(r_c/4))}).
+#'   (default \code{max(3, ceiling(r_c/8))}). Kept small on purpose: a small
+#'   count with a wide placement \code{step} is more efficient than many
+#'   test functions clustered near the boundary (see examples/validation/).
 #' @param max_iter,tol Fixed-point iteration controls.
 #' @param em_order Either 2 or 4.
-#' @param update_trap_u0 Logical. If \code{FALSE} (slide-literal default), the
-#'   trapezoidal residual \eqn{r_{\text{trap}}} is computed once on observed
-#'   \code{U} and held fixed across iterations. If \code{TRUE}, row 1 of
-#'   \code{U} is replaced by the current \eqn{u_0^{(n)}} estimate at each
-#'   iteration and \eqn{r_{\text{trap}}} is recomputed; the integrand no
-#'   longer contains the noisy boundary observation but the contraction map
-#'   changes.
 #' @param J_u Callable state Jacobian \eqn{\partial f/\partial u}
 #'   (\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
 #'   \eqn{[a,b] = \partial f_a/\partial u_b}). Used together with \code{sigma}
-#'   (when \code{update_trap_u0 = FALSE}) so that \code{cov_u0} is the
-#'   noise-channel propagation \eqn{\sum_m DU_m\,\mathrm{diag}(\sigma^2)\,DU_m^T}
-#'   rather than the over-conservative LS-residual variance.
+#'   so that \code{cov_u0} is the noise-channel propagation
+#'   \eqn{\sum_m DU_m\,\mathrm{diag}(\sigma^2)\,DU_m^T} rather than the
+#'   over-conservative LS-residual variance.
 #' @param sigma Data-noise standard deviation, scalar or length-\eqn{D} (per
 #'   state), used to scale the noise-channel \code{cov_u0}.
 #' @return Named list with \code{U_hat} (U with row 1 replaced by
 #'   \code{u0hat}), \code{u0hat}, \code{cov_u0} (D x D covariance of
 #'   \eqn{\hat u_0}; the noise-channel propagation, falling back to the
-#'   LS-residual variance \eqn{s_d^2/B^TB} only when \code{update_trap_u0 = TRUE}
-#'   or \code{sigma} is degenerate),
+#'   LS-residual variance \eqn{s_d^2/B^TB} only when \code{sigma} is
+#'   degenerate, and set to \code{NULL} when the iteration \code{diverged}
+#'   (the covariance is then meaningless, so callers should fall back to the
+#'   raw observation)),
 #'   \code{cov_u0_resid} (the LS-residual variance, always returned for
-#'   reference), \code{cov_method} (\code{"noise_propagation"} or
-#'   \code{"ls_residual"}), plus \code{iters}, \code{converged},
-#'   \code{diverged}, \code{u0_history}, \code{r_c}, \code{n_bl}, \code{K_bl},
-#'   \code{em_order}, \code{update_trap_u0}.
+#'   reference), \code{cov_method} (\code{"noise_propagation"},
+#'   \code{"ls_residual"}, or \code{"diverged"}), plus \code{iters},
+#'   \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c},
+#'   \code{n_bl}, \code{K_bl}, \code{em_order}.
 #' @export
 estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigma,
                         n_bl           = NULL,
                         max_iter       = 20L,
                         tol            = 1e-12,
-                        em_order       = c(4L, 2L),
-                        update_trap_u0 = FALSE) {
+                        em_order       = c(4L, 2L)) {
   em_order <- as.integer(em_order[1])
   if (!em_order %in% c(2L, 4L)) {
     stop("em_order must be 2 or 4", call. = FALSE)
@@ -144,7 +140,14 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   dt     <- mean(diff(tt_vec))
 
   r_c  <- min(r_c, floor((M - 1L) / 2L))
-  n_bl <- if (is.null(n_bl)) max(3L, as.integer(ceiling(r_c / 4)))
+  # Default count grows slowly with r_c (=> 3 for r_c <= 24, covering typical
+  # radii). A validation sweep (examples/validation/) showed that growing the
+  # COUNT with r_c clusters correlated test functions near the boundary and
+  # inflates Var(u0hat) by ~7-19%; keeping the count small and letting the
+  # placement `step` (below) grow with r_c spreads them out and is more
+  # efficient at maintained coverage, with negligible extra truncation bias
+  # (verified down to coarse-n/stiff cases in examples/validation/).
+  n_bl <- if (is.null(n_bl)) max(3L, as.integer(ceiling(r_c / 8)))
           else                max(1L, as.integer(n_bl))
 
   bl_left <- lapply(0:4, function(ord)
@@ -167,8 +170,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     return(list(U_hat = U_hat, u0hat = u0_obs, cov_u0 = NULL,
                 iters = 0L, converged = FALSE, diverged = FALSE,
                 u0_history = matrix(u0_obs, nrow = 1),
-                r_c = r_c, n_bl = n_bl, K_bl = K_bl, em_order = em_order,
-                update_trap_u0 = update_trap_u0
+                r_c = r_c, n_bl = n_bl, K_bl = K_bl, em_order = em_order
               ))
   }
 
@@ -224,10 +226,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 
   for (it in seq_len(max_iter)) {
     iters  <- it
-    if (update_trap_u0) {
-      U_curr <- U; U_curr[1, ] <- u0
-      r_trap <- compute_r_trap(U_curr)
-    }
     EM     <- em_correction(u0)
     rhs    <- r_trap - EM
     u0_new <- as.numeric(crossprod(B, rhs) / BtB)
@@ -286,14 +284,13 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   # sampling variability (calibrated ~95% coverage; validated against a
   # numeric Jacobian to <0.5%). The parameter contribution J_p Cov(phat) J_p^T
   # is left to the caller (negligible when p is well identified; the library
-  # reports the Fisher param cov separately). Only valid when r_trap depends on
-  # the raw data, i.e. !update_trap_u0.
+  # reports the Fisher param cov separately). Valid because r_trap is built
+  # from the raw data (held fixed across iterations).
   # J_u and sigma are required; the noise-channel form is used whenever it is
-  # valid (raw-data residual, well-formed per-state sigma) and falls back to
-  # the LS-residual variance only for update_trap_u0 = TRUE or degenerate sigma.
+  # valid (well-formed per-state sigma) and falls back to the LS-residual
+  # variance only for degenerate sigma.
   I_D <- diag(D)
-  use_noiseprop <- length(sigma) %in% c(1L, D) && all(is.finite(sigma)) &&
-                   !update_trap_u0
+  use_noiseprop <- length(sigma) %in% c(1L, D) && all(is.finite(sigma))
 
   cov_u0_noise <- if (use_noiseprop) tryCatch({
     sig_vec <- if (length(sigma) == 1L) rep(sigma, D) else as.numeric(sigma)
@@ -323,6 +320,20 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   cov_u0     <- if (!is.null(cov_u0_noise)) cov_u0_noise else cov_u0_resid
   cov_method <- if (!is.null(cov_u0_noise)) "noise_propagation" else "ls_residual"
 
+  # A diverged fixed point means u0hat is only the best-seen iterate, not a
+  # solution of the BL system; its covariance — which assumes the converged
+  # fixed-point relation — is then meaningless (empirically coverage collapses
+  # to ~5-19% on fast-spiking stiff systems such as Hindmarsh-Rose, vs ~95% for
+  # non-diverged solves, including coarse-n cases that merely fail to hit `tol`).
+  # Invalidate cov_u0 so the caller (solveWendy) falls back to the raw
+  # observation instead of seeding the state filter from a bad prior. We gate on
+  # `diverged` only, NOT `!converged`: non-converged-but-bounded solves stay well
+  # calibrated, so discarding them would needlessly throw away good estimates.
+  if (diverged) {
+    cov_u0     <- NULL
+    cov_method <- "diverged"
+  }
+
   U_hat <- U; U_hat[1, ] <- u0
 
   list(
@@ -338,8 +349,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     r_c            = r_c,
     n_bl           = n_bl,
     K_bl           = K_bl,
-    em_order       = em_order,
-    update_trap_u0 = update_trap_u0
+    em_order       = em_order
   )
 }
 

@@ -2,7 +2,8 @@
 % Please edit documentation in R/gp.R
 \name{gp_smooth}
 \alias{gp_smooth}
-\title{Smooth a multi-dimensional state with independent Matern 5/2 GPs}
+\title{Smooth a multi-dimensional state with independent Matern 5/2 GPs
+Each state dimension is fit independently.}
 \usage{
 gp_smooth(U, tt, sigma2_n = NULL, hyperparams = NULL)
 }
@@ -26,11 +27,6 @@ List with:
   \item{fits}{length-D list of gp_fit objects}
 }
 \description{
-Drop-in replacement for \code{wendy_erts}: returns \code{$U_star} (smoothed
-state) and additionally \code{$dU_dt} (posterior mean of df/dt), which
-\code{wendy_erts} does not provide.
-}
-\details{
-Each state dimension is fit independently. Hyperparameters are optimised
-via marginal likelihood unless supplied via \code{hyperparams}.
+Smooth a multi-dimensional state with independent Matern 5/2 GPs
+Each state dimension is fit independently.
 }
