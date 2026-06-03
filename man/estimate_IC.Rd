@@ -18,8 +18,7 @@ estimate_IC(
   n_bl = NULL,
   max_iter = 20L,
   tol = 1e-12,
-  em_order = c(4L, 2L),
-  update_trap_u0 = FALSE
+  em_order = c(4L, 2L)
 )
 }
 \arguments{
@@ -37,39 +36,35 @@ evaluators built from the symbolic engine.}
 \item{J_u}{Callable state Jacobian \eqn{\partial f/\partial u}
 (\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
 \eqn{[a,b] = \partial f_a/\partial u_b}). Used together with \code{sigma}
-(when \code{update_trap_u0 = FALSE}) so that \code{cov_u0} is the
-noise-channel propagation \eqn{\sum_m DU_m\,\mathrm{diag}(\sigma^2)\,DU_m^T}
-rather than the over-conservative LS-residual variance.}
+so that \code{cov_u0} is the noise-channel propagation
+\eqn{\sum_m DU_m\,\mathrm{diag}(\sigma^2)\,DU_m^T} rather than the
+over-conservative LS-residual variance.}
 
 \item{sigma}{Data-noise standard deviation, scalar or length-\eqn{D} (per
 state), used to scale the noise-channel \code{cov_u0}.}
 
 \item{n_bl}{Optional integer; number of left BL test functions
-(default \code{max(3, ceiling(r_c/4))}).}
+(default \code{max(3, ceiling(r_c/8))}). Kept small on purpose: a small
+count with a wide placement \code{step} is more efficient than many
+test functions clustered near the boundary (see examples/validation/).}
 
 \item{max_iter, tol}{Fixed-point iteration controls.}
 
 \item{em_order}{Either 2 or 4.}
-
-\item{update_trap_u0}{Logical. If \code{FALSE} (slide-literal default), the
-trapezoidal residual \eqn{r_{\text{trap}}} is computed once on observed
-\code{U} and held fixed across iterations. If \code{TRUE}, row 1 of
-\code{U} is replaced by the current \eqn{u_0^{(n)}} estimate at each
-iteration and \eqn{r_{\text{trap}}} is recomputed; the integrand no
-longer contains the noisy boundary observation but the contraction map
-changes.}
 }
 \value{
 Named list with \code{U_hat} (U with row 1 replaced by
   \code{u0hat}), \code{u0hat}, \code{cov_u0} (D x D covariance of
   \eqn{\hat u_0}; the noise-channel propagation, falling back to the
-  LS-residual variance \eqn{s_d^2/B^TB} only when \code{update_trap_u0 = TRUE}
-  or \code{sigma} is degenerate),
+  LS-residual variance \eqn{s_d^2/B^TB} only when \code{sigma} is
+  degenerate, and set to \code{NULL} when the iteration \code{diverged}
+  (the covariance is then meaningless, so callers should fall back to the
+  raw observation)),
   \code{cov_u0_resid} (the LS-residual variance, always returned for
-  reference), \code{cov_method} (\code{"noise_propagation"} or
-  \code{"ls_residual"}), plus \code{iters}, \code{converged},
-  \code{diverged}, \code{u0_history}, \code{r_c}, \code{n_bl}, \code{K_bl},
-  \code{em_order}, \code{update_trap_u0}.
+  reference), \code{cov_method} (\code{"noise_propagation"},
+  \code{"ls_residual"}, or \code{"diverged"}), plus \code{iters},
+  \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c},
+  \code{n_bl}, \code{K_bl}, \code{em_order}.
 }
 \description{
 Iterates the linear least-squares system

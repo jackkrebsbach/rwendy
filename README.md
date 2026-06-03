@@ -29,15 +29,17 @@ remotes::install_github("jackkrebsbach/rwendy")
 library(wendy)
 library(deSolve)
 
-# Logistic growth: u' = r * u * (1 - u / K),  p = (r, K)
-f <- function(u, p, t) c(p[1] * u[1] * (1 - u[1] / p[2]))
-p_star <- c(0.5, 10)
+# Logistic growth
+f <- function(u, p, t) {
+  c(p[1] * u[1] - p[2] * u[1]^2)
+}
+p_star <- c(1, 1/10)
 tt     <- seq(0, 10, length.out = 60)
 
 modelODE <- function(tvec, state, parameters) {
   list(as.vector(f(state, parameters, tvec)))
 }
-sol <- deSolve::ode(y = 1, times = tt, func = modelODE, parms = p_star)
+sol <- deSolve::ode(y = 0.5, times = tt, func = modelODE, parms = p_star)
 
 set.seed(1)
 # Additive Gaussian noise
