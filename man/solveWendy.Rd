@@ -5,7 +5,7 @@
 \title{Parameter Estimation for ODE Systems}
 \usage{
 solveWendy(
-  f,
+  f = NULL,
   U,
   tt,
   p0 = NULL,
@@ -17,7 +17,10 @@ solveWendy(
 \arguments{
 \item{f}{A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 where \code{u} is the state vector, \code{p} is the parameter vector,
-and \code{t} is the time variable.}
+and \code{t} is the time variable. When \code{NULL}, the right-hand side
+is discovered from the data with weak-form SINDy (see [solveWSINDy()])
+and then refined through the normal WENDy pipeline; the returned object
+carries the discovery fit in \code{$wsindy}.}
 
 \item{U}{Numeric matrix. Rows are observed states at the time points in \code{tt};
 columns are state variables.}

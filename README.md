@@ -104,6 +104,24 @@ residuals(res)        # weak-form residuals
 information), a weak negative log-likelihood value, weak-residual quantiles,
 and convergence diagnostics.
 
+## Equation discovery (WSINDy)
+
+Don't know the right-hand side? Call `solveWendy()` without `f` (or
+`solveWSINDy(U, tt)` directly) to discover a sparse model from the data with
+weak-form SINDy (Messenger & Bortz): a candidate library (monomials up to
+total degree `wsindy_poly_deg`, optional trig terms via `wsindy_trig_freqs`)
+is integrated against the same data-driven test functions WENDy uses, and
+modified sequential-thresholding least squares (MSTLS) selects a sparse model.
+The discovered structure is then refined through the normal WENDy pipeline
+for calibrated estimates and covariance. Assumes additive Gaussian noise.
+
+```r
+ws  <- solveWSINDy(U, tt)              # discovery only: prints the equations
+res <- solveWendy(U = U, tt = tt)      # discovery + WENDy refinement
+res$wsindy                             # the discovery fit (W, loss curves, ...)
+res$phat                               # calibrated coefficients
+```
+
 ## Beyond point estimates
 
 - **Initial-condition estimation** — set `estimate_IC = TRUE` to recover the

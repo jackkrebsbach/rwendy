@@ -14,7 +14,10 @@ NULL
 #'
 #' @param f A function of the form \code{f(u, p, t)} defining the ODE right-hand side,
 #'   where \code{u} is the state vector, \code{p} is the parameter vector,
-#'   and \code{t} is the time variable.
+#'   and \code{t} is the time variable. When \code{NULL}, the right-hand side
+#'   is discovered from the data with weak-form SINDy (see [solveWSINDy()])
+#'   and then refined through the normal WENDy pipeline; the returned object
+#'   carries the discovery fit in \code{$wsindy}.
 #' @param p0 Numeric vector or matrix. Initial parameter guess. Used by MLE,
 #'   nonlinear least squares, and OE solvers; computed automatically when \code{NULL}.
 #' @param U Numeric matrix. Rows are observed states at the time points in \code{tt};
@@ -69,7 +72,7 @@ NULL
 #' rel_err(res$phat, p_star)
 #'
 #' @export
-solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
+solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian", "lognormal"), method = c("IRLS", "MLE", "OLS", "OE", "HYBRID"), control = NULL){
   noise_dist <- match.arg(noise_dist)
   method <- match.arg(method)
 
@@ -82,6 +85,25 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
     control <- modifyList(default_control, control)
   } else {
     control <- default_control
+  }
+
+  # No rhs supplied: discover the model structure with WSINDy, then run the
+  # discovered (linear-in-p) f through the normal WENDy pipeline below.
+  ws <- NULL
+  if (is.null(f)) {
+    if (noise_dist == "lognormal") {
+      stop("WSINDy discovery (f = NULL) assumes additive Gaussian noise; ",
+           "noise_dist = \"lognormal\" is not supported in this mode. ",
+           "Supply f explicitly, or use noise_dist = \"addgaussian\".")
+    }
+    ws <- solveWSINDy(U, tt, control = control)
+    if (all(ws$W == 0)) {
+      stop("WSINDy discovered no terms in any equation. ",
+           "Try increasing wsindy_poly_deg, lowering the noise, or adjusting ",
+           "wsindy_lambdas. See ?solveWSINDy.")
+    }
+    f <- ws$f
+    if (is.null(p0)) p0 <- ws$p0
   }
 
   U_orig   <- U
@@ -269,6 +291,7 @@ solveWendy <- function(f, U, tt, p0 = NULL, noise_dist = c("addgaussian", "logno
   attr(res, "n_states") <- D
 
   res$opt_ctx <- opt_ctx
+  res$wsindy  <- ws  # NULL when f was supplied by the user
 
   if (!control$optimize) return(res)
 

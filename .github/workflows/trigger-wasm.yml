@@ -1,0 +1,19 @@
+# .github/workflows/trigger-wasm.yml
+name: Trigger Wasm rebuild
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger rwendy-wasm rebuild
+        run: |
+          gh api repos/jackkrebsbach/rwendy-wasm/dispatches \
+            --method POST \
+            -f event_type=rebuild
+        env:
+          GH_TOKEN: ${{ secrets.WASM_TRIGGER_TOKEN }}
