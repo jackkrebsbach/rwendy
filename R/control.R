@@ -52,6 +52,38 @@
 #' @param apply_fn Function. Custom apply for multistart, e.g.
 #'   \code{parallel::mclapply} or \code{future.apply::future_lapply};
 #'   \code{NULL} uses \code{lapply}.
+#' @param wsindy_poly_deg Integer. Maximum total polynomial degree of the
+#'   monomial candidate library (including cross terms and the constant) used
+#'   by WSINDy discovery in [solveWSINDy()].
+#' @param wsindy_trig_freqs Numeric vector or \code{NULL}. Frequencies \eqn{k}
+#'   for optional trigonometric library terms \eqn{\sin(k u_d)},
+#'   \eqn{\cos(k u_d)}, added for every state \eqn{d}. \code{NULL} (default)
+#'   disables trig terms.
+#' @param wsindy_lambdas Numeric vector. Sparsity-threshold grid for the WSINDy
+#'   MSTLS sweep.
+#' @param wsindy_alpha_loss Numeric in (0, 1). Convex weight between the
+#'   residual and sparsity terms in the MSTLS model-selection loss. The default
+#'   0.5 gives the published loss
+#'   \eqn{\|G(w_\lambda - w_{LS})\|/\|G w_{LS}\| + \mathrm{nnz}/J}.
+#' @param wsindy_tau Numeric. Decay tolerance of the test function at its first
+#'   interior support point (drives the polynomial degree \eqn{p}).
+#' @param wsindy_tauhat Numeric. Number of standard deviations of the test
+#'   function's Fourier transform that the critical (signal/noise corner)
+#'   wavenumber is placed into the tail (drives the support radius \eqn{m}).
+#' @param wsindy_K Integer. Maximum number of test functions per equation;
+#'   centers are uniformly strided to stay below this.
+#' @param wsindy_gls Numeric in [0, 1). 0 (default) uses ordinary least
+#'   squares. Positive values whiten each equation with the leading-order
+#'   weak-residual covariance \eqn{(1-a) V'V'^T + a\,\mathrm{diag}(V'V'^T)}
+#'   (the ODE paper's GLS); helpful for small test-function supports.
+#' @param wsindy_rescale Logical. If \code{TRUE} (default), evaluate the
+#'   library on scaled states \eqn{u_n / \|u_n^{\bar\beta}\|^{1/\bar\beta}} and
+#'   map coefficients back to physical units, improving conditioning across
+#'   heterogeneous term magnitudes.
+#' @param wsindy_extra_terms Character vector or \code{NULL}. Additional
+#'   candidate library terms as R code strings in state-index notation (e.g.
+#'   \code{"u[1]*u[3]^2"}, \code{"exp(u[1])"}); appended to the monomial/trig
+#'   library. \code{NULL} (default) adds none.
 #'
 #' @return A named list of control parameters for [solveWendy()].
 #' @export
@@ -81,7 +113,17 @@ wendy_control <- function(
   fixed_radius = NULL,
   use_interp_uncertainty = TRUE,
   smoother = "erts",
-  apply_fn = NULL
+  apply_fn = NULL,
+  wsindy_poly_deg = 5,
+  wsindy_trig_freqs = NULL,
+  wsindy_lambdas = 10^seq(-4, 0, length.out = 100),
+  wsindy_alpha_loss = 0.5,
+  wsindy_tau = 1e-16,
+  wsindy_tauhat = 1,
+  wsindy_K = 1000,
+  wsindy_gls = 0,
+  wsindy_rescale = TRUE,
+  wsindy_extra_terms = NULL
 ) {
   list(
     optimize = optimize,
@@ -109,7 +151,17 @@ wendy_control <- function(
     fixed_radius = fixed_radius,
     use_interp_uncertainty = use_interp_uncertainty,
     smoother = smoother,
-    apply_fn = apply_fn
+    apply_fn = apply_fn,
+    wsindy_poly_deg = wsindy_poly_deg,
+    wsindy_trig_freqs = wsindy_trig_freqs,
+    wsindy_lambdas = wsindy_lambdas,
+    wsindy_alpha_loss = wsindy_alpha_loss,
+    wsindy_tau = wsindy_tau,
+    wsindy_tauhat = wsindy_tauhat,
+    wsindy_K = wsindy_K,
+    wsindy_gls = wsindy_gls,
+    wsindy_rescale = wsindy_rescale,
+    wsindy_extra_terms = wsindy_extra_terms
   )
 }
 
