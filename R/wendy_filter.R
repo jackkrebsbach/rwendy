@@ -19,15 +19,19 @@ g_deriv_at_endpoint <- function(phi_scalars, f_derivs, u_vec, order) {
   result
 }
 
-# Build the EM correction closure for the augmented BL residual.
+# Euler-Maclaurin defect for the boundary-layer weak residual.
 #
-# bl_phi_t1, bl_phi_tM: (K_bl × 5) matrices with raw phi^(0..4) at the
-#   left/right boundary for each BL test function (columns = derivative orders).
-# f_, dF_dt_, d2F_dt2_, d3F_dt3_: trajectory-derivative callables of the RHS.
+# A trapezoidal weak integral int (phi F + phi' u) over a BL test function that
+# does NOT vanish at the endpoints carries an O(h^2) Euler-Maclaurin error. This
+# returns that defect so the caller can add it to the BL residual, making it an
+# unbiased weak form (O(h^6) with both terms below). With g(t) = phi(t) F + phi'(t) u,
+#   EM_k = -dt^2/12 (g_k'(t_M) - g_k'(t_1)) + dt^4/720 (g_k'''(t_M) - g_k'''(t_1)).
+# Endpoint derivatives g^(n) come from the Leibniz expansion (g_deriv_at_endpoint)
+# using the total time derivatives F^(0..3) of the RHS along the trajectory.
 #
-# Returns function(U, p, tt) -> (K_bl × D) matrix, or NULL when K_bl == 0.
-# EM_k = -dt²/12·(g_k'(t_M) - g_k'(t_1)) + dt⁴/720·(g_k'''(t_M) - g_k'''(t_1))
-# with g(t) = phi_k(t) F(p,u(t),t) + phi_k'(t) u(t).
+# bl_phi_t1, bl_phi_tM: (K_bl x 5) raw phi^(0..4) at t_1 / t_M per BL test function.
+# f_, dF_dt_, d2F_dt2_, d3F_dt3_: RHS and total time-derivative callables.
+# Returns function(U, p, tt) -> (K_bl x D) matrix, or NULL when there are no BL rows.
 build_em_correction <- function(bl_phi_t1, bl_phi_tM,
                                 f_, dF_dt_, d2F_dt2_, d3F_dt3_,
                                 dt, scale = 1.0) {
@@ -74,6 +78,60 @@ build_em_correction <- function(bl_phi_t1, bl_phi_tM,
   }
 }
 
+# Analytic p-Jacobian of the boundary-layer EM defect (build_em_correction).
+#
+# EM_k(p) is a linear combination (via g_deriv_at_endpoint) of the trajectory
+# derivatives F^(0..3) = f, dF/dt, d2F/dt2, d3F/dt3 at the two boundaries, with
+# constant phi coefficients, plus a phi*u term with NO p-dependence. Hence
+# dEM_k/dp_j is the SAME Leibniz combination applied to the p-derivatives
+# dF^(m)/dp_j (and the phi*u term drops, i.e. u_vec = 0). No finite differences:
+# the dF^(m)/dp callables come straight from the symbolic engine.
+#
+# dfdp_, dF1dp_, dF2dp_, dF3dp_: callables returning dF^(0..3)/dp at a single
+#   point, each reshaping to D x J (d-fast, exactly like J_p).
+# Returns function(U, p, tt) -> (K_bl x D x J), or NULL when there are no BL rows.
+build_em_jacobian <- function(bl_phi_t1, bl_phi_tM,
+                              dfdp_, dF1dp_, dF2dp_, dF3dp_,
+                              dt, D, J, scale = 1.0) {
+  if (is.null(bl_phi_t1) || nrow(bl_phi_t1) == 0L) return(NULL)
+  K_bl  <- nrow(bl_phi_t1)
+  c2    <- scale * dt^2 / 12
+  c4    <- scale * dt^4 / 720
+  zeroD <- numeric(D)
+
+  function(U, p, tt) {
+    M  <- nrow(U)
+    t1 <- tt[1L]; tM <- tt[M]
+
+    # dF^(0..3)/dp at a boundary point -> list of four D x J matrices.
+    dp_at <- function(u_pt, t_pt) {
+      inp <- matrix(c(p, u_pt, t_pt), ncol = 1L)
+      list(matrix(as.vector(dfdp_(inp)),  D, J),
+           matrix(as.vector(dF1dp_(inp)), D, J),
+           matrix(as.vector(dF2dp_(inp)), D, J),
+           matrix(as.vector(dF3dp_(inp)), D, J))
+    }
+    A1 <- dp_at(as.numeric(U[1L, ]), t1)
+    AM <- dp_at(as.numeric(U[M,  ]), tM)
+
+    jac <- array(0, c(K_bl, D, J))
+    for (k in seq_len(K_bl)) {
+      phi_t1 <- as.list(bl_phi_t1[k, ])
+      phi_tM <- as.list(bl_phi_tM[k, ])
+      for (j in seq_len(J)) {
+        fd1 <- list(A1[[1]][, j], A1[[2]][, j], A1[[3]][, j], A1[[4]][, j])  # dF^(0..3)/dp_j @ t1
+        fdM <- list(AM[[1]][, j], AM[[2]][, j], AM[[3]][, j], AM[[4]][, j])  # @ tM
+        dg1_t1 <- g_deriv_at_endpoint(phi_t1, fd1, zeroD, order = 1L)
+        dg1_tM <- g_deriv_at_endpoint(phi_tM, fdM, zeroD, order = 1L)
+        dg3_t1 <- g_deriv_at_endpoint(phi_t1, fd1, zeroD, order = 3L)
+        dg3_tM <- g_deriv_at_endpoint(phi_tM, fdM, zeroD, order = 3L)
+        jac[k, , j] <- -c2 * (dg1_tM - dg1_t1) + c4 * (dg3_tM - dg3_t1)
+      }
+    }
+    jac
+  }
+}
+
 #' Estimate u(0) via iterative defect-correction on left BL test functions
 #'
 #' Iterates the linear least-squares system
@@ -110,20 +168,32 @@ build_em_correction <- function(bl_phi_t1, bl_phi_tM,
 #'   over-conservative LS-residual variance.
 #' @param sigma Data-noise standard deviation, scalar or length-\eqn{D} (per
 #'   state), used to scale the noise-channel \code{cov_u0}.
+#' @param param_cov Optional J x J covariance \eqn{\hat C} of \eqn{\hat p}
+#'   (e.g. the Fisher form \eqn{(G^T S^{-1} G)^{-1}}). When supplied,
+#'   \code{cov_u0} additionally includes the parameter-uncertainty channel
+#'   \eqn{S_p \hat C S_p^T} with \eqn{S_p = \partial \hat u_0 / \partial p}
+#'   (the explained part of the law of total variance); see Details in the
+#'   covariance comments below.
 #' @return Named list with \code{U_hat} (U with row 1 replaced by
 #'   \code{u0hat}), \code{u0hat}, \code{cov_u0} (D x D covariance of
-#'   \eqn{\hat u_0}; the noise-channel propagation, falling back to the
+#'   \eqn{\hat u_0}; the noise-channel propagation plus, when
+#'   \code{param_cov} is supplied, the parameter channel
+#'   \eqn{S_p \hat C S_p^T}, falling back to the
 #'   LS-residual variance \eqn{s_d^2/B^TB} only when \code{sigma} is
 #'   degenerate, and set to \code{NULL} when the iteration \code{diverged}
 #'   (the covariance is then meaningless, so callers should fall back to the
 #'   raw observation)),
 #'   \code{cov_u0_resid} (the LS-residual variance, always returned for
-#'   reference), \code{cov_method} (\code{"noise_propagation"},
-#'   \code{"ls_residual"}, or \code{"diverged"}), plus \code{iters},
+#'   reference), \code{cov_u0_param} (the parameter channel alone, or
+#'   \code{NULL} when not computed), \code{cov_method}
+#'   (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
+#'   \code{"+param"} suffix when the parameter channel is included, or
+#'   \code{"diverged"}), plus \code{iters},
 #'   \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c},
 #'   \code{n_bl}, \code{K_bl}, \code{em_order}.
 #' @export
 estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigma,
+                        param_cov      = NULL,
                         n_bl           = NULL,
                         max_iter       = 20L,
                         tol            = 1e-12,
@@ -155,7 +225,12 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
                                side = "left", n_bl = n_bl))
   K_bl <- nrow(bl_left[[1]])
 
-  apply_trap <- function(B) { B[, 1] <- B[, 1] * 0.5; B[, M] <- B[, M] * 0.5; B }
+  apply_trap <- function(B) { 
+    B[, 1] <- B[, 1] * 0.5
+    B[, M] <- B[, M] * 0.5
+    return(B)
+  }
+
   V_BL  <- apply_trap(bl_left[[1]])
   Vp_BL <- apply_trap(bl_left[[2]])
 
@@ -174,8 +249,8 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
               ))
   }
 
-  compute_r_trap <- function(U_in) {
-    input  <- rbind(matrix(rep(p, M), nrow = J), t(U_in), matrix(tt_vec, nrow = 1L))
+  compute_r_trap <- function(U_in, p_use = p) {
+    input  <- rbind(matrix(rep(p_use, M), nrow = J), t(U_in), matrix(tt_vec, nrow = 1L))
     F_eval <- f_(input)
     -dt * (V_BL %*% F_eval) - dt * (Vp_BL %*% U_in)
   }
@@ -184,9 +259,9 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   c2 <- dt^2 / 12
   c4 <- if (em_order >= 4L) dt^4 / 720 else 0
 
-  em_correction <- function(u0_curr) {
+  em_correction <- function(u0_curr, p_use = p) {
     u_t1   <- as.vector(u0_curr)
-    inp_t1 <- matrix(c(p, u_t1, tt_vec[1]), ncol = 1L)
+    inp_t1 <- matrix(c(p_use, u_t1, tt_vec[1]), ncol = 1L)
     fd_t1  <- list(
       as.vector(f_(inp_t1)),
       as.vector(dF_dt_(inp_t1)),
@@ -282,9 +357,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   #   C_m  = -dt (B^T V_BL)[m] J_u(t_m) - dt (B^T Vp_BL)[m] I.
   # Only the m within the (compact) BL window contribute. This reflects only
   # sampling variability (calibrated ~95% coverage; validated against a
-  # numeric Jacobian to <0.5%). The parameter contribution J_p Cov(phat) J_p^T
-  # is left to the caller (negligible when p is well identified; the library
-  # reports the Fisher param cov separately). Valid because r_trap is built
+  # numeric Jacobian to <0.5%). Valid because r_trap is built
   # from the raw data (held fixed across iterations).
   # J_u and sigma are required; the noise-channel form is used whenever it is
   # valid (well-formed per-state sigma) and falls back to the LS-residual
@@ -292,9 +365,9 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   I_D <- diag(D)
   use_noiseprop <- length(sigma) %in% c(1L, D) && all(is.finite(sigma))
 
-  cov_u0_noise <- if (use_noiseprop) tryCatch({
-    sig_vec <- if (length(sigma) == 1L) rep(sigma, D) else as.numeric(sigma)
-    Sig2    <- diag(sig_vec^2, nrow = D, ncol = D)
+  # (B^T B I + A)^-1: Jacobian of the fixed-point relation w.r.t. u0, shared
+  # by the noise and parameter channels (implicit function theorem).
+  Minv <- tryCatch({
     h <- 1e-6 * max(1, sqrt(sum(u0^2)))
     A <- matrix(0, D, D)
     for (e_i in seq_len(D)) {
@@ -303,7 +376,12 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       dEM_e    <- (em_correction(up) - em_correction(dn)) / (2 * h)  # K_bl x D
       A[, e_i] <- as.numeric(crossprod(B, dEM_e))
     }
-    Minv <- solve(BtB * I_D + A)
+    solve(BtB * I_D + A)
+  }, error = function(err) NULL)
+
+  cov_u0_noise <- if (use_noiseprop && !is.null(Minv)) tryCatch({
+    sig_vec <- if (length(sigma) == 1L) rep(sigma, D) else as.numeric(sigma)
+    Sig2    <- diag(sig_vec^2, nrow = D, ncol = D)
     bV   <- as.numeric(crossprod(B, V_BL))   # length M  (= B^T V_BL)
     bVp  <- as.numeric(crossprod(B, Vp_BL))  # length M  (= B^T Vp_BL)
     acc  <- matrix(0, D, D)
@@ -317,8 +395,37 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     acc
   }, error = function(err) NULL) else NULL
 
+  # Parameter channel: the noise propagation above is conditional on p = phat,
+  # i.e. only the "unexplained" part of the law of total variance
+  #   Var(u0hat) = E_p[Var(u0hat | p)] + Var_p(E[u0hat | p]).
+  # The "explained" part comes from the dependence of u0hat on phat.
+  # Differentiating the fixed-point relation w.r.t. p_j at fixed data U gives
+  #   S_p[, j] = (B^T B I + A)^-1 B^T (dr_trap/dp_j - dEM/dp_j),
+  # with the p-derivatives taken by central differences (EM's p-dependence
+  # runs through total time derivatives of f up to order 3 — messy
+  # analytically, trivial numerically), and
+  #   Cov_param(u0) = S_p Cov(phat) S_p^T.
+  # The cross term between the two channels (phat is estimated from the same
+  # data U) is ignored, as in wendy_erts's parameter fold.
+  cov_u0_param <- if (!is.null(param_cov) && !is.null(Minv)) tryCatch({
+    rhs_of_p <- function(p_use)
+      as.numeric(crossprod(B, compute_r_trap(U, p_use) - em_correction(u0, p_use)))
+    S_p <- matrix(0, D, J)
+    for (j in seq_len(J)) {
+      hj <- 1e-6 * max(1, abs(p[j]))
+      pj_up <- p; pj_up[j] <- pj_up[j] + hj
+      pj_dn <- p; pj_dn[j] <- pj_dn[j] - hj
+      S_p[, j] <- Minv %*% ((rhs_of_p(pj_up) - rhs_of_p(pj_dn)) / (2 * hj))
+    }
+    S_p %*% param_cov %*% t(S_p)
+  }, error = function(err) NULL) else NULL
+
   cov_u0     <- if (!is.null(cov_u0_noise)) cov_u0_noise else cov_u0_resid
   cov_method <- if (!is.null(cov_u0_noise)) "noise_propagation" else "ls_residual"
+  if (!is.null(cov_u0) && !is.null(cov_u0_param)) {
+    cov_u0     <- cov_u0 + cov_u0_param
+    cov_method <- paste0(cov_method, "+param")
+  }
 
   # A diverged fixed point means u0hat is only the best-seen iterate, not a
   # solution of the BL system; its covariance — which assumes the converged
@@ -330,8 +437,9 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   # `diverged` only, NOT `!converged`: non-converged-but-bounded solves stay well
   # calibrated, so discarding them would needlessly throw away good estimates.
   if (diverged) {
-    cov_u0     <- NULL
-    cov_method <- "diverged"
+    cov_u0       <- NULL
+    cov_u0_param <- NULL
+    cov_method   <- "diverged"
   }
 
   U_hat <- U; U_hat[1, ] <- u0
@@ -341,6 +449,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     u0hat          = u0,
     cov_u0         = cov_u0,
     cov_u0_resid   = cov_u0_resid,
+    cov_u0_param   = cov_u0_param,
     cov_method     = cov_method,
     iters          = iters,
     converged      = converged,

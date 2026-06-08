@@ -6,7 +6,9 @@
 *.csv
 *.DS_Store
 data
+.claude
 benchmarks
+tmp_*
 
 /.quarto/
 

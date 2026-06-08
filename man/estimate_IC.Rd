@@ -15,6 +15,7 @@ estimate_IC(
   r_c,
   J_u,
   sigma,
+  param_cov = NULL,
   n_bl = NULL,
   max_iter = 20L,
   tol = 1e-12,
@@ -43,6 +44,13 @@ over-conservative LS-residual variance.}
 \item{sigma}{Data-noise standard deviation, scalar or length-\eqn{D} (per
 state), used to scale the noise-channel \code{cov_u0}.}
 
+\item{param_cov}{Optional J x J covariance \eqn{\hat C} of \eqn{\hat p}
+(e.g. the Fisher form \eqn{(G^T S^{-1} G)^{-1}}). When supplied,
+\code{cov_u0} additionally includes the parameter-uncertainty channel
+\eqn{S_p \hat C S_p^T} with \eqn{S_p = \partial \hat u_0 / \partial p}
+(the explained part of the law of total variance); see Details in the
+covariance comments below.}
+
 \item{n_bl}{Optional integer; number of left BL test functions
 (default \code{max(3, ceiling(r_c/8))}). Kept small on purpose: a small
 count with a wide placement \code{step} is more efficient than many
@@ -55,14 +63,19 @@ test functions clustered near the boundary (see examples/validation/).}
 \value{
 Named list with \code{U_hat} (U with row 1 replaced by
   \code{u0hat}), \code{u0hat}, \code{cov_u0} (D x D covariance of
-  \eqn{\hat u_0}; the noise-channel propagation, falling back to the
+  \eqn{\hat u_0}; the noise-channel propagation plus, when
+  \code{param_cov} is supplied, the parameter channel
+  \eqn{S_p \hat C S_p^T}, falling back to the
   LS-residual variance \eqn{s_d^2/B^TB} only when \code{sigma} is
   degenerate, and set to \code{NULL} when the iteration \code{diverged}
   (the covariance is then meaningless, so callers should fall back to the
   raw observation)),
   \code{cov_u0_resid} (the LS-residual variance, always returned for
-  reference), \code{cov_method} (\code{"noise_propagation"},
-  \code{"ls_residual"}, or \code{"diverged"}), plus \code{iters},
+  reference), \code{cov_u0_param} (the parameter channel alone, or
+  \code{NULL} when not computed), \code{cov_method}
+  (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
+  \code{"+param"} suffix when the parameter channel is included, or
+  \code{"diverged"}), plus \code{iters},
   \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c},
   \code{n_bl}, \code{K_bl}, \code{em_order}.
 }
