@@ -137,7 +137,12 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
       F_ = F_, g = g, g0 = g0, b = b, G = G,
       Jp_r = Jp_r, Hp_r = Hp_r,
       L0 = L0, L = L, Jp_L = Jp_L, Hp_L = Hp_L,
-      W = W
+      W = W,
+      # TRUE when the boundary-layer EM correction was folded into g/Jp_r. It
+      # makes the residual NONLINEAR in p even for linear-in-p f, so the linear
+      # solvers (irls/ols on the constant G) would silently drop it -- downstream
+      # routing must use the nonlinear solvers (nirls/nols) when this is set.
+      em_active = em_active
     ),
     class = "WENDyProblem"
   )
@@ -187,6 +192,7 @@ build_wendy_system <- function(wendy_problem, lip, diag_reg, use_interp_uncertai
     L = L, Jp_L = Jp_L, Hp_L = Hp_L, W = W,
     S = S, Jp_S = Jp_S,
     wnll = wnll, J_wnll = J_wnll, H_wnll = H_wnll,
-    K = K, D = D, J = J
+    K = K, D = D, J = J,
+    em_active = isTRUE(wendy_problem$em_active)
   )
 }

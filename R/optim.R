@@ -336,18 +336,31 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   ols(G_cont, b_cont, ctx$system$L)$p
 }
 
+# A linear-in-p f normally lets OLS/IRLS solve the constant system G p = b. But
+# the boundary-layer EM correction folds a p-NONLINEAR term into g/Jp_r, which
+# the constant G does NOT carry -- so when it is active we must use the nonlinear
+# solvers (nols/nirls) even though `lip` is TRUE, or the EM term is silently
+# dropped (it is exactly the deterministic O(h^2) defect that BL test functions
+# need removed on coarse grids / at low noise).
+.use_linear_solver <- function(ctx) ctx$lip && !isTRUE(ctx$system$em_active)
+
 .run_ols <- function(ctx, p0, G_cont, b_cont) {
   sys <- ctx$system
-  if (ctx$lip) ols(G_cont, b_cont, sys$L)
-  else         nols(sys$g, b_cont, sys$L, sys$Jp_r, p0 = p0, reg = 10e-10)
+  if (.use_linear_solver(ctx)) {
+    ols(G_cont, b_cont, sys$L)
+  } else {
+    if (is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
+    nols(sys$g, b_cont, sys$L, sys$Jp_r, p0 = p0, reg = 10e-10)
+  }
 }
 
 .run_irls <- function(ctx, p0, G_cont, b_cont) {
   sys <- ctx$system
-  if (ctx$lip) {
+  if (.use_linear_solver(ctx)) {
     if (is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
     irls(G_cont, b_cont, sys$L, p0 = p0, W = sys$W, max_its = ctx$control$max_iterates)
   } else {
+    if (is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
     nirls(sys$g, b_cont, sys$L, sys$Jp_r, p0 = p0, W = sys$W, max_its = ctx$control$max_iterates)
   }
 }
