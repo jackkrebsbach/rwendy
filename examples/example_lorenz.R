@@ -25,7 +25,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-12)
 
-nr <- 0.10
+nr <- 0.20
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
@@ -43,8 +43,8 @@ options(wendy.symbolic_backend = "native")
 
 res <- solveWendy(f, U, tt, method = "MLE",
               control = list(estimate_IC = TRUE,
-                             test_fun_type = "SSL",
-                             include_boundary_layer = TRUE))
+                             test_fun_type = "MSG",
+                             include_boundary_layer = FALSE))
 
 resOE <- solveWendy(f, U, tt, p0 = p0, method = "OE")
 

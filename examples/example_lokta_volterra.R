@@ -19,7 +19,7 @@ u0 <- c(1, 1)
 p_star <- c(1, -0.1, -1.5, 0.075)
 u0 <- c(10,5)
 p0 <- c(2, -0.1, -1, 0.25)
-npoints <- 1024
+npoints <- 256
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -38,7 +38,7 @@ U <- sol[, -1] + noise
 # U[,1] <- mean(U[,2])
 tt <- matrix(sol[, 1], ncol = 1)
 
-res1  <- solveWendy(f=NULL, U, tt, method = "IRLS", control = list(wsindy_rescale = TRUE))
+res1  <- solveWendy(f, U, tt, method = "IRLS", control = list(wsindy_rescale = TRUE))
 res2  <- solveWendy(f, U, tt, method = "MLE")
 
 plot(tt, U[,1], col = adjustcolor("brown", alpha.f = 0.3), cex = 0.5,
