@@ -12,7 +12,9 @@
 #' @param control Control list (uses $test_fun_type, $use_interp_uncertainty, etc.).
 #' @return A list of class "WENDyProblem".
 #' @keywords internal
-build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control) {
+build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control,
+                                dF_dt_ = NULL, d2F_dt2_ = NULL, d3F_dt3_ = NULL,
+                                dF_dt_p_ = NULL, d2F_dt2_p_ = NULL, d3F_dt3_p_ = NULL) {
   U   <- wendy_data$U
   tt  <- as.vector(wendy_data$tt)
   dt  <- mean(diff(tt))
@@ -30,9 +32,35 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   } else {
     build_full_test_function_matrices_msg(U, tt, control, control$compute_svd)
   }
+  # The test-function builders return matrices in the raw (sum) convention:
+  # V %*% F is the bare sum sum_m phi(t_m) f(t_m), with no quadrature weight.
+  # Apply the dt trapezoid weight here, once, so V/Vp represent the weak
+  # integrals (int phi f dt, int phi' u dt). Keeping dt out of the builders
+  # separates "sample the test functions" from "weight the quadrature".
+  # A uniform scaling of V/Vp leaves the GLS estimate and the Fisher covariance
+  # invariant (r = g - b and S scale together, the log-det shifts by a
+  # p-independent constant), so this only sets the absolute units of g/b/S/wnll.
   K  <- nrow(tf$V)
-  V  <- tf$V
-  Vp <- tf$V_prime
+  V  <- tf$V * dt
+  Vp <- tf$V_prime * dt
+
+  # Boundary-layer integration-by-parts term, folded into Vp. BL test functions
+  # phi do NOT vanish at the endpoints, so the weak form u' = f leaves a boundary
+  # term that makes the unbiased BL residual
+  #   V F + Vp U + phi(t1) u(t1) - phi(tM) u(tM)   (+ EM quadrature defect in g).
+  # The boundary term is linear in U just like Vp U, so we add it as extra entries
+  # of Vp at the two endpoint columns:  (Vp_aug U)[k] = (Vp U)[k] + phi_k(t1) u(t1)
+  # - phi_k(tM) u(tM). This folds it into BOTH the mean residual (b = -Vp U) AND
+  # the covariance (L0 = kron(sig, Vp)). Modelling that channel matters: the
+  # endpoint values are noisy observations shared across all BL rows, so when the
+  # BL rows carry weight (coarse grids) the unmodelled correlated boundary noise
+  # otherwise biases the GLS. phi values are physical units (no dt), matching Vp*dt.
+  # Interior rows have phi(t1) = phi(tM) = 0 and are untouched.
+  if (!is.null(tf$K_bl) && tf$K_bl > 0L) {
+    bl_rows <- tf$K_interior + seq_len(tf$K_bl)
+    Vp[bl_rows, 1]   <- Vp[bl_rows, 1]   + tf$bl_phi_t1[, "phi0"]
+    Vp[bl_rows, mp1] <- Vp[bl_rows, mp1] - tf$bl_phi_tM[, "phi0"]
+  }
 
   F_ <- build_F(U, tt, f_, J)
   G  <- build_G_matrix(V, U, tt, F_, J)
@@ -47,6 +75,37 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
           else      build_Jp_r_linear(G)
 
   Hp_r <- build_Hp_r(J_pp, K, D, J, mp1, V, U, tt)
+
+  # Euler-Maclaurin defect for the BL rows. Unlike the boundary term it depends
+  # on p (through f and its total time derivatives at the boundaries), so it
+  # augments the residual via g(p) AND its Jacobian Jp_r. Without it the
+  # trapezoidal BL integral carries an O(h^2) bias that grows with dt and
+  # corrupts the estimate on coarse grids. The Jacobian dEM/dp is ANALYTIC: the
+  # defect is linear in F^(0..3), so its p-derivative is the same combination of
+  # the symbolic p-Jacobians dF^(m)/dp (build_em_jacobian) -- no finite
+  # differences. The Hessian Hp_r is left as the VF part: the converged estimate
+  # is fixed by where the (EM-correct) gradient vanishes, and the reported Fisher
+  # covariance uses Jp_r, so only optimizer step quality is affected.
+  em_active <- !is.null(tf$K_bl) && tf$K_bl > 0L &&
+               !is.null(dF_dt_)   && !is.null(d2F_dt2_)   && !is.null(d3F_dt3_) &&
+               !is.null(dF_dt_p_) && !is.null(d2F_dt2_p_) && !is.null(d3F_dt3_p_)
+  if (em_active) {
+    K_int  <- tf$K_interior
+    bl_idx <- K_int + seq_len(tf$K_bl)
+    em_fn  <- build_em_correction(tf$bl_phi_t1, tf$bl_phi_tM,
+                                  f_, dF_dt_, d2F_dt2_, d3F_dt3_, dt)
+    em_jac_fn <- build_em_jacobian(tf$bl_phi_t1, tf$bl_phi_tM,
+                                   J_p, dF_dt_p_, d2F_dt2_p_, d3F_dt3_p_, dt, D, J)
+
+    g_base    <- g
+    Jp_r_base <- Jp_r
+    g <- function(p) g_base(p) + as.vector(rbind(matrix(0, K_int, D), em_fn(U, p, tt)))
+    Jp_r <- function(p) {
+      Jem <- array(0, c(K, D, J))
+      Jem[bl_idx, , ] <- em_jac_fn(U, p, tt)          # K_bl x D x J -> padded K x D x J
+      Jp_r_base(p) + matrix(Jem, K * D, J)            # row layout (d-1)*K + k, matches Jp_r
+    }
+  }
 
   L0 <- build_L0(K, D, mp1, Vp, sig)
 

@@ -177,7 +177,6 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
 
 build_full_test_function_matrices_ssl <- function(U, tt, control) {
 
-  dt <- mean(diff(tt))
   mp1 <- nrow(U)
 
   if (!is.null(control$fixed_radius)) {
@@ -202,11 +201,8 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
 
   K_interior <- nrow(V)
   K_bl       <- 0L
-  bl_phi_t1  <- NULL
-  bl_phi_tM  <- NULL
-  # SSL uses the "sum" convention (no dt in V), so the IBP boundary terms and
-  # the EM correction (both absolute units) need to be scaled by 1/dt to match.
-  bdry_scale <- 1.0 / dt
+  bl_phi_t1  <- NULL   # (K_bl x 5) raw phi^(0..4) at t_1, per BL test function
+  bl_phi_tM  <- NULL   # (K_bl x 5) raw phi^(0..4) at t_M
 
   if (isTRUE(control$include_boundary_layer)) {
     max_em_order <- 4L
@@ -219,6 +215,11 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
     names(bl_per_order) <- paste0("phi", 0:max_em_order)
     K_bl <- nrow(bl_per_order$phi0)
 
+    # Raw (un-trap-weighted) phi^(0..4) at the two boundaries: these are the
+    # boundary-term coefficient phi(t1)/phi(tM) and the higher derivatives the
+    # Euler-Maclaurin correction needs. The caller (build_wendy_problem) uses
+    # them to add the integration-by-parts boundary term and EM defect so the
+    # BL rows are an unbiased weak residual.
     bl_phi_t1 <- vapply(bl_per_order, function(B) B[, 1],   numeric(K_bl))
     bl_phi_tM <- vapply(bl_per_order, function(B) B[, mp1], numeric(K_bl))
     colnames(bl_phi_t1) <- colnames(bl_phi_tM) <- paste0("phi", 0:max_em_order)
@@ -235,19 +236,18 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
       B
     }
 
-    # Append BL rows in the SSL convention (no dt scaling on the integration
-    # block). The boundary terms and EM correction are still scaled by 1/dt via
-    # bdry_scale below to compensate for SSL's missing h.
+    # Append the boundary-layer rows. Like the interior rows these are in the
+    # raw (sum) convention; the caller applies the dt quadrature weight uniformly.
     V   <- rbind(V,   apply_trap_weights(bl_per_order$phi0))
     Vp  <- rbind(Vp,  apply_trap_weights(bl_per_order$phi1))
     Vpp <- rbind(Vpp, apply_trap_weights(bl_per_order$phi2))
   }
 
   return(list(
-    V = V, V_prime = Vp, V_pp = Vpp, radius_c = radius_c, rc_errors = rc_errors, rc_radii = rc_radii,
+    V = V, V_prime = Vp, V_pp = Vpp, radius_c = radius_c,
+    rc_errors = rc_errors, rc_radii = rc_radii,
     K_interior = K_interior, K_bl = K_bl,
-    bl_phi_t1 = bl_phi_t1, bl_phi_tM = bl_phi_tM,
-    bdry_scale = bdry_scale
+    bl_phi_t1 = bl_phi_t1, bl_phi_tM = bl_phi_tM
   ))
 }
 
@@ -375,17 +375,22 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
 
   inv_s <- 1.0 / singular_values[1:K]
 
+  # Raw (sum-convention) test-function matrices: the dt quadrature weight is NOT
+  # applied here. The caller (build_wendy_problem) applies it uniformly so that
+  # "sample the test functions" and "weight the quadrature" stay separate
+  # concerns. (Whether dt is applied is immaterial to the SVD truncation, which
+  # operates on the un-scaled Gram matrix above.)
   if (left_gram) {
     U_K     <- eg$vectors[, 1:K, drop = FALSE]        # top-K left singular vectors
-    V_final <- (t(crossprod(V_, U_K)) * inv_s) * dt   # right vectors v_k = V^T u_k / s_k (rows)
+    V_final <- t(crossprod(V_, U_K)) * inv_s          # right vectors v_k = V^T u_k / s_k (rows)
     U_T     <- t(U_K)
   } else {
     V_K     <- eg$vectors[, 1:K, drop = FALSE]        # top-K right singular vectors
-    V_final <- t(V_K) * dt
+    V_final <- t(V_K)
     U_T     <- t(V_ %*% V_K) * inv_s                  # left vectors u_k = V v_k / s_k (rows)
   }
   UV <- U_T %*% V_prime_
-  V_prime_final <- UV * inv_s * dt
+  V_prime_final <- UV * inv_s
 
   return(list(
     V = V_final,

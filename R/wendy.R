@@ -159,6 +159,18 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     dF_dt_   <- build_fn(dF_sym,  vars)  # d f/dt   (total, along trajectory)
     d2F_dt2_ <- build_fn(d2F_sym, vars)  # d²f/dt²  (total)
     d3F_dt3_ <- build_fn(d3F_sym, vars)  # d³f/dt³  (total)
+
+    # ∇ₚ of the total time derivatives, for the ANALYTIC Jacobian of the
+    # boundary-layer Euler-Maclaurin correction (same (d,j) d-fast layout as J_p).
+    # Only needed for the SSL boundary-layer augmentation, and differentiating the
+    # 3rd time derivative w.r.t. p is non-trivial (esp. 3-D systems like Lorenz),
+    # so build these lazily rather than on every MLE solve.
+    dF_dt_p_ <- d2F_dt2_p_ <- d3F_dt3_p_ <- NULL
+    if (isTRUE(control$include_boundary_layer)) {
+      dF_dt_p_   <- build_fn(compute_symbolic_jacobian(dF_sym,  p_expr), vars)  # ∇ₚ d f/dt
+      d2F_dt2_p_ <- build_fn(compute_symbolic_jacobian(d2F_sym, p_expr), vars)  # ∇ₚ d²f/dt²
+      d3F_dt3_p_ <- build_fn(compute_symbolic_jacobian(d3F_sym, p_expr), vars)  # ∇ₚ d³f/dt³
+    }
   }
 
   estimated_sd <- if (!is.na(control$noise_sd)) {
@@ -208,7 +220,9 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
 
     D <- ncol(wendy_data$U)
 
-    wendy_problem <- build_wendy_problem(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control)
+    wendy_problem <- build_wendy_problem(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, lip, sig, control,
+                                         dF_dt_ = dF_dt_, d2F_dt2_ = d2F_dt2_, d3F_dt3_ = d3F_dt3_,
+                                         dF_dt_p_ = dF_dt_p_, d2F_dt2_p_ = d2F_dt2_p_, d3F_dt3_p_ = d3F_dt3_p_)
 
     system <- build_wendy_system(wendy_problem, lip, control$diag_reg, control$use_interp_uncertainty)
 
@@ -318,6 +332,20 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     res$data <- result$data
   }
   
+  # Fisher parameter covariance (Gᵀ S⁻¹ G)⁻¹: feeds the parameter channel of
+  # cov_u0 in estimate_IC (law of total variance) and the ERTS parameter-
+  # uncertainty fold.
+  C_hat <- if (method != "OE" && !is.null(res$phat) &&
+               (control$estimate_IC ||
+                (control$estimate_trajectory && identical(control$smoother, "erts")))) {
+    tryCatch({
+      Sp <- res$S(res$phat)
+      Gp <- if (lip) res$G else res$Jp_r(res$phat)
+      R  <- chol(Sp)
+      solve(crossprod(Gp, backsolve(R, forwardsolve(t(R), Gp))))
+    }, error = function(e) NULL)
+  } else NULL
+
   boundary_state <- if (control$estimate_IC && method != "OE") {
      if (identical(control$test_fun_type, "SSL")) {
       r_c_bl <- res$rc
@@ -327,19 +355,11 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     # n_bl deliberately omitted: estimate_IC uses its own max(3, ceiling(r_c/8))
     # heuristic. control$n_bl drives only the SSL boundary-layer augmentation.
     estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl,
-                J_u = J_u, sigma = estimated_sd)
+                J_u = J_u, sigma = estimated_sd, param_cov = C_hat)
   } else NULL
 
   state <- if (control$estimate_trajectory && method != "OE") {
     if (identical(control$smoother, "erts") && !is.null(res$phat)) {
-      # Parameter covariance for ERTS process-noise input: Fisher form
-      # (Gᵀ S⁻¹ G)⁻¹.
-      C_hat <- tryCatch({
-        Sp <- res$S(res$phat)
-        Gp <- if (lip) res$G else res$Jp_r(res$phat)
-        R  <- chol(Sp)
-        solve(crossprod(Gp, backsolve(R, forwardsolve(t(R), Gp))))
-      }, error = function(e) NULL)
       # Only seed the filter from u0hat when u0 was actually optimised in
       # estimate_IC (cov_u0 non-NULL); otherwise u0hat is just the noisy obs.
       u0_init <- if (!is.null(boundary_state$cov_u0)) boundary_state$u0hat else NULL

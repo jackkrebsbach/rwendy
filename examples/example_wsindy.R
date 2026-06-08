@@ -64,9 +64,7 @@ recon <- t(vapply(i, function(m) ws_lv$f(dat$U[m, ], ws_lv$p0, dat$tt[m]), numer
 stopifnot(max(abs(recon - (ws_lv$Theta %*% ws_lv$W)[i, ])) < 1e-8)
 stopifnot(length(ws_lv$p0) == sum(ws_lv$W != 0))
 
-# ==============================================================================
 # 2. Lorenz (reference setup, x0 = (-8, 7, 27)): cross-term recovery
-# ==============================================================================
 f_lorenz <- function(u, p, t) {
   c(p[1] * (u[2] - u[1]),
     u[1] * (p[2] - u[3]) - u[2],
@@ -90,9 +88,7 @@ stopifnot(identical(unname(colSums(ws_lor$W != 0)), c(2, 3, 2)))       # 7-term 
 cat(sprintf("\nLorenz discovery rel_err = %.4f (noise 5%%)\n",
             rel_err(support_coefs(ws_lor, truth_lorenz), w_lorenz)))
 
-# ==============================================================================
 # 3. Logistic (D = 1): u' = u - 0.1*u^2
-# ==============================================================================
 f_log <- function(u, p, t) c(p[1] * u[1] - p[2] * u[1]^2)
 truth_log <- data.frame(label = c("u1", "u1^2"), state = c(1, 1))
 
@@ -109,9 +105,7 @@ cat(sprintf("\nLogistic discovery rel_err = %.4f (noise 5%%)\n",
 ws_log_raw <- solveWSINDy(dat$U, dat$tt, control = list(wsindy_rescale = FALSE))
 stopifnot(identical(which(ws_log_raw$W != 0), which(ws_log$W != 0)))
 
-# ==============================================================================
 # 4. MSTLS sanity on a synthetic system with known sparse solution
-# ==============================================================================
 K <- 60; J <- 12
 G_syn <- matrix(rnorm(K * J), K, J)
 w_true <- numeric(J); w_true[c(2, 7)] <- c(1.5, -0.8)
