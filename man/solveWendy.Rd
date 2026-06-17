@@ -23,9 +23,13 @@ and then refined through the normal WENDy pipeline; the returned object
 carries the discovery fit in \code{$wsindy}.}
 
 \item{U}{Numeric matrix. Rows are observed states at the time points in \code{tt};
-columns are state variables.}
+columns are state variables. Missing observations (\code{NA}) are permitted
+and are filled up front by per-column linear interpolation from the
+surrounding observed values (with a warning); \code{NA} beyond the observed
+range is filled by constant extension of the nearest observed value.}
 
-\item{tt}{Numeric vector. Time points corresponding to rows of \code{U}.}
+\item{tt}{Numeric vector. Time points corresponding to rows of \code{U};
+must be complete (no \code{NA}).}
 
 \item{p0}{Numeric vector or matrix. Initial parameter guess. Used by MLE,
 nonlinear least squares, and OE solvers; computed automatically when \code{NULL}.}

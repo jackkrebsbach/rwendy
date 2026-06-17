@@ -817,8 +817,16 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 #'        + S_k \, \hat C \, S_k^T,}
 #' splitting trajectory uncertainty into the conditional smoother posterior
 #' (data noise + model/discretization error) and the contribution of parameter
-#' uncertainty. The conditional pass uses a small model-error process noise
-#' \eqn{Q = (0.1\,\sigma)^2 I_D}; parameter uncertainty is folded in separately
+#' uncertainty. The conditional pass injects the RK4 \emph{discretization} error
+#' as predict-step process noise, estimated per step by step-doubling
+#' (Richardson): with \eqn{y_1} the single full RK4 step and \eqn{y_2} two half
+#' steps, the local truncation error of \eqn{y_1} is
+#' \eqn{e_k = (16/15)(y_1 - y_2)} and \eqn{Q_k = \mathrm{diag}(e_k^2)}. This is
+#' \eqn{\sigma}-independent (discretization error depends on \eqn{\Delta t} and
+#' the dynamics, not the measurement noise), vanishes as \eqn{O(T\,\Delta t^4)}
+#' under grid refinement, and is active only when the grid under-resolves
+#' \eqn{f}; it replaces the earlier ad-hoc \eqn{Q = (0.1\,\sigma)^2 I_D}.
+#' Parameter uncertainty is folded in separately
 #' and \emph{coherently} via the sensitivity
 #' \eqn{S_k = \partial u_k^\star / \partial \hat p}, obtained by central
 #' differences of the smoothed mean over re-runs at \eqn{\hat p \pm h e_j}, with
@@ -874,15 +882,28 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
   noise_sd <- mean(noise_sd)
   R_obs    <- noise_sd^2 * I_D
 
-  # Model/discretization process noise for the conditional pass, modelled as a
-  # continuous-time diffusion: the per-step covariance is q_c * dt_k (a rate,
-  # state^2 per unit time), so the total injected over [0,T] is q_c*T and is
-  # INVARIANT to the sampling density. A constant per-step Q instead grows the
-  # total budget with the number of steps, letting a finer grid chase the noise
-  # (high-frequency wiggle that does not shrink as data is added). Parameter
-  # uncertainty is folded in coherently afterwards (law of total variance), not
-  # injected here as per-step process noise.
-  q_c <- (noise_sd * 0.1)^2
+  # Conditional-pass process noise = the RK4 DISCRETIZATION error of the predict
+  # step, estimated per step by step-doubling (Richardson): with y1 the single
+  # full RK4 step and y2 two half steps, the local truncation error of y1 is
+  # e_k = (16/15)(y1 - y2) (order p = 4, factor 2^p/(2^p - 1)), so Q_k =
+  # diag(e_k^2). Unlike the earlier (0.1 sigma)^2 heuristic this is
+  # sigma-INDEPENDENT -- discretization error depends on dt and the dynamics,
+  # not the measurement noise -- vanishes as O(T dt^4) under grid refinement (so
+  # a finer grid cannot chase the noise), and is active only when the grid
+  # under-resolves f. A tiny floor keeps Q_k strictly PD. Parameter uncertainty
+  # is folded in coherently afterwards (law of total variance), not here.
+  q_floor <- 1e-12
+
+  # One RK4 step of f(p_use, ., .) over h; shared by the predict mean and the
+  # step-doubling local-error estimate (called three times per step: one full,
+  # two half).
+  rk4_step <- function(p_use, uk, tk, h) {
+    k1 <- as.vector(f_(matrix(c(p_use, uk,            tk        ), ncol = 1)))
+    k2 <- as.vector(f_(matrix(c(p_use, uk + .5*h*k1, tk + .5*h ), ncol = 1)))
+    k3 <- as.vector(f_(matrix(c(p_use, uk + .5*h*k2, tk + .5*h ), ncol = 1)))
+    k4 <- as.vector(f_(matrix(c(p_use, uk +    h*k3, tk +    h ), ncol = 1)))
+    uk + (h / 6) * (k1 + 2*k2 + 2*k3 + k4)
+  }
 
   u0 <- if (!is.null(u0_init)) as.vector(u0_init) else as.vector(U[1, ])
   P0 <- if (!is.null(P0_init)) P0_init
@@ -908,17 +929,17 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
       dt_k <- tt[k + 1L] - tt[k]
       uk   <- u_filt[k, ]
 
-      k1 <- as.vector(f_(matrix(c(p_use, uk,                tt[k]          ), ncol = 1)))
-      k2 <- as.vector(f_(matrix(c(p_use, uk + 0.5*dt_k*k1, tt[k]+0.5*dt_k ), ncol = 1)))
-      k3 <- as.vector(f_(matrix(c(p_use, uk + 0.5*dt_k*k2, tt[k]+0.5*dt_k ), ncol = 1)))
-      k4 <- as.vector(f_(matrix(c(p_use, uk +     dt_k*k3, tt[k]+    dt_k  ), ncol = 1)))
-      u_pred[k + 1L, ] <- uk + (dt_k / 6) * (k1 + 2*k2 + 2*k3 + k4)
+      y1 <- rk4_step(p_use, uk, tt[k], dt_k)                  # full step = predict mean
+      yh <- rk4_step(p_use, uk, tt[k], dt_k / 2)              # step-doubling: two half
+      y2 <- rk4_step(p_use, yh, tt[k] + dt_k / 2, dt_k / 2)   #   steps for the error est.
+      u_pred[k + 1L, ] <- y1
+      e_k <- (16 / 15) * (y1 - y2)                            # RK4 local truncation error
 
       Ju_k <- matrix(as.vector(J_u(c(p_use, uk, tt[k]))), D, D)  # J[a, b] = df_a/du_b
       Fk   <- I_D + dt_k * Ju_k
       F_store[k,,] <- Fk
 
-      Pk_pred <- Fk %*% P_filt[k,,] %*% t(Fk) + (q_c * dt_k) * I_D
+      Pk_pred <- Fk %*% P_filt[k,,] %*% t(Fk) + diag(e_k^2 + q_floor, D)
       P_pred[k + 1L,,] <- Pk_pred
 
       Sk               <- Pk_pred + R_obs

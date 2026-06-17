@@ -202,7 +202,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   step  <- max(1, ceiling((radius_max - radius_min) / num_radii))
   hi    <- max(radius_max - 1L, radius_min)  # guard against collapsed range (very small mp1)
   radii <- seq(radius_min, hi, by = step)
-  # radii <- radii[1:min(50, length(radii))]
+  radii <- radii[1:min(50, length(radii))]
   
   errors  <- numeric(length(radii))
 
