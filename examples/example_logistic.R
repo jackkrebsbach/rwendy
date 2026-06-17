@@ -18,7 +18,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1/10)
 u0 <- c(0.1)
 p0 <- c(1.25, 0.25)
-npoints <- 64
+npoints <- 128
 t_span <- c(0.0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -27,7 +27,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rto
 
 # set.seed(8675309)
 
-nr <- 0.25
+nr <- 0.15
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
