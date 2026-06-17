@@ -27,7 +27,10 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.1
+nr <- 0.05
+
+set.seed(8675309 + 3)
+
 U_vec <- as.vector(sol[,-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 noise <- matrix(
@@ -38,8 +41,11 @@ U <- sol[, -1] + noise
 # U[,1] <- mean(U[,2])
 tt <- matrix(sol[, 1], ncol = 1)
 
-res1  <- solveWendy(f, U, tt, method = "IRLS", control = list(wsindy_rescale = TRUE))
-res2  <- solveWendy(f, U, tt, method = "MLE")
+res1  <- solveWendy(f, U, tt, method = "IRLS", 
+          control = list(include_boundary_layer = FALSE)
+        )
+
+# res2  <- solveWendy(f, U, tt, method = "MLE")
 
 plot(tt, U[,1], col = adjustcolor("brown", alpha.f = 0.3), cex = 0.5,
    ylab = "State u₁ & u₂",
@@ -53,6 +59,6 @@ cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res1$phat), collapse = ", "),
             rel_err(res1$phat, p_star)))
 
-cat(sprintf("\np̂_MLE   = [%s]  rel_err = %.4f\n",
-            paste(sprintf("%.4f", res2$phat), collapse = ", "),
-            rel_err(res2$phat, p_star)))
+# cat(sprintf("\np̂_MLE   = [%s]  rel_err = %.4f\n",
+#             paste(sprintf("%.4f", res2$phat), collapse = ", "),
+#             rel_err(res2$phat, p_star)))

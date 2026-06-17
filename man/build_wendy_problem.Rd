@@ -15,7 +15,13 @@ build_wendy_problem(
   J,
   lip,
   sig,
-  control
+  control,
+  dF_dt_ = NULL,
+  d2F_dt2_ = NULL,
+  d3F_dt3_ = NULL,
+  dF_dt_p_ = NULL,
+  d2F_dt2_p_ = NULL,
+  d3F_dt3_p_ = NULL
 )
 }
 \arguments{

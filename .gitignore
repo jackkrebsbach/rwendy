@@ -9,6 +9,8 @@ data
 .claude
 benchmarks
 tmp_*
+tmp/
+examples/validation/
 
 /.quarto/
 

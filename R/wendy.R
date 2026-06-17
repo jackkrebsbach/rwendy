@@ -337,7 +337,8 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
   # uncertainty fold.
   C_hat <- if (method != "OE" && !is.null(res$phat) &&
                (control$estimate_IC ||
-                (control$estimate_trajectory && identical(control$smoother, "erts")))) {
+                (control$estimate_trajectory &&
+                 control$smoother %in% c("erts", "gls", "coupled")))) {
     tryCatch({
       Sp <- res$S(res$phat)
       Gp <- if (lip) res$G else res$Jp_r(res$phat)
@@ -352,14 +353,25 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     } else {
       r_c_bl <- compute_r_c_hat(U, tt, control$S, control$p)$rc
     }
-    # n_bl deliberately omitted: estimate_IC uses its own max(3, ceiling(r_c/8))
-    # heuristic. control$n_bl drives only the SSL boundary-layer augmentation.
+    # n_bl deliberately omitted: estimate_IC (combine = "gls" default) selects
+    # (r_c, n_bl) a priori by minimum no-EM GLS variance, seeded by r_c_bl.
+    # control$n_bl drives only the SSL boundary-layer augmentation.
     estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl,
                 J_u = J_u, sigma = estimated_sd, param_cov = C_hat)
   } else NULL
 
   state <- if (control$estimate_trajectory && method != "OE") {
-    if (identical(control$smoother, "erts") && !is.null(res$phat)) {
+    if (identical(control$smoother, "gls") && !is.null(res$phat)) {
+      # Pointwise weak-form GLS local smoother: calibrated per-anchor
+      # covariances, no process-noise tuning; see ?wendy_gls_state.
+      wendy_gls_state(U, f_, J_u, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat,
+                      sigma = estimated_sd, param_cov = C_hat)
+    } else if (identical(control$smoother, "coupled") && !is.null(res$phat)) {
+      # Coupled weak-form global system: one GLS in all M*D unknowns coupled
+      # by two-point weak equations; see ?wendy_coupled_state.
+      wendy_coupled_state(U, f_, J_u, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat,
+                          sigma = estimated_sd, param_cov = C_hat)
+    } else if (identical(control$smoother, "erts") && !is.null(res$phat)) {
       # Only seed the filter from u0hat when u0 was actually optimised in
       # estimate_IC (cov_u0 non-NULL); otherwise u0hat is just the noisy obs.
       u0_init <- if (!is.null(boundary_state$cov_u0)) boundary_state$u0hat else NULL
