@@ -61,14 +61,7 @@
 #'   by interpolation uncertainty \eqn{W_{ii} = var_{ii} / \sigma^2}.
 #' @param smoother Character. State smoother used by
 #'   \code{estimate_trajectory}: \code{"gp"} (Matern 5/2), \code{"erts"}
-#'   (EKF/RTS), \code{"gls"} (pointwise weak-form GLS local smoother:
-#'   calibrated per-anchor covariances, no process-noise tuning knob, more
-#'   robust than the EKF covariance propagation on chaotic/coarse grids, at
-#'   higher compute; see \code{\link{wendy_gls_state}}), or \code{"coupled"}
-#'   (one GLOBAL weak-form GLS system coupling all time points through
-#'   two-point weak equations: smoothest and strongest on chaotic coarse
-#'   grids, approaches the exact-dynamics CRLB at the trajectory edges, dense
-#'   \eqn{O((MD)^3)} solve; see \code{\link{wendy_coupled_state}}).
+#'   (EKF/RTS)
 #' @param apply_fn Function. Custom apply for multistart, e.g.
 #'   \code{parallel::mclapply} or \code{future.apply::future_lapply};
 #'   \code{NULL} uses \code{lapply}.
