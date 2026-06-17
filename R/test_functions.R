@@ -138,6 +138,60 @@ build_boundary_layer_block <- function(test_function, tt, radius, order = 0,
   V
 }
 
+# Boundary-layer augmentation shared by the SSL and MSG builders.
+#
+# Builds the left+right BL blocks at orders 0..4 for a single radius, applies the
+# trapezoid endpoint weight (x0.5 at columns 1 and mp1) to the orders 0..2 blocks
+# that get appended as rows of V / V_prime / V_pp, and extracts the RAW (un-trap-
+# weighted) phi^(0..4) at the two boundaries that the integration-by-parts
+# boundary term (phi0) and the Euler-Maclaurin correction (phi0..4) consume.
+#
+# Both builders append these rows AFTER their interior basis. The interior rows
+# vanish at the endpoint columns -- raw SSL rows by construction, and MSG SVD
+# modes because they are linear combinations of such rows -- so the appended BL
+# block is the only carrier of boundary content, and it is never subject to the
+# MSG SVD truncation. The downstream consumer (build_wendy_problem) folds the
+# boundary term into V_prime (-> b and L0) and adds the EM defect to g / Jp_r.
+#
+# n_bl: per-side BL count. Defaults to control$n_bl (NULL -> build_boundary_layer_block's
+# own radius-based heuristic). The MSG builder passes an explicit value capped against
+# K_interior so the boundary layer cannot dominate the interior basis.
+#
+# Returns: V0/V1/V2 (trap-weighted BL rows for orders 0/1/2), K_bl, and the
+# (K_bl x 5) raw endpoint matrices bl_phi_t1 / bl_phi_tM with columns phi0..phi4.
+build_boundary_layer_augmentation <- function(test_function, tt, radius, control, n_bl = control$n_bl) {
+  mp1 <- length(tt)
+  max_em_order <- 4L
+
+  bl_per_order <- lapply(0:max_em_order, function(ord) {
+    rbind(
+      build_boundary_layer_block(test_function, tt, radius, order = ord, side = "left",  n_bl = n_bl),
+      build_boundary_layer_block(test_function, tt, radius, order = ord, side = "right", n_bl = n_bl)
+    )
+  })
+  names(bl_per_order) <- paste0("phi", 0:max_em_order)
+  K_bl <- nrow(bl_per_order$phi0)
+
+  bl_phi_t1 <- vapply(bl_per_order, function(B) B[, 1],   numeric(K_bl))
+  bl_phi_tM <- vapply(bl_per_order, function(B) B[, mp1], numeric(K_bl))
+  colnames(bl_phi_t1) <- colnames(bl_phi_tM) <- paste0("phi", 0:max_em_order)
+
+  apply_trap_weights <- function(B) {
+    B[, 1]   <- B[, 1]   * 0.5
+    B[, mp1] <- B[, mp1] * 0.5
+    B
+  }
+
+  list(
+    V0 = apply_trap_weights(bl_per_order$phi0),
+    V1 = apply_trap_weights(bl_per_order$phi1),
+    V2 = apply_trap_weights(bl_per_order$phi2),
+    K_bl = K_bl,
+    bl_phi_t1 = bl_phi_t1,
+    bl_phi_tM = bl_phi_tM
+  )
+}
+
 find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, sub_sample_rate = 2) {
 
   D   <- ncol(U)
@@ -205,42 +259,18 @@ build_full_test_function_matrices_ssl <- function(U, tt, control) {
   bl_phi_tM  <- NULL   # (K_bl x 5) raw phi^(0..4) at t_M
 
   if (isTRUE(control$include_boundary_layer)) {
-    max_em_order <- 4L
-    bl_per_order <- lapply(0:max_em_order, function(ord) {
-      rbind(
-        build_boundary_layer_block(psi_p, tt, radius_c, order = ord, side = "left",  n_bl = control$n_bl),
-        build_boundary_layer_block(psi_p, tt, radius_c, order = ord, side = "right", n_bl = control$n_bl)
-      )
-    })
-    names(bl_per_order) <- paste0("phi", 0:max_em_order)
-    K_bl <- nrow(bl_per_order$phi0)
-
-    # Raw (un-trap-weighted) phi^(0..4) at the two boundaries: these are the
-    # boundary-term coefficient phi(t1)/phi(tM) and the higher derivatives the
-    # Euler-Maclaurin correction needs. The caller (build_wendy_problem) uses
-    # them to add the integration-by-parts boundary term and EM defect so the
-    # BL rows are an unbiased weak residual.
-    bl_phi_t1 <- vapply(bl_per_order, function(B) B[, 1],   numeric(K_bl))
-    bl_phi_tM <- vapply(bl_per_order, function(B) B[, mp1], numeric(K_bl))
-    colnames(bl_phi_t1) <- colnames(bl_phi_tM) <- paste0("phi", 0:max_em_order)
-
-    # Apply trapezoid endpoint weights (x0.5 at columns 1 and mp1) to BL rows
-    # only. This is needed so that V_BL %*% F matches the trapezoid sum that
-    # the Euler-Maclaurin correction is derived for; without it the residual
-    # picks up an O(h) artifact from the missing endpoint half-weight. Interior
-    # SSL phi vanishes at the endpoints, so the same operation on interior rows
-    # would be a no-op (we skip it).
-    apply_trap_weights <- function(B) {
-      B[, 1]   <- B[, 1]   * 0.5
-      B[, mp1] <- B[, mp1] * 0.5
-      B
-    }
+    # Build + trap-weight the BL rows and extract the raw endpoint derivatives
+    # the boundary term / EM correction need (see build_boundary_layer_augmentation).
+    bl        <- build_boundary_layer_augmentation(psi_p, tt, radius_c, control)
+    K_bl      <- bl$K_bl
+    bl_phi_t1 <- bl$bl_phi_t1
+    bl_phi_tM <- bl$bl_phi_tM
 
     # Append the boundary-layer rows. Like the interior rows these are in the
     # raw (sum) convention; the caller applies the dt quadrature weight uniformly.
-    V   <- rbind(V,   apply_trap_weights(bl_per_order$phi0))
-    Vp  <- rbind(Vp,  apply_trap_weights(bl_per_order$phi1))
-    Vpp <- rbind(Vpp, apply_trap_weights(bl_per_order$phi2))
+    V   <- rbind(V,   bl$V0)
+    Vp  <- rbind(Vp,  bl$V1)
+    Vpp <- rbind(Vpp, bl$V2)
   }
 
   return(list(
@@ -318,33 +348,50 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   V_ <- build_full_test_function_matrix(test_fun, tt, radii_filtered, order = 0)
   V_prime_ <- build_full_test_function_matrix(test_fun, tt, radii_filtered, order = 1)
 
+  bl_radius <- max(radii_filtered)
+
+  make_bl <- function() {
+    if (!isTRUE(control$include_boundary_layer)) return(NULL)
+    n_side <- control$n_bl
+    if (is.null(n_side)) n_side <- max(3L, as.integer(ceiling(bl_radius / 4)))
+    build_boundary_layer_augmentation(test_fun, tt, bl_radius, control, n_bl = n_side)
+  }
+
   if (!compute_svd) {
+    bl     <- make_bl()
+    V_out  <- V_
+    Vp_out <- V_prime_
+    if (!is.null(bl)) {
+      V_out  <- rbind(V_out,  bl$V0)
+      Vp_out <- rbind(Vp_out, bl$V1)
+    }
     return(list(
-      V = V_,
-      V_prime = V_prime_,
+      V = V_out,
+      V_prime = Vp_out,
       radii = radii_filtered,
       min_radius_errors = min_radius_errors,
       min_radius_radii = min_radius_radii,
       min_radius_ix = min_radius_ix,
-      min_radius = min_radius
+      min_radius = min_radius,
+      K_interior = nrow(V_),
+      K_bl       = if (!is.null(bl)) bl$K_bl      else 0L,
+      bl_phi_t1  = if (!is.null(bl)) bl$bl_phi_t1 else NULL,
+      bl_phi_tM  = if (!is.null(bl)) bl$bl_phi_tM else NULL
     ))
   }
 
-  k_full <- nrow(V_)
+  bl           <- make_bl()
+  V_pool       <- if (!is.null(bl)) rbind(V_,       bl$V0) else V_
+  V_prime_pool <- if (!is.null(bl)) rbind(V_prime_, bl$V1) else V_prime_
+  n_int        <- nrow(V_)
+  n_bl_pool    <- if (!is.null(bl)) bl$K_bl else 0L
+  bl_pool_idx  <- if (n_bl_pool > 0L) (n_int + 1L):(n_int + n_bl_pool) else integer(0)
 
-  # cat(sprintf("  K Full: %d\n", k_full))
-  # cat(sprintf(" Computing SVD"))
-
-  # cat("Computing SVD")
+  k_full <- nrow(V_pool)
 
   # Truncated SVD via the smaller Gram matrix is about 1.5x faster than a full svd()
-  # Eigendecomposing V V^T (or V^T V when V is wide) yields all singular values
-  # plus one set of singular vectors; the other set is derived for the kept top-K
-  # modes only. The downstream GLS fit is invariant to per-mode sign flips and to
-  # degenerate-subspace rotations (V and Vp rotate together), so this matches the
-  # full-SVD result to optimizer tolerance.
-  left_gram       <- (k_full <= mp1)
-  eg              <- eigen(if (left_gram) tcrossprod(V_) else crossprod(V_), symmetric = TRUE)
+  left_gram <- (k_full <= mp1)
+  eg <- eigen(if (left_gram) tcrossprod(V_pool) else crossprod(V_pool), symmetric = TRUE)
   singular_values <- sqrt(pmax(eg$values, 0))
 
   sum_singular_values <- sum(singular_values)
@@ -367,30 +414,36 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   if (k1 == -1) k1 <- .Machine$integer.max
   if (k2 == -1) k2 <- .Machine$integer.max
 
-  K <- min(k1, k2, k_max)
+  K0 <- min(k1, k2, k_max)
 
-  # cat(sprintf("  Condition Number is now: %.4f\n", condition_numbers[K]))
-  # cat(sprintf("  Info Number is now: %.4f\n", info_numbers[K]))
-  # cat(sprintf("  K is: %d\n", K))
-
+  # Truncation is purely spectral: K is set by the energy / condition-number
+  # cutoffs above. Whatever boundary content survives in the top-K modes is what
+  # the boundary correction acts on; there is no special-casing to retain a
+  # "boundary mode", consistent with boundary content not partitioning cleanly.
+  K <- K0
   inv_s <- 1.0 / singular_values[1:K]
 
-  # Raw (sum-convention) test-function matrices: the dt quadrature weight is NOT
-  # applied here. The caller (build_wendy_problem) applies it uniformly so that
-  # "sample the test functions" and "weight the quadrature" stay separate
-  # concerns. (Whether dt is applied is immaterial to the SVD truncation, which
-  # operates on the un-scaled Gram matrix above.)
   if (left_gram) {
     U_K     <- eg$vectors[, 1:K, drop = FALSE]        # top-K left singular vectors
-    V_final <- t(crossprod(V_, U_K)) * inv_s          # right vectors v_k = V^T u_k / s_k (rows)
+    V_final <- t(crossprod(V_pool, U_K)) * inv_s      # right vectors v_k = V^T u_k / s_k (rows)
     U_T     <- t(U_K)
   } else {
     V_K     <- eg$vectors[, 1:K, drop = FALSE]        # top-K right singular vectors
     V_final <- t(V_K)
-    U_T     <- t(V_ %*% V_K) * inv_s                  # left vectors u_k = V v_k / s_k (rows)
+    U_T     <- t(V_pool %*% V_K) * inv_s              # left vectors u_k = V v_k / s_k (rows)
   }
-  UV <- U_T %*% V_prime_
+  UV <- U_T %*% V_prime_pool
   V_prime_final <- UV * inv_s
+  K_bl            <- 0L
+  bl_phi_t1       <- NULL
+  bl_phi_tM       <- NULL
+  if (n_bl_pool > 0L) {
+    coef_bl   <- U_T[, bl_pool_idx, drop = FALSE] * inv_s     # K x n_bl_pool
+    bl_phi_t1 <- coef_bl %*% bl$bl_phi_t1                     # K x 5 (phi0..phi4)
+    bl_phi_tM <- coef_bl %*% bl$bl_phi_tM
+    colnames(bl_phi_t1) <- colnames(bl_phi_tM) <- colnames(bl$bl_phi_t1)
+    K_bl <- K
+  }
 
   return(list(
     V = V_final,
@@ -403,7 +456,14 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
     singular_values = singular_values[1:K],
     condition_numbers = condition_numbers[1:K],
     info_numbers = info_numbers[1:K],
-    K = K
+    K = K,
+    # BL rows are mixed into the SVD pool, so there is no separate interior block:
+    # all K modes carry the exact boundary correction (K_interior = 0, K_bl = K),
+    # and build_wendy_problem's bl_rows = K_interior + 1:K_bl resolves to 1:K.
+    K_interior      = 0L,
+    K_bl            = K_bl,
+    bl_phi_t1       = bl_phi_t1,
+    bl_phi_tM       = bl_phi_tM
   ))
 }
 

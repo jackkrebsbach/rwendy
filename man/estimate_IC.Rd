@@ -19,7 +19,11 @@ estimate_IC(
   n_bl = NULL,
   max_iter = 20L,
   tol = 1e-12,
-  em_order = c(4L, 2L)
+  em_order = c(4L, 2L),
+  combine = c("gls", "ols"),
+  r_c_grid = NULL,
+  n_bl_grid = NULL,
+  debias = TRUE
 )
 }
 \arguments{
@@ -32,14 +36,15 @@ evaluators built from the symbolic engine.}
 
 \item{p}{Numeric parameter vector \eqn{\hat\theta} (held fixed).}
 
-\item{r_c}{Integer; left BL window half-width.}
+\item{r_c}{Integer; left BL window half-width. Under \code{combine = "gls"}
+with \code{n_bl = NULL} it seeds the design grid (see \code{r_c_grid});
+otherwise it is used as given.}
 
 \item{J_u}{Callable state Jacobian \eqn{\partial f/\partial u}
 (\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
 \eqn{[a,b] = \partial f_a/\partial u_b}). Used together with \code{sigma}
-so that \code{cov_u0} is the noise-channel propagation
-\eqn{\sum_m DU_m\,\mathrm{diag}(\sigma^2)\,DU_m^T} rather than the
-over-conservative LS-residual variance.}
+to build the GLS weights and the noise-channel propagation
+\code{cov_u0} rather than the over-conservative LS-residual variance.}
 
 \item{sigma}{Data-noise standard deviation, scalar or length-\eqn{D} (per
 state), used to scale the noise-channel \code{cov_u0}.}
@@ -51,14 +56,32 @@ state), used to scale the noise-channel \code{cov_u0}.}
 (the explained part of the law of total variance); see Details in the
 covariance comments below.}
 
-\item{n_bl}{Optional integer; number of left BL test functions
-(default \code{max(3, ceiling(r_c/8))}). Kept small on purpose: a small
-count with a wide placement \code{step} is more efficient than many
-test functions clustered near the boundary (see examples/validation/).}
+\item{n_bl}{Optional integer; number of left BL test functions. When
+\code{NULL} (default) and \code{combine = "gls"}, both \code{r_c} and
+\code{n_bl} are selected by the a-priori minimum-variance design sweep;
+when \code{NULL} under \code{combine = "ols"} the legacy heuristic
+\code{max(3, ceiling(r_c/8))} applies (small count, wide placement --
+under the unweighted combine, clustered test functions inflate
+Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value
+always skips the sweep.}
 
 \item{max_iter, tol}{Fixed-point iteration controls.}
 
 \item{em_order}{Either 2 or 4.}
+
+\item{combine}{\code{"gls"} (default) for the minimum-variance GLS combine
+of the BL equations, or \code{"ols"} for the legacy unweighted combine.
+GLS requires a valid \code{sigma} (and \code{J_u}) to build
+\eqn{\Omega}; it degrades to \code{"ols"} otherwise.}
+
+\item{r_c_grid, n_bl_grid}{Optional integer vectors of design candidates for
+the a-priori sweep (defaults \code{c(1, 2, 4) * r_c} capped at
+\code{floor((M-1)/2)} and deduped, and \code{c(3, 8, 16)}). Only used
+when \code{combine = "gls"} and \code{n_bl} is \code{NULL}.}
+
+\item{debias}{Logical (default \code{TRUE}). On the GLS path, subtract the
+analytic \eqn{O(\sigma^2)} bias (both channels; see Details). Ignored on
+the OLS path and on diverged solves.}
 }
 \value{
 Named list with \code{U_hat} (U with row 1 replaced by
@@ -75,12 +98,18 @@ Named list with \code{U_hat} (U with row 1 replaced by
   \code{NULL} when not computed), \code{cov_method}
   (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
   \code{"+param"} suffix when the parameter channel is included, or
-  \code{"diverged"}), plus \code{iters},
+  \code{"diverged"}), plus \code{combine} (the combine actually used,
+  after any degradation), \code{design} (the design-sweep table with
+  columns \code{r_c}, \code{n_bl}, \code{obj}, \code{se_mean}, or
+  \code{NULL} when no sweep ran), \code{bias_o2} (the analytic
+  \eqn{O(\sigma^2)} bias estimate of the UNcorrected solve, length-D, or
+  \code{NULL} when not computed), \code{debias_applied} (whether
+  \code{bias_o2} was subtracted from \code{u0hat}), \code{iters},
   \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c},
   \code{n_bl}, \code{K_bl}, \code{em_order}.
 }
 \description{
-Iterates the linear least-squares system
+Iterates the linear system
 \deqn{B \, u_0^{(n+1)} = r_{\text{trap}} - \Delta_{EM}(u_0^{(n)})}
 where \eqn{B} is the column vector of \eqn{\psi_k(0)} for K_bl left BL
 test functions, \eqn{r_{\text{trap}}} is the fixed trapezoidal residual
@@ -94,4 +123,33 @@ EM(2) keeps only the \eqn{h^2/12} correction (\eqn{O(h^4)} accuracy);
 EM(4) adds \eqn{h^4/720} (\eqn{O(h^6)}). The LEFT-BL boundary term is
 \eqn{B u_0}; right-side EM contributions vanish because left BL test
 functions and all their derivatives are zero at \eqn{t=T}.
+
+The K_bl equations share the same noisy samples, so their errors are
+correlated with covariance \eqn{\Omega = X \mathrm{diag}(\sigma^2) X^T}
+(\eqn{X} the equation/data sensitivity). With the default
+\code{combine = "gls"} the equations are combined by GLS (the BLUE),
+\deqn{u_0 = (\mathbf{B}^T \Omega^{-1} \mathbf{B})^{-1}
+      \mathbf{B}^T \Omega^{-1} \mathrm{vec}(r),}
+which is minimum-variance among all linear combinations of the equations
+(validated at ~1.05-1.2x the window Cramer-Rao bound, vs up to ~25x for the
+unweighted combine; examples/validation/). Additionally, when \code{n_bl}
+is \code{NULL}, the design \code{(r_c, n_bl)} is selected a priori by
+sweeping a small grid and minimizing the no-EM GLS variance
+\eqn{(\mathbf{B}^T \Omega^{-1} \mathbf{B})^{-1}}, which depends only on the
+design, \code{sigma}, and \code{J_u} along the observed trajectory.
+\code{combine = "ols"} restores the legacy unweighted combine and its
+\code{max(3, ceiling(r_c/8))} count heuristic.
+
+The feasible GLS estimator carries an \eqn{O(\sigma^2)} bias with two
+partially cancelling channels (noise nonlinearity through \eqn{f''}, and
+the feedback of the noise into the weights through \eqn{\Omega(U)}); at
+5\% noise on aggressive designs the net bias is ~0.3-0.5 of the (much
+smaller) SE. With \code{debias = TRUE} (default) both channels are computed
+analytically (see \code{build_ic_bias_o2}) and subtracted, restoring
+centering at the cost of an \eqn{O(\sigma^3)} plug-in error (validated:
+bias/SD 0.3-0.4 -> ~0.03 on logistic at 5\% noise with unchanged SD;
+examples/validation/tmp_bias_debias_race.R). The correction is skipped
+(with \code{debias_applied = FALSE}) when any component exceeds twice its
+SE — a correction that large signals a regime where the expansion itself
+is suspect.
 }

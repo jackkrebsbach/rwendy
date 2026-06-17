@@ -105,6 +105,30 @@ cat(sprintf("\nLogistic discovery rel_err = %.4f (noise 5%%)\n",
 ws_log_raw <- solveWSINDy(dat$U, dat$tt, control = list(wsindy_rescale = FALSE))
 stopifnot(identical(which(ws_log_raw$W != 0), which(ws_log$W != 0)))
 
+# 3b. Nonlinear pendulum (trig + poly library): u1' = u2, u2' = -sin(u1).
+# sin(u1) is well approximated by monomials, so the combined library is
+# near-collinear and collapses under noise without l2 regularization. This is
+# the case the paper regularizes (gamma = sqrt(sigma_NR)); the default gamma = 0
+# over-selects, while wsindy_gamma = "auto" (gamma = sqrt(sigma_NR) estimated
+# from the data) recovers the exact support.
+f_pend <- function(u, p, t) c(u[2], -sin(u[1]))
+
+set.seed(8675309)
+dat <- simulate(f_pend, NULL, u0 = c(15 * pi / 16, 0),
+                t_eval = seq(0, 30, by = 0.01), nr = 0.05)
+
+ws_pend <- solveWSINDy(dat$U, dat$tt,
+                       control = list(wsindy_trig_freqs = c(1, 2), wsindy_gamma = "auto"))
+print(ws_pend)
+stopifnot(identical(unname(colSums(ws_pend$W != 0)), c(1, 1)))  # exact support via auto ridge
+cat(sprintf("\nPendulum: gamma_auto = %.3f (sigma_NR_hat = %.3f), recovered exact support\n",
+            ws_pend$gamma, ws_pend$sigma_NR_hat))
+
+# With the default (gamma = 0) the trig/poly collinearity wrecks support recovery
+ws_pend_g0 <- solveWSINDy(dat$U, dat$tt, control = list(wsindy_trig_freqs = c(1, 2)))
+cat(sprintf("Pendulum (gamma = 0, default): nonzero terms per eq = [%s] (over-selects)\n",
+            paste(colSums(ws_pend_g0$W != 0), collapse = ", ")))
+
 # 4. MSTLS sanity on a synthetic system with known sparse solution
 K <- 60; J <- 12
 G_syn <- matrix(rnorm(K * J), K, J)

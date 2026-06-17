@@ -44,7 +44,7 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   V  <- tf$V * dt
   Vp <- tf$V_prime * dt
 
-  # Boundary-layer integration-by-parts term, folded into Vp. BL test functions
+  # Boundary-layer integration-by-parts term get added to Vp. BL test functions
   # phi do NOT vanish at the endpoints, so the weak form u' = f leaves a boundary
   # term that makes the unbiased BL residual
   #   V F + Vp U + phi(t1) u(t1) - phi(tM) u(tM)   (+ EM quadrature defect in g).
@@ -55,7 +55,12 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
   # endpoint values are noisy observations shared across all BL rows, so when the
   # BL rows carry weight (coarse grids) the unmodelled correlated boundary noise
   # otherwise biases the GLS. phi values are physical units (no dt), matching Vp*dt.
-  # Interior rows have phi(t1) = phi(tM) = 0 and are untouched.
+  # bl_rows = K_interior + 1:K_bl. For SSL / MSG-without-SVD the BL rows are the
+  # appended block (interior rows have phi(t1)=phi(tM)=0 and are untouched). For
+  # MSG-with-SVD the BL rows are mixed into the SVD pool: there the builder reports
+  # K_interior=0, K_bl=K so bl_rows=1:K (every mode carries its exact endpoint
+  # value, computed by the SVD linear map), and modes with negligible boundary
+  # value add ~0.
   if (!is.null(tf$K_bl) && tf$K_bl > 0L) {
     bl_rows <- tf$K_interior + seq_len(tf$K_bl)
     Vp[bl_rows, 1]   <- Vp[bl_rows, 1]   + tf$bl_phi_t1[, "phi0"]

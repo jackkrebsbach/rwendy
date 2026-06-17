@@ -82,7 +82,8 @@ build_L <- function(U, tt, J_u, K, V, L0, sig, J){
     for (a in seq_len(D)) for (b in seq_len(D)) {
       rs <- (a - 1L) * K + seq_len(K)
       cs <- (b - 1L) * mp1 + seq_len(mp1)
-      L1[rs, cs] <- sig[a] * sweep(V, 2, J_F[, a, b], "*")
+      # sig[b]: the noise propagated through ∂f_a/∂u_b is state b's
+      L1[rs, cs] <- sig[b] * sweep(V, 2, J_F[, a, b], "*")
     }
     L1 + L0
   }
@@ -106,7 +107,7 @@ build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
     for (a in seq_len(D)) for (b in seq_len(D)) {
       rs <- (a - 1L) * K + seq_len(K)
       cs <- (b - 1L) * mp1 + seq_len(mp1)
-      out[rs, cs] <- sig[a] * sweep(V, 2, J_F[, a, b], "*")
+      out[rs, cs] <- sig[b] * sweep(V, 2, J_F[, a, b], "*")
     }
     out
   }
@@ -137,7 +138,7 @@ build_Jp_L <- function(U, tt, J_up, K, J, D, V, sig){
     for (j in seq_len(J)) for (a in seq_len(D)) for (b in seq_len(D)) {
       rs <- (a - 1L) * K + seq_len(K)
       cs <- (b - 1L) * mp1 + seq_len(mp1)
-      out[rs, cs, j] <- sig[a] * sweep(V, 2, H_F[, a, b, j], "*")
+      out[rs, cs, j] <- sig[b] * sweep(V, 2, H_F[, a, b, j], "*")
     }
     out
   }
@@ -157,7 +158,7 @@ build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
     for (a in seq_len(D)) for (b in seq_len(D)) {
       rs <- (a - 1L) * K + seq_len(K)
       cs <- (b - 1L) * mp1 + seq_len(mp1)
-      out[rs, cs] <- sig[a] * sweep(V, 2, J_F[, a, b], "*")
+      out[rs, cs] <- sig[b] * sweep(V, 2, J_F[, a, b], "*")
     }
     out
   }
@@ -185,7 +186,7 @@ build_Hp_L <- function(U, tt, J_upp, K, J, D, V, sig){
       for (a in seq_len(D)) for (b in seq_len(D)) {
         rs <- (a - 1L) * K + seq_len(K)
         cs <- (b - 1L) * mp1 + seq_len(mp1)
-        out[rs, cs, j1, j2] <- sig[a] * sweep(V, 2, T_F[, a, b, j1, j2], "*")
+        out[rs, cs, j1, j2] <- sig[b] * sweep(V, 2, T_F[, a, b, j1, j2], "*")
       }
     out
   }

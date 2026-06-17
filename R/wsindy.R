@@ -202,8 +202,20 @@ wsindy_tf_pair <- function(test_function, tt, radius, max_K = Inf) {
 
 # MSTLS sparse regression ======================================================
 
-# Least squares with rank-deficiency fallback (min-norm via ginv).
-wsindy_lstsq <- function(A, y) {
+# Least squares with rank-deficiency fallback (min-norm via ginv). With
+# gamma > 0 this solves the l2-regularized (ridge) problem
+#   argmin_w ||A w - y||^2 + gamma^2 ||w||^2  =  (A'A + gamma^2 I)^-1 A'y,
+# the gamma -> 0 limit of the paper's GLS objective (Algorithm step 4/5). The
+# ridge is what makes near-collinear libraries identifiable (sin vs polynomial
+# terms for the pendulum; the 252-term Linear-5D library) under noise.
+wsindy_lstsq <- function(A, y, gamma = 0) {
+  if (gamma > 0) {
+    AtA <- crossprod(A)
+    diag(AtA) <- diag(AtA) + gamma^2
+    out <- tryCatch(solve(AtA, crossprod(A, y)), error = function(e) NULL)
+    if (is.null(out) || any(!is.finite(out))) out <- as.vector(MASS::ginv(A) %*% y)
+    return(as.vector(out))
+  }
   out <- tryCatch(qr.solve(A, y, tol = 1e-12), error = function(e) NULL)
   if (is.null(out) || any(!is.finite(out))) out <- as.vector(MASS::ginv(A) %*% y)
   out
@@ -218,7 +230,7 @@ wsindy_lstsq <- function(A, y) {
 #  - loss(lambda) = 2*alpha*||G(w_l - w_ls)||/||G w_ls|| + 2*(1-alpha)*nnz/J,
 #    minimized over the lambda grid (smallest minimizer); alpha = 0.5 is the
 #    published loss ||G(w - w_ls)||/||G w_ls|| + nnz/J
-wsindy_mstls <- function(G, b, M_diag, lambdas, alpha = 0.5) {
+wsindy_mstls <- function(G, b, M_diag, lambdas, alpha = 0.5, gamma = 0) {
   J <- ncol(G)
   degenerate <- list(w = numeric(J), lambda_star = NA_real_,
                      losses = rep(NA_real_, length(lambdas)),
@@ -227,7 +239,7 @@ wsindy_mstls <- function(G, b, M_diag, lambdas, alpha = 0.5) {
   bnorm <- sqrt(sum(b^2))
   if (bnorm < .Machine$double.eps) return(degenerate)
 
-  wls_s <- wsindy_lstsq(G, b)                  # scaled-unit LS solution
+  wls_s <- wsindy_lstsq(G, b, gamma)           # scaled-unit (ridge) LS solution
   Gwls <- sqrt(sum((G %*% wls_s)^2))
   if (Gwls < .Machine$double.eps) { degenerate$w_ls <- M_diag * wls_s; return(degenerate) }
 
@@ -249,7 +261,7 @@ wsindy_mstls <- function(G, b, M_diag, lambdas, alpha = 0.5) {
       w[small] <- 0
       keep <- which(!small)
       if (length(keep) == 0L) break
-      w[keep] <- M_diag[keep] * wsindy_lstsq(G[, keep, drop = FALSE], b)
+      w[keep] <- M_diag[keep] * wsindy_lstsq(G[, keep, drop = FALSE], b, gamma)
     }
     list(w = w, its = its)
   }
@@ -410,6 +422,24 @@ solveWSINDy <- function(U, tt, control = NULL) {
   if (is.null(lambdas)) lambdas <- 10^seq(-4, 0, length.out = 100)
   alpha <- control$wsindy_alpha_loss
 
+  # Ridge strength gamma. "auto" estimates the noise ratio sigma_NR from the
+  # data (high-order FD filter, estimate_std) and sets gamma = sqrt(sigma_NR),
+  # the paper's prescription gamma = sqrt(sigma_NR) (sec 3.3). On (near-)clean
+  # data the estimate is ~0 and gamma is floored to 0, preserving the
+  # machine-precision noise-free recovery; under noise it regularizes the
+  # near-collinear / large libraries that otherwise collapse (pendulum, Lorenz,
+  # Linear-5D). A numeric gamma is used verbatim.
+  gamma <- control$wsindy_gamma
+  sigma_NR_hat <- NA_real_
+  if (is.character(gamma) && identical(gamma, "auto")) {
+    sigma_hat <- tryCatch(estimate_std(U), error = function(e) rep(0, D))
+    rms <- sqrt(colMeans(U^2)); rms[rms < .Machine$double.eps] <- Inf
+    sigma_NR_hat <- mean(sigma_hat / rms)
+    gamma <- if (is.finite(sigma_NR_hat) && sigma_NR_hat > 1e-3) sqrt(sigma_NR_hat) else 0
+  } else if (is.null(gamma) || !is.numeric(gamma) || !is.finite(gamma) || gamma < 0) {
+    gamma <- 0
+  }
+
   lib <- wsindy_library(D, control)
 
   # Test-function parameters per state from the data spectrum
@@ -463,7 +493,7 @@ solveWSINDy <- function(U, tt, control = NULL) {
       }
     }
 
-    res <- wsindy_mstls(G_d, b_d, M_diag, lambdas, alpha = alpha)
+    res <- wsindy_mstls(G_d, b_d, M_diag, lambdas, alpha = alpha, gamma = gamma)
     W[, d] <- res$w
     per_eq[[d]] <- res
     G_list[[d]] <- G_d
@@ -526,6 +556,7 @@ solveWSINDy <- function(U, tt, control = NULL) {
       Theta = sweep(Theta_s, 2, M_diag, "/"),    # raw-unit library evaluation
       mt = mt, pt = pt, k_corner = k_corner, K = K,
       scale_x = scale_x, M_diag = M_diag,
+      gamma = gamma, sigma_NR_hat = sigma_NR_hat,
       rescale = isTRUE(control$wsindy_rescale),
       condition_number = cond_G,
       rel_residual = rel_residual, r2 = r2,

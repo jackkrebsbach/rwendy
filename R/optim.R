@@ -1,3 +1,82 @@
+library(numDeriv)
+
+# Gauss-Newton joint state and parameter estimate
+gn <- function(p, U, tt, f_, V, V_prime, max_iter = 100, tol = 1e-10, lambda = 1e-8,
+               alpha = 0){
+  mp1 <- nrow(U)
+  D <- ncol(U)
+
+  Vp <- as.array(V_prime$contiguous())
+  V  <- as.array(V$contiguous())
+
+  u0_vec <- as.vector(U)
+
+  nu <- length(u0_vec)
+  np <- length(p)
+
+  R_reg <- diag(c(rep(alpha, nu), rep(0, np)))
+
+  F_ <- function(U, p){
+    mp1   <- nrow(U)
+    J     <- length(p)
+    tU    <- t(U)
+    ttt   <- matrix(tt, nrow = 1L)
+    p_mat <- matrix(rep(p, mp1), ncol = mp1, nrow = J)
+    f_(rbind(p_mat, tU, ttt))
+  }
+
+  root_target <- function(U, p){
+    U <- matrix(U, ncol = D)
+    as.vector(-Vp %*% U - V %*% F_(U, p))
+  }
+
+  joint_target <- function(theta) {
+    root_target(theta[seq_len(nu)], theta[nu + seq_len(np)])
+  }
+
+  solve_pd <- function(A, b, lam) {
+    n <- nrow(A)
+    for (i in seq_len(10L)) {
+      result <- tryCatch(solve(A + lam * diag(n), b), error = function(e) NULL)
+      if (!is.null(result)) return(result)
+      lam <- lam * 10
+    }
+    MASS::ginv(A) %*% b
+  }
+
+  theta_w <- c(u0_vec, p)
+  G_w     <- joint_target(theta_w)
+  J_w     <- jacobian(joint_target, theta_w)
+
+  for (iter in seq_len(max_iter)) {
+    u_cur        <- theta_w[seq_len(nu)]
+    penalty_grad <- c(alpha * (u_cur - u0_vec), rep(0, np))
+
+    JtJ   <- t(J_w) %*% J_w + R_reg
+    rhs   <- t(J_w) %*% G_w + penalty_grad
+    delta <- solve_pd(JtJ, rhs, lambda)
+    theta_new <- theta_w - delta
+
+    if (anyNA(delta) || !all(is.finite(delta))) break
+
+    G_new <- joint_target(theta_new)
+    s <- -delta; y <- G_new - G_w
+    ss <- as.numeric(t(s) %*% s)
+    if (ss > 1e-14)
+      J_w <- J_w + ((y - J_w %*% s) %*% t(s)) / ss
+
+    theta_w <- theta_new
+    G_w     <- G_new
+
+    if (max(abs(delta)) < tol) break
+  }
+
+  u_w  <- theta_w[seq_len(nu)]
+  p_w  <- theta_w[nu + seq_len(np)]
+
+  list(Uhat = matrix(u_w, ncol = D), p = p_w)
+}
+
 # Robust Shapiro-Wilk p-value function
 .sw_pvalue <- function(residuals) {
   rc <- residuals[is.finite(residuals)]

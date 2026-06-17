@@ -2,15 +2,16 @@
 # %%
 # library(wendy)
 library(deSolve)
+library(numDeriv)
 library(uGMAR)
 library(devtools)
 library(ggplot2)
 
-# options(wendy.symbolic_backend = "native")
+options(wendy.symbolic_backend = "native")
 
 invisible({devtools::load_all()})
 
-options(wendy.symbolic_backend = "symengine")
+options(wendy.symbolic_backend = "native")
 
 f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
@@ -19,16 +20,16 @@ f <- function(u, p, t) {
 p_star <- c(1, 1/10)
 u0 <- c(0.1)
 p0 <- c(1.25, 0.25)
-npoints <- 40
+npoints <- 128
 t_span <- c(0.0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-14)
 
-set.seed(8675309 + 10)
+set.seed(8675309)
 
-nr <- 0.15
+nr <- 0.25
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -43,16 +44,12 @@ tt <- sol[, 1, drop = FALSE]
 
 cat(sprintf("σ = %.2f", noise_sd))
 
-time <- system.time({
 res <- solveWendy(f = f, U, tt, method = "IRLS",
     control = list(
       estimate_IC         = TRUE,
-      estimate_trajectory = TRUE,
-      test_fun_type = "SSL",
-      include_boundary_layer = TRUE 
+      estimate_trajectory = TRUE
   )
  )
-})
 
 t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
@@ -78,7 +75,7 @@ lines(tt_vec, U_star[, 1], col = "#1f77b4", lwd = 2)
 points(tt, U, col = "black", cex = 0.5)
 points(tt[1], u0hat,     pch = 2, col = "#1f77b4", cex = 1)
 points(tt[1], u0_smooth, pch = 2, col = "#ff7f0e", cex = 1)
-points(tt[1], U[1,], pch = 2, col = "green", cex = 1)
+points(tt[1], U[1,], pch = 2, col = "green", cex = 1.5)
 
 title(paste0("nr: ", nr, "\n n: ", npoints, "\n p̂: ", round(res$phat[1],3), " ", round(res$phat[2], 3)))
 
@@ -98,9 +95,6 @@ legend(
   cex = 0.7
 )
 
-cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
+cat(sprintf("\np̂ = [%s]  rel_err = %.4f",
             paste(sprintf("%.4f", res$phat), collapse = ", "),
             rel_err(res$phat, p_star)))
-
-
-print(time)

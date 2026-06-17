@@ -22,10 +22,23 @@
 #' @param S Integer. Euler-Maclaurin series order expansion.
 #' @param p Integer. Parameters in the piecewise polynomial test function
 #'   \eqn{\Psi(t; r, p)}.
-#' @param include_boundary_layer Logical. Augment SSL test-function matrices
-#'   with boundary-layer rows + EM correction.
-#' @param n_bl Integer. Boundary-layer test functions per side for the SSL
-#'   augmentation.
+#' @param include_boundary_layer Logical. Augment the test functions with
+#'   boundary-layer (BL) rows + an Euler-Maclaurin (EM) correction so the weak
+#'   form models the non-vanishing endpoint term. For SSL (and MSG without an
+#'   SVD) the BL rows are appended after the interior rows. For MSG with the SVD
+#'   they are mixed INTO the SVD pool, so the boundary content becomes part of the
+#'   orthonormal basis: every surviving mode then carries an exact share of the
+#'   boundary term/EM correction (the per-mode endpoint derivatives are the SVD's
+#'   own linear combination of the raw BL endpoint values, exact by linearity of
+#'   the weak residual). At least one boundary-carrying mode is guaranteed to
+#'   survive truncation. The EM correction reaches the quadrature floor once the
+#'   radius is moderate (r_c >~ 8); at very small radii the BL rows retain a
+#'   residual.
+#' @param n_bl Integer. Boundary-layer test functions per side. \code{NULL}
+#'   (default) uses a radius-based heuristic. For MSG-with-SVD there is no cap:
+#'   the SVD orthonormalises the BL rows, so clustered/near-collinear rows simply
+#'   collapse into small singular values that truncation drops, with no
+#'   ill-conditioning blowup.
 #' @param radius_min_time Numeric. User-set lower restriction on the test
 #'   function radius.
 #' @param radius_max_time Numeric. User-set upper restriction on the test
@@ -47,8 +60,15 @@
 #' @param use_interp_uncertainty Logical. If \code{TRUE}, weight the covariance
 #'   by interpolation uncertainty \eqn{W_{ii} = var_{ii} / \sigma^2}.
 #' @param smoother Character. State smoother used by
-#'   \code{estimate_trajectory}: \code{"gp"} (Matern 5/2) or \code{"erts"}
-#'   (EKF/RTS).
+#'   \code{estimate_trajectory}: \code{"gp"} (Matern 5/2), \code{"erts"}
+#'   (EKF/RTS), \code{"gls"} (pointwise weak-form GLS local smoother:
+#'   calibrated per-anchor covariances, no process-noise tuning knob, more
+#'   robust than the EKF covariance propagation on chaotic/coarse grids, at
+#'   higher compute; see \code{\link{wendy_gls_state}}), or \code{"coupled"}
+#'   (one GLOBAL weak-form GLS system coupling all time points through
+#'   two-point weak equations: smoothest and strongest on chaotic coarse
+#'   grids, approaches the exact-dynamics CRLB at the trajectory edges, dense
+#'   \eqn{O((MD)^3)} solve; see \code{\link{wendy_coupled_state}}).
 #' @param apply_fn Function. Custom apply for multistart, e.g.
 #'   \code{parallel::mclapply} or \code{future.apply::future_lapply};
 #'   \code{NULL} uses \code{lapply}.
@@ -76,6 +96,21 @@
 #'   squares. Positive values whiten each equation with the leading-order
 #'   weak-residual covariance \eqn{(1-a) V'V'^T + a\,\mathrm{diag}(V'V'^T)}
 #'   (the ODE paper's GLS); helpful for small test-function supports.
+#' @param wsindy_gamma Ridge (\eqn{\ell_2}) regularization for the MSTLS
+#'   least-squares solves, adding \eqn{\gamma^2\|w\|^2} to the objective (the
+#'   ODE paper's Algorithm step 4). \code{0} (default) is unregularized, the
+#'   paper's default for low-order polynomial libraries. \code{"auto"} estimates
+#'   the noise ratio \eqn{\sigma_{NR}} from the data (high-order
+#'   finite-difference filter) and sets \eqn{\gamma=\sqrt{\sigma_{NR}}}, the
+#'   paper's prescription (flooring to 0 on near-clean data); a numeric
+#'   \eqn{\ge 0} fixes \eqn{\gamma}. Enable the ridge when the library is
+#'   near-collinear or rank-deficient under noise -- combined
+#'   trigonometric/polynomial libraries (the nonlinear pendulum, where
+#'   \eqn{\sin(u)} is well approximated by monomials) or very large libraries
+#'   (the 252-term Linear-5D system), which otherwise collapse to the wrong
+#'   support. Leave at 0 for small polynomial libraries (e.g. the logistic
+#'   equation), where the ridge biases toward over-simple (constant) models.
+#'   Applied in the scaled-library space (see \code{wsindy_rescale}).
 #' @param wsindy_rescale Logical. If \code{TRUE} (default), evaluate the
 #'   library on scaled states \eqn{u_n / \|u_n^{\bar\beta}\|^{1/\bar\beta}} and
 #'   map coefficients back to physical units, improving conditioning across
@@ -122,6 +157,7 @@ wendy_control <- function(
   wsindy_tauhat = 1,
   wsindy_K = 1000,
   wsindy_gls = 0,
+  wsindy_gamma = 0,
   wsindy_rescale = TRUE,
   wsindy_extra_terms = NULL
 ) {
@@ -160,6 +196,7 @@ wendy_control <- function(
     wsindy_tauhat = wsindy_tauhat,
     wsindy_K = wsindy_K,
     wsindy_gls = wsindy_gls,
+    wsindy_gamma = wsindy_gamma,
     wsindy_rescale = wsindy_rescale,
     wsindy_extra_terms = wsindy_extra_terms
   )

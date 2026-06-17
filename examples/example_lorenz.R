@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 64
+npoints <- 512
 t_span <- c(0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -25,7 +25,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-12)
 
-nr <- 0.20
+nr <- 0.005
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
@@ -41,7 +41,7 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 options(wendy.symbolic_backend = "native")
 
-res <- solveWendy(f, U, tt, method = "MLE",
+res <- solveWendy(f=NULL, U, tt, method = "MLE",
               control = list(estimate_IC = TRUE,
                              test_fun_type = "MSG",
                              include_boundary_layer = FALSE))
