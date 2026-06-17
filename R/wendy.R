@@ -21,8 +21,12 @@ NULL
 #' @param p0 Numeric vector or matrix. Initial parameter guess. Used by MLE,
 #'   nonlinear least squares, and OE solvers; computed automatically when \code{NULL}.
 #' @param U Numeric matrix. Rows are observed states at the time points in \code{tt};
-#'   columns are state variables.
-#' @param tt Numeric vector. Time points corresponding to rows of \code{U}.
+#'   columns are state variables. Missing observations (\code{NA}) are permitted
+#'   and are filled up front by per-column linear interpolation from the
+#'   surrounding observed values (with a warning); \code{NA} beyond the observed
+#'   range is filled by constant extension of the nearest observed value.
+#' @param tt Numeric vector. Time points corresponding to rows of \code{U};
+#'   must be complete (no \code{NA}).
 #' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
 #' @param method One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 #'   \code{"OE"}, or \code{"HYBRID"}.
@@ -86,6 +90,15 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
   } else {
     control <- default_control
   }
+
+  # Time points must be complete; gaps (NAs) in the observations are repaired by
+  # interpolation up front so that every downstream consumer (WSINDy discovery,
+  # noise-SD estimation, lognormal filtering, grid interpolation) sees a full
+  # data matrix.
+  if (anyNA(tt)) {
+    stop("tt contains missing values (NA); time points must be complete.")
+  }
+  U <- fill_na_gaps(U, tt)
 
   # No rhs supplied: discover the model structure with WSINDy, then run the
   # discovered (linear-in-p) f through the normal WENDy pipeline below.

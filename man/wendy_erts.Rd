@@ -69,8 +69,16 @@ The reported posterior covariance follows the law of total variance,
        + S_k \, \hat C \, S_k^T,}
 splitting trajectory uncertainty into the conditional smoother posterior
 (data noise + model/discretization error) and the contribution of parameter
-uncertainty. The conditional pass uses a small model-error process noise
-\eqn{Q = (0.1\,\sigma)^2 I_D}; parameter uncertainty is folded in separately
+uncertainty. The conditional pass injects the RK4 \emph{discretization} error
+as predict-step process noise, estimated per step by step-doubling
+(Richardson): with \eqn{y_1} the single full RK4 step and \eqn{y_2} two half
+steps, the local truncation error of \eqn{y_1} is
+\eqn{e_k = (16/15)(y_1 - y_2)} and \eqn{Q_k = \mathrm{diag}(e_k^2)}. This is
+\eqn{\sigma}-independent (discretization error depends on \eqn{\Delta t} and
+the dynamics, not the measurement noise), vanishes as \eqn{O(T\,\Delta t^4)}
+under grid refinement, and is active only when the grid under-resolves
+\eqn{f}; it replaces the earlier ad-hoc \eqn{Q = (0.1\,\sigma)^2 I_D}.
+Parameter uncertainty is folded in separately
 and \emph{coherently} via the sensitivity
 \eqn{S_k = \partial u_k^\star / \partial \hat p}, obtained by central
 differences of the smoothed mean over re-runs at \eqn{\hat p \pm h e_j}, with

@@ -143,6 +143,37 @@ interpolate_to_grid <- function(U, tt_vec, tt_target, method, substitute_data = 
   list(U = U_new, var = var_mat)
 }
 
+# Repair missing observations (NAs) in U by per-column interpolation from the
+# observed (non-NA) values at their corresponding times. Time points (tt) are
+# assumed complete (no NA) and must be checked by the caller. Interior gaps are
+# linearly interpolated; NAs beyond the observed range are filled by constant
+# extension of the nearest observed value (approx rule = 2). Returns U unchanged
+# when it has no NAs; otherwise emits a warning reporting how many entries were
+# filled. Errors if a state dimension has fewer than two non-missing values.
+# @keywords internal
+fill_na_gaps <- function(U, tt) {
+  na_mask <- is.na(U)
+  if (!any(na_mask)) return(U)
+
+  tt_vec <- as.vector(tt)
+  for (d in seq_len(ncol(U))) {
+    col_na <- na_mask[, d]
+    if (!any(col_na)) next
+    obs <- !col_na
+    if (sum(obs) < 2L) {
+      stop("Cannot interpolate NA gaps: state dimension ", d,
+           " has fewer than two non-missing observations.", call. = FALSE)
+    }
+    U[col_na, d] <- approx(tt_vec[obs], U[obs, d], xout = tt_vec[col_na],
+                           rule = 2)$y
+  }
+
+  warning(sum(na_mask), " missing value(s) in the data filled by linear ",
+          "interpolation across ", sum(apply(na_mask, 2L, any)),
+          " state dimension(s).", call. = FALSE)
+  U
+}
+
 interpolate_data <- function(U, tt, method, control, sigma = NULL) {
   tt_obs  <- as.vector(tt)
   U_obs   <- U
