@@ -372,7 +372,7 @@ wsindy_make_f_sym <- function(f, p0, D) {
 #'   weak systems \code{G}/\code{b}, the scales \code{scale_x}/\code{M_diag},
 #'   and residual diagnostics.
 #'
-#' @examples
+#' @examplesIf requireNamespace("deSolve", quietly = TRUE)
 #' # Lotka-Volterra: u1' = u1 - 0.1*u1*u2, u2' = -1.5*u2 + 0.075*u1*u2
 #' f <- function(u, p, t) {
 #'   c(p[1] * u[1] + p[2] * u[1] * u[2],

@@ -2,8 +2,6 @@
 # %%
 # library(wendy)
 library(deSolve)
-library(numDeriv)
-library(uGMAR)
 library(devtools)
 library(ggplot2)
 
@@ -27,7 +25,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rto
 
 # set.seed(8675309)
 
-nr <- 0.15
+nr <- 0.25
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise

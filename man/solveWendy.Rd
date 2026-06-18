@@ -61,6 +61,7 @@ trust-region optimization algorithm.
 }
 }
 \examples{
+\dontshow{if (requireNamespace("deSolve", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 # Logistic growth: u' = p1*u - p2*u^2 (linear in p; p_star = (1, 1/10)).
 f <- function(u, p, t) c(p[1] * u[1] - p[2] * u[1]^2)
 p_star  <- c(1, 1/10)
@@ -89,5 +90,5 @@ res <- solveWendy(
 )
 res$phat                       # ~ c(1, 0.1)
 rel_err(res$phat, p_star)
-
+\dontshow{\}) # examplesIf}
 }

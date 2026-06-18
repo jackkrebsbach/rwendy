@@ -6,3 +6,5 @@
 ^Installation\.md$
 ^LICENSE\.md$
 benchmarks
+.github
+tmp

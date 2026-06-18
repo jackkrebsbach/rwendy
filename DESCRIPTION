@@ -12,7 +12,7 @@ Authors@R: c(
 Description: Parameter estimation for ordinary differential equations (ODEs)
     using weak form estimation. WENDy avoids numerical differentiation of noisy
     data by leveraging integration by parts with compactly supported test
-    functions. Supports MLE, IRLS, and OLS methods.
+    functions.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
@@ -22,7 +22,7 @@ Imports:
     MASS,
     minpack.lm,
     stats,
-    numDeriv
+    pracma
 Suggests:
     symengine,
     deSolve

@@ -51,6 +51,7 @@ a parameter covariance, call \code{solveWendy(f = NULL, U, tt, ...)}, which
 runs this discovery and the WENDy refinement in one step.
 }
 \examples{
+\dontshow{if (requireNamespace("deSolve", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 # Lotka-Volterra: u1' = u1 - 0.1*u1*u2, u2' = -1.5*u2 + 0.075*u1*u2
 f <- function(u, p, t) {
   c(p[1] * u[1] + p[2] * u[1] * u[2],
@@ -73,5 +74,5 @@ U <- U_clean + matrix(rnorm(length(U_clean), sd = noise_sd), nrow = length(tt))
 ws <- solveWSINDy(U, tt)
 ws          # discovered equations
 ws$p0       # coefficients, ready as p0 for solveWendy(ws$f, U, tt, ...)
-
+\dontshow{\}) # examplesIf}
 }
