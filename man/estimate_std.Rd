@@ -2,31 +2,35 @@
 % Please edit documentation in R/noise.R
 \name{estimate_std}
 \alias{estimate_std}
-\title{Estimate noise standard deviation from the robust scale of a high-order
-finite-difference (high-pass) residual.}
+\title{Estimate noise standard deviation from a high-order finite-difference
+(high-pass) residual.}
 \usage{
-estimate_std(U, k = 6)
+estimate_std(U, k = 6, robust = FALSE)
 }
 \arguments{
 \item{U}{Numeric matrix of observations (rows = time points, cols = states).}
 
 \item{k}{Integer; order of the finite-difference filter (default 6).}
+
+\item{robust}{Logical; \code{TRUE} uses the MAD (robust) scale instead of the
+RMS. Default \code{FALSE}.}
 }
 \value{
 Numeric vector of length \code{ncol(U)}: per-state noise SD estimates.
 }
 \description{
 The order-\code{k} FD filter annihilates smooth signal and normalizes white
-noise to unit variance; the per-state noise SD is then the MAD (median
-absolute deviation, a robust scale) of the filtered residual rather than its
-RMS. On coarse grids residual signal curvature (\eqn{\propto \Delta t^k
-f^{(k)}}) leaks through the filter: the RMS adds it in quadrature at every
-point and floors \eqn{\hat\sigma} as the true noise shrinks (mistaking
-curvature for noise on under-resolved grids), whereas the MAD's ~50\%
-breakdown ignores the minority of leakage-dominated stencil positions and
-tracks the true noise down. Identical to the RMS on resolved grids and at
-high noise; 3-14x more accurate at low-noise/coarse (validated, see
-examples/validation). Past 50\% contamination (very coarse grids) the data is
-under-sampled and no aggregator recovers \eqn{\sigma}.
+noise to unit variance; the per-state noise SD is the scale of the filtered
+residual. \code{robust = FALSE} (default) uses the RMS
+(\eqn{\sqrt{\mathrm{mean}(\cdot^2)}}): the efficient choice, and on coarse
+grids the resulting signal-curvature leakage usefully inflates
+\eqn{\hat\sigma} so the GLS weights cover the discretization error (better
+\eqn{\hat p}). \code{robust = TRUE} uses the MAD: its ~50\% breakdown ignores
+the leakage-dominated stencil positions and recovers the TRUE measurement
+noise on coarse grids -- preferred for UQ (covariance calibration), where the
+inflated RMS over-covers. Identical on resolved grids and at high noise; the
+two diverge only when curvature leaks (coarse + low noise). See
+examples/validation/noise_mad_phat_regression.R for the \eqn{\hat p} trade-off
+that motivates keeping RMS for estimation and MAD only for UQ.
 }
 \keyword{internal}

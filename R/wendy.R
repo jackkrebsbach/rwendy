@@ -45,7 +45,7 @@ NULL
 #'   for the weak NLL and its derivatives), and the assembled \code{V},
 #'   \code{V_prime}, \code{S}, and \code{L} components.
 #'
-#' @examples
+#' @examplesIf requireNamespace("deSolve", quietly = TRUE)
 #' # Logistic growth: u' = p1*u - p2*u^2 (linear in p; p_star = (1, 1/10)).
 #' f <- function(u, p, t) c(p[1] * u[1] - p[2] * u[1]^2)
 #' p_star  <- c(1, 1/10)
@@ -91,10 +91,6 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     control <- default_control
   }
 
-  # Time points must be complete; gaps (NAs) in the observations are repaired by
-  # interpolation up front so that every downstream consumer (WSINDy discovery,
-  # noise-SD estimation, lognormal filtering, grid interpolation) sees a full
-  # data matrix.
   if (anyNA(tt)) {
     stop("tt contains missing values (NA); time points must be complete.")
   }
@@ -112,7 +108,7 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     ws <- solveWSINDy(U, tt, control = control)
     if (all(ws$W == 0)) {
       stop("WSINDy discovered no terms in any equation. ",
-           "Try increasing wsindy_poly_deg, lowering the noise, or adjusting ",
+           "Try increasing wsindy_poly_deg, or adjusting ",
            "wsindy_lambdas. See ?solveWSINDy.")
     }
     f <- ws$f
@@ -205,12 +201,7 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
   if (method != "OE") {
     sig <- estimated_sd
 
-    # When nrow(U) < max_points_interp we interpolate the sparse data.
-    # Degree rationale: Gaussian uses max_order+1 because integrating a degree-d RHS
-    # raises the trajectory degree by 1. For lognormal the log transform reduces the
-    # effective degree by 1, so max_order suffices. In both cases, if the
-    # noise-to-signal ratio is low (<= 0.1) the observations are clean enough that
-    # linear interpolation between them suffices.
+    # When nrow(U) < max_points_interp interpolate the sparse data.
     if (nrow(U) < control$max_points_interp && is.null(control$interpolation_method)) {
       nsr <- min(estimated_sd / apply(U, 2, sd))
       if (nsr <= 0.15) {
@@ -346,15 +337,30 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     res$data <- result$data
   }
   
+  # Robust (MAD) UQ noise scale
+  estimated_sd_uq <- if (!is.na(control$noise_sd)) estimated_sd
+                     else if (nrow(U) >= 20) estimate_std(U, k = 6, robust = TRUE)
+                     else estimated_sd
+
   # Fisher parameter covariance (Gᵀ S⁻¹ G)⁻¹: feeds the parameter channel of
   # cov_u0 in estimate_IC (law of total variance) and the ERTS parameter-
-  # uncertainty fold.
+  # uncertainty fold. Built with the MAD UQ sigma: sigma enters L only as a
+  # per-state column-block scalar (build_L0/build_L: state b's column block is
+  # scaled by sig[b]), so L(sig_uq) is exactly L(sig) with its columns rescaled
+  # by sig_uq[b]/sig[b] -- no rebuild of the test-function machinery, and reusing
+  # build_S keeps W / diag_reg identical.
   C_hat <- if (method != "OE" && !is.null(res$phat) &&
                (control$estimate_IC ||
                 (control$estimate_trajectory &&
                  control$smoother %in% c("erts", "gls", "coupled")))) {
     tryCatch({
-      Sp <- res$S(res$phat)
+      D_sys   <- ncol(res$U)
+      mp1_sys <- nrow(res$U)
+      sig_v   <- if (length(sig) == D_sys) sig  else rep(sig[1], D_sys)
+      sig_uqv <- if (length(estimated_sd_uq) == D_sys) estimated_sd_uq else rep(estimated_sd_uq[1], D_sys)
+      ratio_cols <- rep(as.numeric(sig_uqv) / as.numeric(sig_v), each = mp1_sys)
+      S_uq <- build_S(function(p) sweep(res$L(p), 2L, ratio_cols, `*`), res$W, control$diag_reg)
+      Sp <- S_uq(res$phat)
       Gp <- if (lip) res$G else res$Jp_r(res$phat)
       R  <- chol(Sp)
       solve(crossprod(Gp, backsolve(R, forwardsolve(t(R), Gp))))
@@ -368,7 +374,7 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
       r_c_bl <- compute_r_c_hat(U, tt, control$S, control$p)$rc
     }
     estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl,
-                J_u = J_u, sigma = estimated_sd, param_cov = C_hat)
+                J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat)
   } else NULL
 
   state <- if (control$estimate_trajectory && method != "OE") {
@@ -377,7 +383,7 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
       # estimate_IC (cov_u0 non-NULL); otherwise u0hat is just the noisy obs.
       u0_init <- if (!is.null(boundary_state$cov_u0)) boundary_state$u0hat else NULL
       P0_init <- boundary_state$cov_u0
-      wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = estimated_sd,
+      wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = estimated_sd_uq,
                  u0_init   = u0_init,
                  P0_init   = P0_init,
                  param_cov = C_hat,

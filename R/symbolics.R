@@ -1,6 +1,6 @@
-# Symbolic engine ==============================================================
+# Symbolic engine 
 
-# 1. Backend selection ---------------------------------------------------------
+# 1. Backend selection 
 
 .wendy_sym <- new.env(parent = emptyenv())
 
@@ -22,7 +22,7 @@ sym_backend <- function() {
 }
 
 
-# 2. Primitive dispatch --------------------------------------------------------
+# 2. Primitive dispatch 
 
 # Create a scalar symbol from a name.
 sym_symbol <- function(name) {
@@ -102,7 +102,7 @@ sym_lambdify <- function(scalar, var) {
   if (sym_backend() == "native") native_lambdify(scalar, var) else symengine::lambdify(scalar, var)
 }
 
-# 3. Native backend ------------------------------------------------------------
+# 3. Native backend 
 #
 # The `rsym` S3 class is a list of base-R language objects (calls / names /
 # numeric constants) carrying an optional `dim_sym` attribute. A scalar is an
@@ -248,7 +248,7 @@ native_lambdify <- function(scalar, var) {
 }
 
 
-# 4. Backend-agnostic algorithms -----------------------------------------------
+# 4. Backend-agnostic algorithms 
 
 # Detect the number of parameters by scanning f's body for param[N] references,
 # where param is the name of the second argument of f (the parameter vector).
