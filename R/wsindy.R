@@ -2,9 +2,7 @@
 #
 # Discovers the right-hand side u' = f(u) from data by sparse regression on a
 # candidate library in the weak form, following Messenger & Bortz, "Weak SINDy:
-# Galerkin-Based Data-Driven Model Selection" (SIAM MMS, 2021) and the
-# reference implementation MathBioCU/WSINDy_ODE. Test functions are built from
-# the package's psi primitive (test_functions.R).
+# Galerkin-Based Data-Driven Model Selection" (SIAM MMS, 2021)
 #
 # Per equation d (each state gets its own test-function support mt_d, pt_d):
 #   Theta(U) : mp1 x J   candidate terms evaluated at the (scaled) data
@@ -13,7 +11,7 @@
 # MSTLS (modified sequential-thresholding least squares) then selects a sparse
 # w_d with G_d w_d ~ b_d, with thresholds applied to physical-unit coefficients.
 
-# Library generation ===========================================================
+# Library generation 
 
 # All monomial powers beta in N^D with sum(beta) <= deg, constant row first,
 # ordered by total degree then numeric lexicographic. J = choose(deg + D, D).
@@ -124,7 +122,7 @@ wsindy_theta <- function(U, tt, lib, scale_x = NULL) {
   Theta
 }
 
-# Test function support selection ==============================================
+# Test function support selection 
 #
 # Port of findcornerpts/findcorners (MathBioCU/WSINDy_ODE) for the piecewise
 # polynomial test function psi(t; r, p) = (1 - (t/r)^2)^p.
@@ -167,10 +165,6 @@ wsindy_tf_params <- function(x, tt, tau = 1e-16, tauhat = 1) {
   list(mt = mt, pt = pt, k = k)
 }
 
-# Test function rows: same row construction as build_test_function_matrix
-# (psi values / derivative on the support grid, L2-normalized), but placing at
-# most max_K uniformly strided centers so large datasets stay tractable.
-# Returns V (order 0) and Vp (order 1) together, K x mp1 each.
 wsindy_tf_pair <- function(test_function, tt, radius, max_K = Inf) {
   len_tt <- length(tt)
   dt <- mean(diff(tt))
@@ -200,14 +194,11 @@ wsindy_tf_pair <- function(test_function, tt, radius, max_K = Inf) {
   list(V = V, Vp = Vp, radius = as.integer(radius), K = K)
 }
 
-# MSTLS sparse regression ======================================================
+# MSTLS sparse regression 
 
 # Least squares with rank-deficiency fallback (min-norm via ginv). With
 # gamma > 0 this solves the l2-regularized (ridge) problem
-#   argmin_w ||A w - y||^2 + gamma^2 ||w||^2  =  (A'A + gamma^2 I)^-1 A'y,
-# the gamma -> 0 limit of the paper's GLS objective (Algorithm step 4/5). The
-# ridge is what makes near-collinear libraries identifiable (sin vs polynomial
-# terms for the pendulum; the 252-term Linear-5D library) under noise.
+#   argmin_w ||A w - y||^2 + gamma^2 ||w||^2  =  (A'A + gamma^2 I)^-1 A'y
 wsindy_lstsq <- function(A, y, gamma = 0) {
   if (gamma > 0) {
     AtA <- crossprod(A)
@@ -278,7 +269,7 @@ wsindy_mstls <- function(G, b, M_diag, lambdas, alpha = 0.5, gamma = 0) {
        degenerate = FALSE)
 }
 
-# Discovered model -> f(u, p, t) ==============================================
+# Discovered model -> f(u, p, t) 
 
 # Generate the closure, p0, and the parameter map in ONE state-major loop so
 # the p[k] indices, p0 order, and param_map cannot drift apart. Every selected
@@ -330,7 +321,7 @@ wsindy_make_f_sym <- function(f, p0, D) {
   f(u_expr, p0, t_expr)
 }
 
-# Entry point ==================================================================
+# Entry point 
 
 #' Discover ODE structure with Weak-form SINDy (WSINDy)
 #'
@@ -572,7 +563,7 @@ solveWSINDy <- function(U, tt, control = NULL) {
   res
 }
 
-# S3 methods ===================================================================
+# S3 methods 
 
 #' Print method for wsindy objects
 #'

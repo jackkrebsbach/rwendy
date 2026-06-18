@@ -1,7 +1,5 @@
 
-# ---------------------------------------------------------------------------
 # Matern 5/2 kernel 
-# ---------------------------------------------------------------------------
 
 #' Matern 5/2 covariance matrix
 #'
@@ -54,9 +52,7 @@ matern52_Kdd <- function(tt1, tt2, sigma2, ell) {
 nugget <- function(n, sigma2_n) sigma2_n * diag(n)
 
 
-# ---------------------------------------------------------------------------
 # Log marginal likelihood and hyperparameter optimisation
-# ---------------------------------------------------------------------------
 
 #' Log marginal likelihood for a 1-D GP with Matern 5/2
 #'
@@ -138,9 +134,7 @@ gp_optimize_hyperparams <- function(tt, y, sigma2_n = NULL, n_restarts = 3L,
 }
 
 
-# ---------------------------------------------------------------------------
 # GP fit object and prediction
-# ---------------------------------------------------------------------------
 
 #' Fit a 1-D Matern 5/2 GP to observations
 #'
