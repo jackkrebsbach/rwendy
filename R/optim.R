@@ -186,9 +186,7 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
     wendy_ode(func = modelODE, times = tt, y0 = u0, parms = parms)
   }
 
-  # Residual vector (model - observed), stacked over all state columns. This is
-  # exactly what FME::modCost produced with its default unweighted/unscaled
-  # settings, but handed straight to nls.lm without the FME wrapper.
+  # Residual vector (model - observed), stacked over all state columns.
   #
   # On ODE failure, fall back to an Euler-style first-order expansion of the
   # trajectory at t[1]: u(t) ≈ u0 + (t - t[1]) * f(u0, p, t[1]). This makes
@@ -235,8 +233,8 @@ output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
     ))
   }
 
-  # Scaled nonlinear-LS covariance (SSR / (N - npar)) * (JᵀJ)⁻¹, reproducing
-  # FME::modFit's summary$cov.scaled. fit$hessian is the Gauss-Newton JᵀJ.
+  # Scaled nonlinear-LS covariance: (SSR / (N - npar)) * (JᵀJ)⁻¹.
+  # fit$hessian is the Gauss-Newton JᵀJ.
   n_res <- length(fit$fvec)
   cov <- tryCatch({
     resvar <- fit$deviance / (n_res - n_theta)

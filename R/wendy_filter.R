@@ -132,7 +132,7 @@ build_em_jacobian <- function(bl_phi_t1, bl_phi_tM,
   }
 }
 
-# ---- Boundary-layer IC system helpers ---------------------------------------
+# Boundary-layer IC system helpers
 
 # Build the left boundary-layer system for one (r_c, n_bl) design: trap-weighted
 # order-0/1 rows, the boundary vector B = psi_k(t_1), the raw endpoint
@@ -588,10 +588,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     function(rhs) as.numeric(crossprod(B, rhs) / BtB)
   }
 
-  # Track the best iterate by residual norm; the iteration contracts only when
-  # the EM-correction map has spectral radius < 1 (kappa = O(h^2)). For
-  # under-sampled stiff systems the contraction can fail and iterates blow up.
-  # Returning the best-seen iterate keeps us no worse than the uncorrected LS.
   # Residual over the K_bl x D system, in the same metric the projection
   # minimizes: W-weighted for GLS, Frobenius for OLS.
   residual_norm <- function(u0_curr) {
@@ -605,142 +601,173 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     }
   }
 
-  u0       <- proj(r_trap)
-  u0_hist  <- list(u0)
-  best_u0  <- u0
-  best_res <- if (all(is.finite(u0))) residual_norm(u0) else Inf
-  iters    <- 0L
-  converged <- FALSE
-  diverged  <- FALSE
+  # Fixed-point iteration u0 <- proj(r_trap - EM(u0)), tracking the best iterate
+  # by residual norm. The iteration contracts only when the EM-correction map
+  # has spectral radius < 1 (kappa = O(h^2)); for under-sampled stiff systems
+  # the contraction can fail and iterates blow up, so returning the best-seen
+  # iterate keeps us no worse than the uncorrected LS.
+  run_fixed_point <- function() {
+    u0       <- proj(r_trap)
+    u0_hist  <- list(u0)
+    best_u0  <- u0
+    best_res <- if (all(is.finite(u0))) residual_norm(u0) else Inf
+    iters    <- 0L
+    converged <- FALSE
+    diverged  <- FALSE
 
-  for (it in seq_len(max_iter)) {
-    iters  <- it
-    EM     <- em_correction(u0)
-    rhs    <- r_trap - EM
-    u0_new <- proj(rhs)
-    u0_hist[[it + 1L]] <- u0_new
+    for (it in seq_len(max_iter)) {
+      iters  <- it
+      EM     <- em_correction(u0)
+      rhs    <- r_trap - EM
+      u0_new <- proj(rhs)
+      u0_hist[[it + 1L]] <- u0_new
 
-    if (!all(is.finite(u0_new))) { diverged <- TRUE; break }
+      if (!all(is.finite(u0_new))) { diverged <- TRUE; break }
 
-    res_new <- residual_norm(u0_new)
-    if (is.finite(res_new) && res_new < best_res) {
-      best_res <- res_new
-      best_u0  <- u0_new
-    }
-
-    delta <- sqrt(sum((u0_new - u0)^2))
-    u0    <- u0_new
-    if (is.finite(delta) && delta < tol) {
-      converged <- TRUE
-      break
-    }
-  }
-
-  u0 <- best_u0
-
-  # --- Covariance of u0hat ------------------------------------------------
-  #
-  # Residual-based closed-form LS variance (fallback): for the K_bl x 1
-  # per-state regression B u0_d = rhs_d, rhs_d = (r_trap - EM(u0))[, d], the
-  # per-state residual variance is s_d^2 = ||B u0_d - rhs_d||^2 / (K_bl - 1)
-  # and Var(u0_d) = s_d^2 / B^T B. This OVER-states Var(u0hat): the residual
-  # norm absorbs the DETERMINISTIC Euler-Maclaurin / trapezoidal truncation
-  # mismatch on top of the propagated noise (empirically ~1.8x too wide in
-  # SE, ~100% coverage of a nominal-95% interval on the logistic problem).
-  cov_u0_resid <- tryCatch({
-    EM_final <- em_correction(u0)
-    rhs      <- r_trap - EM_final            # K_bl x D
-    e        <- outer(B, u0) - rhs            # K_bl x D residuals
-    df       <- max(K_bl - 1L, 1L)
-    s2       <- colSums(e * e) / df           # length-D
-    diag(s2 / BtB, nrow = D, ncol = D)
-  }, error = function(err) NULL)
-
-  # Implicit-function-theorem machinery shared by the noise and parameter
-  # channels. u0hat is a deterministic function of the data: differentiating
-  # the converged fixed-point relation
-  #   (C Bbold) u0 + C vec(EM(u0)) = C vec(r_trap(U)),
-  # with collapse matrix C = Bbold^T (OLS) or C = Bbold^T W (GLS), gives
-  #   P        = (C Bbold + C EMp)^{-1} C,        EMp = dvec(EM)/du0,
-  #   du0/dU   = P X            (X from build_ic_noise_sensitivity),
-  #   du0/dp_j = P dvec(r_trap - EM)/dp_j.
-  # EMp is taken by central differences (as before). For OLS this reproduces
-  # the previous (B^T B I + A)^{-1} form exactly: C Bbold = BtB I_D and
-  # C EMp = A.
-  I_D <- diag(D)
-  KD  <- K_bl * D
-  EMp <- tryCatch({
-    EMp <- matrix(0, KD, D)
-    h <- 1e-6 * max(1, sqrt(sum(u0^2)))
-    for (e_i in seq_len(D)) {
-      up <- u0
-      up[e_i] <- up[e_i] + h
-      dn <- u0
-      dn[e_i] <- dn[e_i] - h
-      EMp[, e_i] <- as.vector((em_correction(up) - em_correction(dn)) / (2 * h))
-    }
-    EMp
-  }, error = function(err) NULL)
-  P <- if (!is.null(EMp)) tryCatch({
-    if (!is.null(gls)) {
-      solve(gls$BtWB + gls$BtW %*% EMp, gls$BtW)
-    } else {
-      Bbold <- if (!is.null(sens)) sens$Bbold else {
-        Bb <- matrix(0, KD, D)
-        for (d in seq_len(D)) Bb[((d - 1L) * K_bl + 1L):(d * K_bl), d] <- B
-        Bb
+      res_new <- residual_norm(u0_new)
+      if (is.finite(res_new) && res_new < best_res) {
+        best_res <- res_new
+        best_u0  <- u0_new
       }
-      solve(BtB * I_D + crossprod(Bbold, EMp), t(Bbold))
+
+      delta <- sqrt(sum((u0_new - u0)^2))
+      u0    <- u0_new
+      if (is.finite(delta) && delta < tol) {
+        converged <- TRUE
+        break
+      }
     }
-  }, error = function(err) NULL) else NULL
 
-  # Noise channel (preferred when J_u and sigma are supplied):
-  #   Cov_noise(u0|p) = (P X) diag(s2) (P X)^T,
-  # the delta-method propagation of the per-point data noise through the
-  # estimator -- only the BL-window samples contribute (X is built on
-  # win_cols). Calibrated ~95% coverage; for OLS identical to the previous
-  # per-m accumulation, for GLS additionally the (near-)minimum-variance
-  # combine: with EMp -> 0 it telescopes to (Bbold^T Omega^{-1} Bbold)^{-1}
-  # (Gauss-Markov; see build_ic_gls_weights). NOTE: the weights W are treated
-  # as fixed (feasible GLS); their dependence on U through J_u is one order
-  # down in sigma (MC-calibrated 0.97-1.10).
-  # Falls back to the LS-residual variance only for degenerate sigma.
-  cov_u0_noise <- if (!is.null(sens) && !is.null(P)) tryCatch({
-    G <- P %*% sens$X
-    G %*% (sens$s2 * t(G))
-  }, error = function(err) NULL) else NULL
-
-  # Parameter channel: the noise propagation above is conditional on p = phat,
-  # i.e. only the "unexplained" part of the law of total variance
-  #   Var(u0hat) = E_p[Var(u0hat | p)] + Var_p(E[u0hat | p]).
-  # The "explained" part comes from the dependence of u0hat on phat.
-  # Differentiating the fixed-point relation w.r.t. p_j at fixed data U gives
-  #   S_p[, j] = P dvec(r_trap - EM)/dp_j,
-  # with the p-derivatives taken by central differences (EM's p-dependence
-  # runs through total time derivatives of f up to order 3 — messy
-  # analytically, trivial numerically), and
-  #   Cov_param(u0) = S_p Cov(phat) S_p^T.
-  # The cross term between the two channels (phat is estimated from the same
-  # data U) is ignored, as in wendy_erts's parameter fold.
-  cov_u0_param <- if (!is.null(param_cov) && !is.null(P)) tryCatch({
-    rhs_of_p <- function(p_use)
-      as.vector(compute_r_trap(U, p_use) - em_correction(u0, p_use))
-    S_p <- matrix(0, D, J)
-    for (j in seq_len(J)) {
-      hj <- 1e-6 * max(1, abs(p[j]))
-      pj_up <- p; pj_up[j] <- pj_up[j] + hj
-      pj_dn <- p; pj_dn[j] <- pj_dn[j] - hj
-      S_p[, j] <- P %*% ((rhs_of_p(pj_up) - rhs_of_p(pj_dn)) / (2 * hj))
-    }
-    S_p %*% param_cov %*% t(S_p)
-  }, error = function(err) NULL) else NULL
-
-  cov_u0     <- if (!is.null(cov_u0_noise)) cov_u0_noise else cov_u0_resid
-  cov_method <- if (!is.null(cov_u0_noise)) "noise_propagation" else "ls_residual"
-  if (!is.null(cov_u0) && !is.null(cov_u0_param)) {
-    cov_u0     <- cov_u0 + cov_u0_param
-    cov_method <- paste0(cov_method, "+param")
+    list(u0 = best_u0, iters = iters, converged = converged,
+         diverged = diverged, u0_hist = u0_hist)
   }
+
+  fit       <- run_fixed_point()
+  u0        <- fit$u0
+  iters     <- fit$iters
+  converged <- fit$converged
+  diverged  <- fit$diverged
+  u0_hist   <- fit$u0_hist
+
+  # Covariance of u0hat. Combines up to three pieces and also returns the
+  # implicit-function-theorem sensitivity (P, EMp) that the O(sigma^2) debias
+  # reuses:
+  #   cov_u0_resid - residual-based closed-form LS variance (fallback)
+  #   cov_u0_noise - delta-method propagation of data noise (preferred)
+  #   cov_u0_param - law-of-total-variance contribution from Cov(phat)
+  compute_covariance <- function(u0) {
+    # Residual-based closed-form LS variance (fallback): for the K_bl x 1
+    # per-state regression B u0_d = rhs_d, rhs_d = (r_trap - EM(u0))[, d], the
+    # per-state residual variance is s_d^2 = ||B u0_d - rhs_d||^2 / (K_bl - 1)
+    # and Var(u0_d) = s_d^2 / B^T B. This OVER-states Var(u0hat): the residual
+    # norm absorbs the DETERMINISTIC Euler-Maclaurin / trapezoidal truncation
+    # mismatch on top of the propagated noise (empirically ~1.8x too wide in
+    # SE, ~100% coverage of a nominal-95% interval on the logistic problem).
+    cov_u0_resid <- tryCatch({
+      EM_final <- em_correction(u0)
+      rhs      <- r_trap - EM_final            # K_bl x D
+      e        <- outer(B, u0) - rhs            # K_bl x D residuals
+      df       <- max(K_bl - 1L, 1L)
+      s2       <- colSums(e * e) / df           # length-D
+      diag(s2 / BtB, nrow = D, ncol = D)
+    }, error = function(err) NULL)
+
+    # Implicit-function-theorem machinery shared by the noise and parameter
+    # channels. u0hat is a deterministic function of the data: differentiating
+    # the converged fixed-point relation
+    #   (C Bbold) u0 + C vec(EM(u0)) = C vec(r_trap(U)),
+    # with collapse matrix C = Bbold^T (OLS) or C = Bbold^T W (GLS), gives
+    #   P        = (C Bbold + C EMp)^{-1} C,        EMp = dvec(EM)/du0,
+    #   du0/dU   = P X            (X from build_ic_noise_sensitivity),
+    #   du0/dp_j = P dvec(r_trap - EM)/dp_j.
+    # EMp is taken by central differences. For OLS this reduces to the
+    # (B^T B I + A)^{-1} form exactly: C Bbold = BtB I_D and C EMp = A.
+    I_D <- diag(D)
+    KD  <- K_bl * D
+    EMp <- tryCatch({
+      EMp <- matrix(0, KD, D)
+      h <- 1e-6 * max(1, sqrt(sum(u0^2)))
+      for (e_i in seq_len(D)) {
+        up <- u0
+        up[e_i] <- up[e_i] + h
+        dn <- u0
+        dn[e_i] <- dn[e_i] - h
+        EMp[, e_i] <- as.vector((em_correction(up) - em_correction(dn)) / (2 * h))
+      }
+      EMp
+    }, error = function(err) NULL)
+    P <- if (!is.null(EMp)) tryCatch({
+      if (!is.null(gls)) {
+        solve(gls$BtWB + gls$BtW %*% EMp, gls$BtW)
+      } else {
+        Bbold <- if (!is.null(sens)) sens$Bbold else {
+          Bb <- matrix(0, KD, D)
+          for (d in seq_len(D)) Bb[((d - 1L) * K_bl + 1L):(d * K_bl), d] <- B
+          Bb
+        }
+        solve(BtB * I_D + crossprod(Bbold, EMp), t(Bbold))
+      }
+    }, error = function(err) NULL) else NULL
+
+    # Noise channel (preferred when J_u and sigma are supplied):
+    #   Cov_noise(u0|p) = (P X) diag(s2) (P X)^T,
+    # the delta-method propagation of the per-point data noise through the
+    # estimator -- only the BL-window samples contribute (X is built on
+    # win_cols). Calibrated ~95% coverage; for GLS the (near-)minimum-variance
+    # combine: with EMp -> 0 it telescopes to (Bbold^T Omega^{-1} Bbold)^{-1}
+    # (Gauss-Markov; see build_ic_gls_weights). NOTE: the weights W are treated
+    # as fixed (feasible GLS); their dependence on U through J_u is one order
+    # down in sigma (MC-calibrated 0.97-1.10).
+    # Falls back to the LS-residual variance only for degenerate sigma.
+    cov_u0_noise <- if (!is.null(sens) && !is.null(P)) tryCatch({
+      G <- P %*% sens$X
+      G %*% (sens$s2 * t(G))
+    }, error = function(err) NULL) else NULL
+
+    # Parameter channel: the noise propagation above is conditional on p = phat,
+    # i.e. only the "unexplained" part of the law of total variance
+    #   Var(u0hat) = E_p[Var(u0hat | p)] + Var_p(E[u0hat | p]).
+    # The "explained" part comes from the dependence of u0hat on phat.
+    # Differentiating the fixed-point relation w.r.t. p_j at fixed data U gives
+    #   S_p[, j] = P dvec(r_trap - EM)/dp_j,
+    # with the p-derivatives taken by central differences (EM's p-dependence
+    # runs through total time derivatives of f up to order 3 — messy
+    # analytically, trivial numerically), and
+    #   Cov_param(u0) = S_p Cov(phat) S_p^T.
+    # The cross term between the two channels (phat is estimated from the same
+    # data U) is ignored, as in wendy_erts's parameter fold.
+    cov_u0_param <- if (!is.null(param_cov) && !is.null(P)) tryCatch({
+      rhs_of_p <- function(p_use)
+        as.vector(compute_r_trap(U, p_use) - em_correction(u0, p_use))
+      S_p <- matrix(0, D, J)
+      for (j in seq_len(J)) {
+        hj <- 1e-6 * max(1, abs(p[j]))
+        pj_up <- p; pj_up[j] <- pj_up[j] + hj
+        pj_dn <- p; pj_dn[j] <- pj_dn[j] - hj
+        S_p[, j] <- P %*% ((rhs_of_p(pj_up) - rhs_of_p(pj_dn)) / (2 * hj))
+      }
+      S_p %*% param_cov %*% t(S_p)
+    }, error = function(err) NULL) else NULL
+
+    cov_u0     <- if (!is.null(cov_u0_noise)) cov_u0_noise else cov_u0_resid
+    cov_method <- if (!is.null(cov_u0_noise)) "noise_propagation" else "ls_residual"
+    if (!is.null(cov_u0) && !is.null(cov_u0_param)) {
+      cov_u0     <- cov_u0 + cov_u0_param
+      cov_method <- paste0(cov_method, "+param")
+    }
+
+    list(cov_u0 = cov_u0, cov_method = cov_method, cov_u0_resid = cov_u0_resid,
+         cov_u0_param = cov_u0_param, cov_u0_noise = cov_u0_noise, P = P, EMp = EMp)
+  }
+
+  cov_res      <- compute_covariance(u0)
+  cov_u0       <- cov_res$cov_u0
+  cov_method   <- cov_res$cov_method
+  cov_u0_resid <- cov_res$cov_u0_resid
+  cov_u0_param <- cov_res$cov_u0_param
+  cov_u0_noise <- cov_res$cov_u0_noise
+  P            <- cov_res$P
+  EMp          <- cov_res$EMp
 
   # A diverged fixed point means u0hat is only the best-seen iterate, not a
   # solution of the BL system; its covariance — which assumes the converged
@@ -757,7 +784,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     cov_method   <- "diverged"
   }
 
-  # --- O(sigma^2) debias (GLS path) ----------------------------------------
+  # O(sigma^2) debias (GLS path)
   # Subtract the analytic second-order bias b1 + b2 (build_ic_bias_o2; both
   # channels — correcting either alone WORSENS coverage because they partially
   # cancel). The covariance is left unchanged: the correction shifts the mean
