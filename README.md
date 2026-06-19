@@ -1,9 +1,5 @@
 # WENDy
 
-[![Binder](https://mybinder.org/badge_logo.svg)](
-https://mybinder.org/v2/gh/jackkrebsbach/binder/HEAD?urlpath=notebooks/wendy_demo.ipynb
-)
-
 **Weak-form Estimation of Nonlinear Dynamics (WENDy)** is an algorithm for
 estimating the parameters of a system of ordinary differential equations (ODEs)
 from noisy time-series data.
@@ -17,6 +13,18 @@ measurement noise and, for stiff or high-dimensional systems, often *faster*
 and *more accurate* than forward-solver-based nonlinear least squares.
 
 ## Installation
+
+The repository is private so we need to authenticate through github. 
+
+Vist [github](https://github.com/settings/tokens) to generate a token. Classic tokens work well -- make sure to select repo access (no need for the Fine-grained tokens.) Once you have your token you can run the following:
+
+```r
+install.packages("gitcreds")
+library(gitcreds)
+
+gitcreds_set()
+```
+Paste your token when prompted. Next, install the package from github
 
 ```r
 # install.packages("remotes")
