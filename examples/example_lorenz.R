@@ -25,11 +25,12 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-12)
 
-nr <- 0.005
+nr <- 0.15
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
-set.seed(8675309 + 1)
+# set.seed(8675309 + 2)
+set.seed(1)
 
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
@@ -41,30 +42,35 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 options(wendy.symbolic_backend = "native")
 
-res <- solveWendy(f=NULL, U, tt, method = "MLE",
-              control = list(estimate_IC = TRUE,
-                             test_fun_type = "MSG",
-                             include_boundary_layer = FALSE))
+res <- solveWendy(f=f, U, tt, method = "MLE", control = list(estimate_IC = FALSE, test_fun_type = "MSG"))
 
-resOE <- solveWendy(f, U, tt, p0 = p0, method = "OE")
+# resOE <- solveWendy(f, U, tt, p0 = p0, method = "OE")
 
 cat(sprintf("\nIRLS p̂ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
 cat(sprintf("    rel error = %.4f", wendy::rel_err(res$phat, p_star)))
 
-cat(sprintf("\nOE p̂ = [%s]  rel_err = %.4f",
-            paste(sprintf("%.4f", resOE$phat), collapse = ", "),
-            rel_err(resOE$phat, p_star)))
+# cat(sprintf("\nOE p̂ = [%s]  rel_err = %.4f",
+#             paste(sprintf("%.4f", resOE$phat), collapse = ", "),
+#             rel_err(resOE$phat, p_star)))
 
-cat(sprintf("\nu₀ = [%s]",
-              paste(sprintf("%.4f",u0), collapse = ", ")))
+# cat(sprintf("\nu₀ = [%s]",
+#               paste(sprintf("%.4f",u0), collapse = ", ")))
 
-cat(sprintf("\nû₀ = [%s]",
-            paste(sprintf("%.4f", res$u0hat), collapse = ", ")))
+# cat(sprintf("\nû₀ = [%s]",
+#             paste(sprintf("%.4f", res$u0hat), collapse = ", ")))
 
-cat(sprintf("\nERTS û₀ = [%s]  rel_err = %.4f\n",
-            paste(sprintf("%.4f", res$state$U_star[1,]), collapse = ", "),
-            rel_err(res$state$U_star[1,], u0)))
+# cat(sprintf("\nERTS û₀ = [%s]  rel_err = %.4f\n",
+#             paste(sprintf("%.4f", res$state$U_star[1,]), collapse = ", "),
+#             rel_err(res$state$U_star[1,], u0)))
 
 
-cat(sprintf("\nOE û₀ = [%s]",
-              paste(sprintf("%.4f", resOE$data$u0), collapse = ", ")))
+# cat(sprintf("\nOE û₀ = [%s]",
+#               paste(sprintf("%.4f", resOE$data$u0), collapse = ", ")))
+
+
+# time <- system.time({
+#   res <- solveWendy(f = f, U, tt, method = "OE")
+# })
+# print(time)
+wendy::plot_radius_selection(res)
+# print(res$min_radius)
