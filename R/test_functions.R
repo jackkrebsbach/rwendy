@@ -31,7 +31,22 @@ psi_hat <- function(freqs, radius, dt, T, C, p = 16){
    return(psih)
 }
 
+# Memoization cache for the lambdified test-function derivatives. The result of
+# test_function_derivative depends only on (test_function, radius, dt, order) --
+# not on the data or the iterate -- yet the a-priori IC design sweep rebuilds the
+# same orders 0:4 for repeated radii, paying a fresh symbolic diff + lambdify each
+# time. The cache is created once per namespace load; the number of distinct keys
+# is tiny in practice (a handful of radii x five orders).
+.tfd_cache <- new.env(parent = emptyenv())
+
 test_function_derivative <- function(test_function, radius, dt, order) {
+  # deparse() captures formals + body, so two test functions sharing a body but
+  # differing in (e.g.) the default smoothness p do not collide.
+  key <- paste(paste(deparse(test_function), collapse = ""),
+               radius, dt, order, sep = "|")
+  hit <- .tfd_cache[[key]]
+  if (!is.null(hit)) return(hit)
+
   t <- sym_symbol("t")
   r <- radius * dt
   phi_sym <- test_function(t, r)
@@ -41,7 +56,9 @@ test_function_derivative <- function(test_function, radius, dt, order) {
     phi_deriv_sym <- sym_diff(phi_deriv_sym, t)
   }
 
-  sym_lambdify(phi_deriv_sym, t)
+  fn <- sym_lambdify(phi_deriv_sym, t)
+  .tfd_cache[[key]] <- fn
+  fn
 }
 
 get_test_function_support_indices <- function(radius, len_tt) {
@@ -202,7 +219,7 @@ find_min_radius_int_error <- function(U, tt, radius_min, radius_max, num_radii, 
   step  <- max(1, ceiling((radius_max - radius_min) / num_radii))
   hi    <- max(radius_max - 1L, radius_min)  # guard against collapsed range (very small mp1)
   radii <- seq(radius_min, hi, by = step)
-  radii <- radii[1:min(50, length(radii))]
+  # radii <- radii[1:min(50, length(radii))]
   
   errors  <- numeric(length(radii))
 
@@ -316,7 +333,7 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
   } else {
     if(control$test_fun == "phi"){
       # 𝜱
-      result <- find_min_radius_int_error(U_rad, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 2)
+      result <- find_min_radius_int_error(U_rad, tt, min_radius, max_radius, num_radii = 100, sub_sample_rate = 3)
       min_radius_int_error <- result$radii[result$index]
       min_radius_errors <- result$errors
       min_radius_radii <- result$radii
@@ -325,7 +342,7 @@ build_full_test_function_matrices_msg <- function(U, tt, control, compute_svd = 
       # 𝚿
       result <- compute_r_c_hat(U_rad, tt, control$S, control$p)
       min_radius_int_error <- result$rc
-      min_radius_errors    <- result$errors
+      min_radius_errors    <- result$ehat
       min_radius_radii     <- result$radii
       min_radius_ix        <- result$ix
     }

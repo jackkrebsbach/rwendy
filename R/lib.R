@@ -266,8 +266,130 @@ residuals_weighted <- function(object, ...) {
 #'
 #' @param x Vector
 #' @param y Vector
-#' @return Scaler 
+#' @return Scaler
 #' @export
 rel_err <- function(x,y){
   norm(x - y, type = "2") / norm(y, type = "2")
+}
+
+#' Plot the test-function radius selection diagnostic
+#'
+#' Visualises the data-driven choice of test-function support radius made when a
+#' WENDy problem is built. WENDy sweeps a range of radii, evaluates an
+#' integration-error proxy at each, and selects the change-point ("elbow") of
+#' that error curve. This function draws the error curve against the radius and
+#' marks the selected radius.
+#'
+#' Two selection routines are covered, dispatched automatically from what the
+#' fit stored:
+#' \itemize{
+#'   \item \strong{MSG} (\code{test_fun_type = "MSG"}): the minimum radius from
+#'     \code{find_min_radius_int_error} (using the \eqn{\Phi} bump test
+#'     function) -- stored in \code{object$min_radius} with the error curve in
+#'     \code{object$wendy_problem$min_radius_errors} /
+#'     \code{min_radius_radii}.
+#'   \item \strong{SSL} (\code{test_fun_type = "SSL"}): the critical radius
+#'     \eqn{r_c} from \code{compute_r_c_hat} (using the \eqn{\Psi}
+#'     piecewise-polynomial test function) -- stored in \code{object$rc} with
+#'     the error curve in \code{object$rc_errors} / \code{object$rc_radii}.
+#' }
+#'
+#' Radius selection is skipped (and nothing is plotted) for \code{method = "OE"}
+#' and whenever \code{control$fixed_radius} is set.
+#'
+#' @param object A \code{wendy} object returned by \code{\link{solveWendy}}.
+#' @param log Character passed to \code{\link[graphics]{plot}} controlling which
+#'   axes use a log scale. Defaults to \code{"y"} because the error decays over
+#'   several orders of magnitude; automatically dropped if any error is
+#'   non-positive.
+#' @param ... Additional graphical parameters forwarded to
+#'   \code{\link[graphics]{plot}} (e.g. \code{main}, \code{xlab}, \code{col});
+#'   any supplied value overrides the default.
+#' @return Invisibly, a list with the swept \code{radii}, the \code{errors}
+#'   curve, the selected \code{radius}, its index \code{ix} into \code{radii},
+#'   and the selection \code{type} (\code{"MSG"} or \code{"SSL"}).
+#' @export
+plot_radius_selection <- function(object, log = "y", ...) {
+  if (!inherits(object, "wendy")) {
+    stop("`object` must be a wendy object returned by solveWendy().")
+  }
+
+  wp <- object$wendy_problem
+
+  # SSL r_c change-point (psi test function) vs. MSG minimum radius (phi/psi).
+  # The two paths populate disjoint slots, so presence of an error curve tells
+  # us which selection ran. Prefer the top-level fields, falling back to the
+  # wendy_problem the fit carries.
+  ssl_errors <- object$rc_errors %||% wp$rc_errors
+  ssl_radii  <- object$rc_radii  %||% wp$rc_radii
+  msg_errors <- object$min_radius_errors %||% wp$min_radius_errors
+  msg_radii  <- object$min_radius_radii  %||% wp$min_radius_radii
+
+  if (!is.null(ssl_errors) && !is.null(ssl_radii)) {
+    type     <- "SSL"
+    radii    <- as.numeric(ssl_radii)
+    errors   <- as.numeric(ssl_errors)
+    selected <- object$rc %||% wp$rc
+    main_def <- expression("SSL radius selection (" * Psi * " test functions, " * r[c] * ")")
+  } else if (!is.null(msg_errors) && !is.null(msg_radii)) {
+    type     <- "MSG"
+    radii    <- as.numeric(msg_radii)
+    errors   <- as.numeric(msg_errors)
+    selected <- object$min_radius %||% wp$min_radius
+    main_def <- expression("MSG minimum-radius selection (" * Phi * " test functions)")
+  } else {
+    stop("No radius-selection diagnostics found on this wendy object. ",
+         "Radius selection is skipped for method = \"OE\" and when ",
+         "control$fixed_radius is set.")
+  }
+
+  if (is.null(selected) || length(selected) == 0L) {
+    stop("Selected radius is missing from the wendy object.")
+  }
+
+  # The selected radius is one of the swept radii; recover its index.
+  ix <- which.min(abs(radii - selected))
+
+  # Log-y is only valid for strictly positive errors.
+  if (grepl("y", log, fixed = TRUE) && any(!is.finite(errors) | errors <= 0)) {
+    log <- gsub("y", "", log, fixed = TRUE)
+  }
+
+  plot_args <- utils::modifyList(
+    list(
+      x    = radii,
+      y    = errors,
+      type = "b",
+      pch  = 16,
+      col  = "#1f77b4",
+      log  = log,
+      xlab = "Test-function support radius (grid points)",
+      ylab = "Integration error",
+      main = main_def
+    ),
+    list(...)
+  )
+  do.call(graphics::plot, plot_args)
+
+  # Mark the selected radius (the change-point elbow).
+  graphics::abline(v = selected, col = "#d62728", lty = 2, lwd = 1.5)
+  graphics::points(radii[ix], errors[ix], col = "#d62728", pch = 19, cex = 1.7)
+
+  graphics::legend(
+    "topright",
+    legend = c("Integration error",
+               sprintf("Selected radius = %g", selected)),
+    col    = c(plot_args$col, "#d62728"),
+    pch    = c(plot_args$pch, 19),
+    lty    = c(1, 2),
+    bty    = "n"
+  )
+
+  invisible(list(
+    type   = type,
+    radii  = radii,
+    errors = errors,
+    radius = selected,
+    ix     = ix
+  ))
 }

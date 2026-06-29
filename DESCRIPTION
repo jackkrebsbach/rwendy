@@ -22,6 +22,7 @@ Imports:
     MASS,
     minpack.lm,
     stats,
+    graphics,
     pracma
 Suggests:
     symengine,
