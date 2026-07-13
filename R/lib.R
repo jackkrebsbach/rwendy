@@ -67,19 +67,30 @@ summary.wendy <- function(object, ...) {
       # (excluding fitted initial conditions).  For HYBRID, WENDy only
       # provides the starting point; the OE estimator's curvature is reported.
       J <- attr(object, "n_params")
-      param_cov <- if (!is.null(object$data$cov)) object$data$cov[1:J, 1:J] else NULL
+      param_cov <- if (!is.null(object$data$cov)) {
+        object$data$cov[1:J, 1:J]
+      } else {
+        NULL
+      }
     } else {
-      # Fisher form (Gᵀ S(p̂)⁻¹ G)⁻¹: inverse Fisher information of the
-      # linear-Gaussian residual model
-      G  <- object$Jp_r(phat)
+      # GLS Fisher form (Gᵀ S(p̂)⁻¹ G)⁻¹ 
+      G <- object$Jp_r(phat)
       Sp <- object$S(phat)
-      R  <- chol(Sp)
-      param_cov <- solve(crossprod(G, backsolve(R, forwardsolve(t(R), G))))
+      R <- chol(Sp) # S = RᵀR
+      Gt <- backsolve(R, G, transpose = TRUE) # R⁻ᵀG, whitened Jacobian
+      param_cov <- chol2inv(chol(crossprod(Gt))) # (G̃ᵀG̃)⁻¹ = (GᵀS⁻¹G)⁻¹ 
+
+      # OLS sandwich estimator G† S(p̂) (G^†)^T: G† = (GᵀG)^-1Gᵀ
+      A <- crossprod(G) # GᵀG, J×J
+      inner <- crossprod(G, Sp %*% G) # GᵀSG, J×J
+      Ainv <- chol2inv(chol(A)) # SPD
+      param_cov_ols <- Ainv %*% inner %*% Ainv
     }
 
     std_errors <- if (!is.null(param_cov)) sqrt(diag(param_cov)) else rep(NA, length(phat))
 
     summ$param_cov <- param_cov
+    summ$param_cov_ols <- param_cov_ols
     summ$phat <- phat
     summ$parameters <- data.frame(
       Parameter = paste0("p", seq_along(phat)),

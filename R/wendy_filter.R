@@ -554,7 +554,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   # grid. Under the OLS combine the legacy heuristic below applies.
   design_table <- NULL
   if (combine == "gls" && is.null(n_bl)) {
-    if (is.null(r_c_grid))  r_c_grid  <- c(1L, 2L, 3L, 4L) * r_c
+    if (is.null(r_c_grid))  r_c_grid  <- c(2L, 5L, 6L, 8L, 10L, 12L, 16L, r_c)
     if (is.null(n_bl_grid)) n_bl_grid <- c(8L)
     sel <- tryCatch(
       select_ic_design(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,

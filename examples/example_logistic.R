@@ -25,7 +25,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rto
 
 # set.seed(8675309)
 
-nr <- 0.05
+nr <- 0.3
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -42,13 +42,11 @@ cat(sprintf("σ = %.2f", noise_sd))
 
 time <- system.time({
   res <- solveWendy(
-    f = f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE,
-      estimate_trajectory = FALSE 
-    )
+    f = f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE, estimate_trajectory = FALSE)
   )
 })
 
-print(time)
+# print(time)
 
 # t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints);
 # sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
@@ -111,5 +109,15 @@ print(time)
 #   res <- solveWendy(f, U, p0 = p_star, tt, method = "OE")
 # })
 
-# print(res$phat)
+cat("\np̂ relative error: ")
+cat(rel_err(res$phat, p_star))
+
+cat("\nû₀: ")
+cat(res$u0hat)
+
+cat("\nu₀ Relative error: ")
+cat(rel_err(res$u0hat, sol[,-1][1]))
+
 # print(time)
+
+plot_radius_selection(res)
