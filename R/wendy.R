@@ -374,7 +374,7 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
       r_c_bl <- compute_r_c_hat(U, tt, control$S, control$p)$rc
     }
     estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl,
-                J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat)
+                J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat, lean = TRUE)
   } else NULL
 
   state <- if (control$estimate_trajectory && method != "OE") {
