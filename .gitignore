@@ -15,3 +15,4 @@ examples/validation/
 /.quarto/
 
 **/*.quarto_ipynb
+.vscode
