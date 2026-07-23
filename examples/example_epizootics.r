@@ -21,21 +21,22 @@ f  <- function(u, p, t) {
   c(-tr, tr - mu * I)
 }
 
-# true parameters (nu ~ 1/N0)
+# true parameters 
 p_star <- c(nu = 2.5/N0, mu = 0.4, V = 1.5) 
 
-# initial condition: 6 infected seed
-u0 <- c(S = S0, I = 6)                  
+# initial condition
+u0 <- c(S = S0, I = 1)                  
 
 # ~15 weeks
-n <- 64; Tmax <- 15                         
+n <- 40
+Tmax <- 15                         
 
 sol    <- pracma::rk4sys(function(t, u) f(u, p_star, t), 0, Tmax, u0, n - 1)
 u_true <- sol$y                            
 tt     <- matrix(sol$x, ncol = 1)
 
 set.seed(1)
-sig <- 0.03 * sqrt(colMeans(u_true^2))     # 3% additive Gaussian noise
+sig <- 0.05 * sqrt(colMeans(u_true^2))     # 5% additive Gaussian noise
 U   <- u_true + cbind(rnorm(n, sd = sig[1]), rnorm(n, sd = sig[2]))
 
 par(mar = c(4,4,1,1), col.axis = "#1B1D1E",
