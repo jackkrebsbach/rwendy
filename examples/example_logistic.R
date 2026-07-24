@@ -1,11 +1,11 @@
 
 # %%
-library(wendy)
+# library(wendy)
 library(deSolve)
 library(devtools)
 library(ggplot2)
 
-# invisible({devtools::load_all()})
+invisible({devtools::load_all()})
 
 f <- function(u, p, t) {
   c(p[1] * u[1] - p[2] * u[1]^2)
@@ -38,10 +38,13 @@ tt <- sol[, 1, drop = FALSE]
 
 cat(sprintf("σ = %.2f", noise_sd))
 
-res <- solveWendy(
-  f = f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE, estimate_trajectory = TRUE)
-)
+time  <- system.time({
+  res <- solveWendy(
+    f = f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE, estimate_trajectory = TRUE)
+  )
+})
 
+print(time)
 
 t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)

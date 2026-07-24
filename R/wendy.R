@@ -379,15 +379,17 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
 
   state <- if (control$estimate_trajectory && method != "OE") {
      if (identical(control$smoother, "erts") && !is.null(res$phat)) {
-      # Only seed the filter from u0hat when u0 was actually optimised in
-      # estimate_IC (cov_u0 non-NULL); otherwise u0hat is just the noisy obs.
+
       u0_init <- if (!is.null(boundary_state$cov_u0)) boundary_state$u0hat else NULL
+
       P0_init <- boundary_state$cov_u0
+
       wendy_erts(U, f_, J_u, tt, res$phat, control, sigma = estimated_sd_uq,
                  u0_init   = u0_init,
                  P0_init   = P0_init,
                  param_cov = C_hat,
-                 J_p       = J_p)
+                 J_p       = J_p,
+                 fold_param_uncertainty = TRUE)
     } else {
       gp_smooth(U, tt, sigma2_n = as.numeric(sig)^2)
     }
