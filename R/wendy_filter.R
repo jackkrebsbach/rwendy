@@ -847,8 +847,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       S_p %*% param_cov %*% t(S_p)
     }, error = function(err) NULL) else NULL
 
-    # Compute the residual fallback unless we're in lean mode AND the noise
-    # channel already succeeded (lean callers never read cov_u0_resid).
     cov_u0_resid <- if (!lean || is.null(cov_u0_noise)) compute_resid() else NULL
 
     cov_u0     <- if (!is.null(cov_u0_noise)) cov_u0_noise else cov_u0_resid
@@ -862,24 +860,15 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
          cov_u0_param = cov_u0_param, cov_u0_noise = cov_u0_noise, P = P, EMp = EMp)
   }
 
-  cov_res      <- compute_covariance(u0)
-  cov_u0       <- cov_res$cov_u0
+  cov_res <- compute_covariance(u0)
+  cov_u0 <- cov_res$cov_u0
   cov_method   <- cov_res$cov_method
   cov_u0_resid <- cov_res$cov_u0_resid
   cov_u0_param <- cov_res$cov_u0_param
   cov_u0_noise <- cov_res$cov_u0_noise
-  P            <- cov_res$P
-  EMp          <- cov_res$EMp
+  P <- cov_res$P
+  EMp <- cov_res$EMp
 
-  # A diverged fixed point means u0hat is only the best-seen iterate, not a
-  # solution of the BL system; its covariance — which assumes the converged
-  # fixed-point relation — is then meaningless (empirically coverage collapses
-  # to ~5-19% on fast-spiking stiff systems such as Hindmarsh-Rose, vs ~95% for
-  # non-diverged solves, including coarse-n cases that merely fail to hit `tol`).
-  # Invalidate cov_u0 so the caller (solveWendy) falls back to the raw
-  # observation instead of seeding the state filter from a bad prior. We gate on
-  # `diverged` only, NOT `!converged`: non-converged-but-bounded solves stay well
-  # calibrated, so discarding them would needlessly throw away good estimates.
   if (diverged) {
     cov_u0       <- NULL
     cov_u0_param <- NULL
@@ -996,12 +985,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 #'   or \code{NULL} when not folded), and the intermediate filter/predictor
 #'   states.
 #' @export
-wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
-                       sigma = NULL,
-                       u0_init = NULL,
-                       P0_init = NULL,
-                       param_cov = NULL,
-                       J_p = NULL,
+wendy_erts <- function(U, f_, J_u, tt, p, test_function_params, sigma = NULL, u0_init = NULL, P0_init = NULL, param_cov = NULL, J_p = NULL,
                        fold_param_uncertainty = TRUE) {
   tt   <- as.vector(tt)
   mp1  <- nrow(U)
@@ -1016,20 +1000,12 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
   # Conditional-pass process noise = the RK4 DISCRETIZATION error of the predict
   # step, estimated per step by step-doubling (Richardson): with y1 the single
   # full RK4 step and y2 two half steps, the local truncation error of y1 is
-  # e_k = (16/15)(y1 - y2) (order p = 4, factor 2^p/(2^p - 1)), so Q_k =
-  # diag(e_k^2). Unlike the earlier (0.1 sigma)^2 heuristic this is
-  # sigma-INDEPENDENT -- discretization error depends on dt and the dynamics,
-  # not the measurement noise -- vanishes as O(T dt^4) under grid refinement (so
-  # a finer grid cannot chase the noise), and is active only when the grid
-  # under-resolves f. A tiny floor keeps Q_k strictly PD. Parameter uncertainty
-  # is folded in coherently afterwards (law of total variance), not here.
+  # e_k = (16/15)(y1 - y2) (order p = 4, factor 2^p/(2^p - 1)), so Q_k = diag(e_k^2)
   q_floor <- 1e-12
 
-  # One RK4 step of f(p_use, ., .) over h; shared by the predict mean and the
-  # step-doubling local-error estimate (called three times per step: one full,
-  # two half).
+  # One RK4 step of the process f(p, ., .)
   rk4_step <- function(p_use, uk, tk, h) {
-    k1 <- as.vector(f_(matrix(c(p_use, uk,            tk        ), ncol = 1)))
+    k1 <- as.vector(f_(matrix(c(p_use, uk,           tk        ), ncol = 1)))
     k2 <- as.vector(f_(matrix(c(p_use, uk + .5*h*k1, tk + .5*h ), ncol = 1)))
     k3 <- as.vector(f_(matrix(c(p_use, uk + .5*h*k2, tk + .5*h ), ncol = 1)))
     k4 <- as.vector(f_(matrix(c(p_use, uk +    h*k3, tk +    h ), ncol = 1)))
@@ -1037,19 +1013,16 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
   }
 
   u0 <- if (!is.null(u0_init)) as.vector(u0_init) else as.vector(U[1, ])
-  P0 <- if (!is.null(P0_init)) P0_init
-        else if (!is.null(u0_init)) 0.1 * noise_sd^2 * I_D
-        else noise_sd^2 * I_D
+  P0 <- if (!is.null(P0_init)) P0_init else noise_sd^2 * I_D
 
-  # One EKF forward pass + RTS backward pass at a fixed parameter vector. The
-  # smoothed mean (U_star) is always returned; the posterior covariance arrays
-  # are built only when want_cov = TRUE (skipped for the sensitivity re-runs).
+  # One EKF forward pass + RTS backward pass at a fixed p̂
   erts_pass <- function(p_use, want_cov) {
-    S0          <- P0 + R_obs
-    K0          <- P0 %*% solve(S0)
-    u_filt      <- matrix(0, mp1, D)
+    S0 <- P0 + R_obs
+    K0 <- P0 %*% solve(S0)
+
+    u_filt <- matrix(0, mp1, D)
     u_filt[1, ] <- u0 + K0 %*% (U[1, ] - u0)
-    P_filt      <- array(0, c(mp1, D, D))
+    P_filt <- array(0, c(mp1, D, D))
     P_filt[1,,] <- (I_D - K0) %*% P0 %*% t(I_D - K0) + K0 %*% R_obs %*% t(K0)
 
     u_pred  <- matrix(0, mp1, D)
@@ -1057,50 +1030,56 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
     F_store <- array(0, c(mp1 - 1L, D, D))
 
     for (k in seq_len(mp1 - 1L)) {
-      dt_k <- tt[k + 1L] - tt[k]
-      uk   <- u_filt[k, ]
 
+      dt_k <- tt[k + 1L] - tt[k]  # dt
+      uk <- u_filt[k, ] # uk current time step
+
+      # Predict
       y1 <- rk4_step(p_use, uk, tt[k], dt_k)                  # full step = predict mean
       yh <- rk4_step(p_use, uk, tt[k], dt_k / 2)              # step-doubling: two half
       y2 <- rk4_step(p_use, yh, tt[k] + dt_k / 2, dt_k / 2)   #   steps for the error est.
-      u_pred[k + 1L, ] <- y1
-      e_k <- (16 / 15) * (y1 - y2)                            # RK4 local truncation error
 
+      u_pred[k + 1L, ] <- y1 # Predicted step from model + control
+
+      e_k <- (16 / 15) * (y1 - y2)                            # RK4 local truncation error
       Ju_k <- matrix(as.vector(J_u(c(p_use, uk, tt[k]))), D, D)  # J[a, b] = df_a/du_b
-      Fk   <- I_D + dt_k * Ju_k
+      Fk <- I_D + dt_k * Ju_k
       F_store[k,,] <- Fk
 
-      Pk_pred <- Fk %*% P_filt[k,,] %*% t(Fk) + diag(e_k^2 + q_floor, D)
+      Pk_pred <- Fk %*% P_filt[k,,] %*% t(Fk) + diag(e_k^2 + q_floor, D) # Predicted covariance
       P_pred[k + 1L,,] <- Pk_pred
 
-      Sk               <- Pk_pred + R_obs
-      Kk               <- Pk_pred %*% solve(Sk)
-      innov            <- U[k + 1L, ] - u_pred[k + 1L, ]
+      # Update step
+      innov <- U[k + 1L, ] - u_pred[k + 1L, ]
+      Sk <- Pk_pred + R_obs
+      Kk <- Pk_pred %*% solve(Sk)
+
       u_filt[k + 1L, ] <- u_pred[k + 1L, ] + Kk %*% innov
       P_filt[k + 1L,,] <- (I_D - Kk) %*% Pk_pred %*% t(I_D - Kk) + Kk %*% R_obs %*% t(Kk)
     }
 
-    u_smooth        <- matrix(0, mp1, D)
+    u_smooth <- matrix(0, mp1, D)
     u_smooth[mp1, ] <- u_filt[mp1, ]
     P_smooth <- if (want_cov) array(0, c(mp1, D, D)) else NULL
     if (want_cov) P_smooth[mp1,,] <- P_filt[mp1,,]
 
+    # RTS Smoother
     for (k in seq(mp1 - 1L, 1L)) {
       Pk <- P_filt[k,,]
       Pp <- P_pred[k + 1L,,]
       Fk <- F_store[k,,]
 
-      Gk <- Pk %*% t(Fk) %*% solve(Pp + 1e-10 * I_D)
-      u_smooth[k, ] <- u_filt[k, ] + Gk %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
-      if (want_cov)
-        P_smooth[k,,] <- Pk + Gk %*% (P_smooth[k + 1L,,] - Pp) %*% t(Gk)
+      Ck <- Pk %*% t(Fk) %*% solve(Pp + 1e-10 * I_D)
+      u_smooth[k, ] <- u_filt[k, ] + Ck %*% (u_smooth[k + 1L, ] - u_pred[k + 1L, ])
+      if (want_cov){
+        P_smooth[k,,] <- Pk + Ck %*% (P_smooth[k + 1L,,] - Pp) %*% t(Ck)
+      }
     }
 
-    list(U_star = u_smooth, P_smooth = P_smooth,
-         u_filt = u_filt, P_filt = P_filt, u_pred = u_pred, P_pred = P_pred)
+    list(U_star = u_smooth, P_smooth = P_smooth, u_filt = u_filt, P_filt = P_filt, u_pred = u_pred, P_pred = P_pred)
   }
 
-  # Conditional-on-p̂ pass: smoothed mean + conditional posterior covariance.
+  # Conditional p̂ pass: smoothed mean + conditional posterior covariance
   base     <- erts_pass(p, want_cov = TRUE)
   u_smooth <- base$U_star
   P_cond   <- base$P_smooth
@@ -1112,30 +1091,33 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params,
   P_param  <- NULL
   P_smooth <- P_cond
   if (fold) {
-    sens <- array(0, c(mp1, D, J))  # ∂u*_k/∂p̂_j
+    sens <- array(0, c(mp1, D, J))  # ∂u_k/∂p̂_j
     for (j in seq_len(J)) {
       hj <- 1e-5 * max(1, abs(p[j]))
-      pp <- p; pp[j] <- pp[j] + hj
-      pm <- p; pm[j] <- pm[j] - hj
-      sens[, , j] <- (erts_pass(pp, FALSE)$U_star -
-                      erts_pass(pm, FALSE)$U_star) / (2 * hj)
+      pp <- p
+      pp[j] <- pp[j] + hj
+      pm <- p
+      pm[j] <- pm[j] - hj
+      sens[, , j] <- (erts_pass(pp, FALSE)$U_star - erts_pass(pm, FALSE)$U_star) / (2 * hj)
     }
     P_param <- array(0, c(mp1, D, D))
     for (k in seq_len(mp1)) {
-      Sk            <- matrix(sens[k, , ], D, J)
+      Sk <- matrix(sens[k, , ], D, J)
       P_param[k,,]  <- Sk %*% param_cov %*% t(Sk)
+      # Law of total variance to explain the total uncertainty in the estimate
+      # total var = unexplained + explained
       P_smooth[k,,] <- P_cond[k,,] + P_param[k,,]
     }
   }
 
   list(
-    U_star         = u_smooth,
-    P_smooth       = P_smooth,
+    U_star = u_smooth,
+    P_smooth = P_smooth,
     P_smooth_cond  = P_cond,
     P_smooth_param = P_param,
-    u_filt         = base$u_filt,
-    P_filt         = base$P_filt,
-    u_pred         = base$u_pred,
-    P_pred         = base$P_pred
+    u_filt = base$u_filt,
+    P_filt = base$P_filt,
+    u_pred = base$u_pred,
+    P_pred = base$P_pred
   )
 }
