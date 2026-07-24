@@ -147,15 +147,15 @@ build_em_jacobian <- function(bl_phi_t1, bl_phi_tM,
 
 # Boundary-layer IC system helpers
 
-# Build the left boundary-layer system for one (r_c, n_bl) design: trap-weighted
+# Build the left boundary-layer system for one (r_bl, n_bl) design: trap-weighted
 # order-0/1 rows, the boundary vector B = psi_k(t_1), the raw endpoint
 # derivatives phi^(orders) at t_1, and the data window the rows touch.
 # orders = 0:1 suffices for the design-stage (no-EM) covariance; the estimator
 # itself needs 0:4 for the Euler-Maclaurin correction.
-build_ic_bl_system <- function(tt_vec, r_c, n_bl, orders = 0:4) {
+build_ic_bl_system <- function(tt_vec, r_bl, n_bl, orders = 0:4) {
   M <- length(tt_vec)
   bl_left <- lapply(orders, function(ord)
-    build_boundary_layer_block(psi, tt_vec, r_c, order = ord,
+    build_boundary_layer_block(psi, tt_vec, r_bl, order = ord,
                                side = "left", n_bl = n_bl))
   K_bl <- nrow(bl_left[[1]])
 
@@ -312,7 +312,8 @@ build_ic_bias_o2 <- function(bl, sens, gls, P, EMp, U, tt_vec, p, J_u,
   list(b1 = b1, b2 = b2, b = b1 + b2)
 }
 
-# A-priori (r_c, n_bl) selection by the calibrated u0-MSE proxy. For each
+# A-priori BL-radius selection (count maxed, n_bl = r_bl) by the calibrated
+# u0-MSE proxy over an absolute r_bl grid. For each
 # candidate design one EM(4) solve (which also returns the EM(2) fixed point on
 # the same built system, via return_em2_u0) gives
 #   crit = sum_d Var_d / sigma_d^2  [variance]  + sum_d ( (u0_EM2 - u0_EM4)_d + bias_o2_d )^2 / sigma_d^2  [bias^2]
@@ -335,20 +336,20 @@ build_ic_bias_o2 <- function(bl, sens, gls, P, EMp, U, tt_vec, p, J_u,
 # the corner.
 select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
                              sigma, sig_vec, param_cov, em_order,
-                             r_c_grid, n_bl_grid, rc_cap) {
-  r_cs <- sort(unique(pmin(pmax(as.integer(r_c_grid), 2L), rc_cap)))
-  nbls <- sort(unique(pmax(as.integer(n_bl_grid), 1L)))
+                             r_bl_grid, rc_cap) {
+  r_bls <- sort(unique(pmin(pmax(as.integer(r_bl_grid), 2L), rc_cap)))
   D    <- ncol(U)
   s2   <- sig_vec^2
-  rows <- vector("list", length(r_cs) * length(nbls))
+  rows <- vector("list", length(r_bls))
   i <- 0L
-  for (r_c in r_cs) for (n_bl in nbls) {
+  for (r_bl in r_bls) {
+    n_bl <- as.integer(min(r_bl, rc_cap))   # maximum peak-inside count for r_bl
     res <- tryCatch({
       # EM(em_order) solve: deployed covariance (noise + param), statbias. With
       # return_em2_u0 the same call also returns the EM(2) fixed point (u0hat_em2)
       # from the same built system, so the EM-order-difference truncation estimate
       # needs no second estimate_IC solve (bit-identical to the former e_lo).
-      e_hi <- estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c,
+      e_hi <- estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_bl,
                           J_u = J_u, sigma = sigma, param_cov = param_cov,
                           n_bl = n_bl, combine = "gls", debias = TRUE,
                           em_order = em_order, return_em2_u0 = em_order > 2L,
@@ -368,13 +369,13 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
       c(vobj + sum((emb + statb)^2 / s2), vobj)
     }, error = function(err) c(NA_real_, NA_real_))
     i <- i + 1L
-    rows[[i]] <- data.frame(r_c = r_c, n_bl = n_bl,
+    rows[[i]] <- data.frame(r_bl = r_bl, n_bl = n_bl,
                             obj = res[1], var_obj = res[2])
   }
   tab <- do.call(rbind, rows)
   if (!any(is.finite(tab$obj))) return(NULL)
   best <- which.min(tab$obj)
-  list(table = tab, r_c = tab$r_c[best], n_bl = tab$n_bl[best])
+  list(table = tab, r_bl = tab$r_bl[best], n_bl = tab$n_bl[best])
 }
 
 #' Estimate u(0) via iterative defect-correction on left BL test functions
@@ -438,17 +439,21 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #'   evaluators built from the symbolic engine.
 #' @param tt Numeric vector (length M) of time points.
 #' @param p Numeric parameter vector \eqn{\hat\theta} (held fixed).
-#' @param r_c Integer; left BL window half-width. Under \code{combine = "gls"}
-#'   with \code{n_bl = NULL} it seeds the design grid (see \code{r_c_grid});
-#'   otherwise it is used as given.
-#' @param n_bl Optional integer; number of left BL test functions. When
-#'   \code{NULL} (default) and \code{combine = "gls"}, both \code{r_c} and
-#'   \code{n_bl} are selected by the a-priori MSE-proxy design sweep (see
-#'   Details); when \code{NULL} under \code{combine = "ols"} the legacy heuristic
-#'   \code{max(3, ceiling(r_c/8))} applies (small count, wide placement --
-#'   under the unweighted combine, clustered test functions inflate
-#'   Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value
-#'   always skips the sweep.
+#' @param r_c Integer; the integration-error (parameter-estimation) radius. This
+#'   is NOT the boundary-layer radius: under \code{combine = "gls"} with
+#'   \code{n_bl = NULL} the BL radius \code{r_bl} is selected from
+#'   \code{r_bl_grid} (an absolute grid, independent of \code{r_c}), and
+#'   \code{r_c} is used only as the OLS-fallback window. When \code{n_bl} is given
+#'   explicitly the BL radius equals \code{r_c}.
+#' @param n_bl Optional integer; number of left (peak-inside) BL test functions.
+#'   When \code{NULL} (default) and \code{combine = "gls"}, the BL radius
+#'   \code{r_bl} is selected from \code{r_bl_grid} by the a-priori MSE proxy and
+#'   the count is maxed, \code{n_bl = r_bl} (one BL function per sample out to the
+#'   radius; see Details). When \code{NULL} under \code{combine = "ols"} the
+#'   legacy heuristic \code{max(3, ceiling(r_c/8))} applies (small count, wide
+#'   placement -- under the unweighted combine, clustered test functions inflate
+#'   Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value skips
+#'   the selection and uses window radius \code{r_c}.
 #' @param max_iter,tol Fixed-point iteration controls.
 #' @param em_order Either 2 or 4.
 #' @param combine \code{"gls"} (default) for the minimum-variance GLS combine
@@ -468,10 +473,11 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #'   noise-propagation channel is available -- it is only ever used as a
 #'   fallback and the design sweep never reads it. The public default computes
 #'   it for reference as before.
-#' @param r_c_grid,n_bl_grid Optional integer vectors of design candidates for
-#'   the a-priori sweep (defaults \code{c(1, 2, 3, 4) * r_c} capped at
-#'   \code{floor((M-1)/2)} and deduped, and \code{c(3, 8, 16)}). Only used
-#'   when \code{combine = "gls"} and \code{n_bl} is \code{NULL}.
+#' @param r_bl_grid Optional integer vector of candidate BL radii for the
+#'   a-priori selection (default the absolute grid
+#'   \code{c(4,8,12,16,20,24,32,40,48)} capped at \code{floor((M-1)/2)}); at each
+#'   candidate the count is maxed (\code{n_bl = r_bl}). Only used when
+#'   \code{combine = "gls"} and \code{n_bl} is \code{NULL}.
 #' @param J_u Callable state Jacobian \eqn{\partial f/\partial u}
 #'   (\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
 #'   \eqn{[a,b] = \partial f_a/\partial u_b}). Used together with \code{sigma}
@@ -500,16 +506,17 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #'   (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
 #'   \code{"+param"} suffix when the parameter channel is included, or
 #'   \code{"diverged"}), plus \code{combine} (the combine actually used,
-#'   after any degradation), \code{design} (the design-sweep table with
-#'   columns \code{r_c}, \code{n_bl}, \code{obj} (the MSE proxy), and
-#'   \code{var_obj} (its variance part), or \code{NULL} when no sweep ran),
+#'   after any degradation), \code{design} (the design-selection table with
+#'   columns \code{r_bl}, \code{n_bl}, \code{obj} (the MSE proxy), and
+#'   \code{var_obj} (its variance part), or \code{NULL} when no selection ran),
 #'   \code{bias_o2} (the analytic
 #'   \eqn{O(\sigma^2)} bias estimate of the UNcorrected solve, length-D, or
 #'   \code{NULL} when not computed), \code{debias_applied} (whether
 #'   \code{bias_o2} was subtracted from \code{u0hat}), \code{u0hat_em2} (the
 #'   EM(2) fixed point, or \code{NULL} unless \code{return_em2_u0} and
 #'   \code{em_order == 4}), \code{em2_diverged}, \code{iters},
-#'   \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c},
+#'   \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c} (the
+#'   integration radius passed in), \code{r_bl} (the BL radius actually used),
 #'   \code{n_bl}, \code{K_bl}, \code{em_order}.
 #' @export
 estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigma,
@@ -519,8 +526,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
                         tol            = 1e-12,
                         em_order       = c(4L, 2L),
                         combine        = c("gls", "ols"),
-                        r_c_grid       = NULL,
-                        n_bl_grid      = NULL,
+                        r_bl_grid      = NULL,
                         debias         = TRUE,
                         return_em2_u0  = FALSE,
                         lean           = FALSE) {
@@ -537,46 +543,37 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   dt     <- mean(diff(tt_vec))
 
   rc_cap <- floor((M - 1L) / 2L)
-  r_c    <- min(r_c, rc_cap)
-  r_c_in <- r_c
+  r_c    <- min(r_c, rc_cap)   # integration-error radius (parameter estimate);
+                               # here only the OLS-fallback BL radius.
+  r_bl   <- r_c                # BL test-function radius actually used (set below)
 
   use_noiseprop <- length(sigma) %in% c(1L, D) && all(is.finite(sigma))
   sig_vec <- if (use_noiseprop) {
     if (length(sigma) == 1L) rep(sigma, D) else as.numeric(sigma)
   } else NULL
-  # GLS needs a valid sigma (with J_u) to build Omega; degrade to the legacy
-  # unweighted combine otherwise.
+
   if (combine == "gls" && !use_noiseprop) combine <- "ols"
 
-  # A-priori design selection (GLS only): when no explicit n_bl is given,
-  # sweep (r_c, n_bl) candidates and keep the design minimizing the calibrated
-  # u0-MSE proxy (select_ic_design). The passed r_c (pipeline radius) seeds the
-  # grid. Under the OLS combine the legacy heuristic below applies.
   design_table <- NULL
   if (combine == "gls" && is.null(n_bl)) {
-    if (is.null(r_c_grid))  r_c_grid  <- c(2L, 5L, 6L, 8L, 10L, 12L, 16L, r_c)
-    if (is.null(n_bl_grid)) n_bl_grid <- c(8L)
-    sel <- tryCatch(
-      select_ic_design(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
-                       sigma, sig_vec, param_cov, em_order,
-                       r_c_grid, n_bl_grid, rc_cap),
-      error = function(err) NULL)
+    if (is.null(r_bl_grid))
+      r_bl_grid <- sort(unique(pmin(c(4L, 8L, 12L, 16L, 20L, 24L, 32L, 40L, 48L), rc_cap)))
+      sel <- tryCatch(
+        select_ic_design(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
+                         sigma, sig_vec, param_cov, em_order, r_bl_grid, rc_cap),
+        error = function(err) NULL)
     if (!is.null(sel)) {
       design_table <- sel$table
-      r_c          <- sel$r_c
+      r_bl         <- sel$r_bl
       n_bl         <- sel$n_bl
     }
   }
 
-  # Legacy count heuristic (OLS combine, or sweep unavailable): small count,
-  # wide placement. Under the UNWEIGHTED combine, clustered test functions add
-  # redundant info with full noise and inflate Var(u0hat) by ~7-19%
-  # (examples/validation/); under GLS the sweep above governs instead.
-  n_bl <- if (is.null(n_bl)) max(3L, as.integer(ceiling(r_c / 8)))
-          else                max(1L, as.integer(n_bl))
+  n_bl <- if (!is.null(n_bl)) max(1L, as.integer(n_bl))
+          else  as.integer(min(r_bl, rc_cap))
 
-  build_system <- function(r_c_use, n_bl_use) {
-    bl <- build_ic_bl_system(tt_vec, r_c_use, n_bl_use, orders = 0:4)
+  build_system <- function(r_bl_use, n_bl_use) {
+    bl <- build_ic_bl_system(tt_vec, r_bl_use, n_bl_use, orders = 0:4)
     sens <- if (use_noiseprop) tryCatch(
       build_ic_noise_sensitivity(bl, U, tt_vec, p, J_u, sig_vec, dt),
       error = function(err) NULL) else NULL
@@ -586,17 +583,14 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     list(bl = bl, sens = sens, gls = gls)
   }
 
-  sys <- build_system(r_c, n_bl)
+  sys <- build_system(r_bl, n_bl)
   if (combine == "gls" && is.null(sys$gls)) {
-    # GLS weights unavailable (singular Omega, J_u failure, ...). Revert to
-    # the FULL legacy path: a sweep-selected design (large n_bl, wide window)
-    # is GLS-specific and would be inefficient under the unweighted combine.
     combine <- "ols"
     if (!is.null(design_table)) {
       design_table <- NULL
-      r_c  <- r_c_in
-      n_bl <- max(3L, as.integer(ceiling(r_c / 8)))
-      sys  <- build_system(r_c, n_bl)
+      r_bl <- r_c
+      n_bl <- max(3L, as.integer(ceiling(r_bl / 8)))
+      sys  <- build_system(r_bl, n_bl)
     }
   }
 
@@ -616,7 +610,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     return(list(U_hat = U_hat, u0hat = u0_obs, cov_u0 = NULL,
                 iters = 0L, converged = FALSE, diverged = FALSE,
                 u0_history = matrix(u0_obs, nrow = 1),
-                r_c = r_c, n_bl = n_bl, K_bl = K_bl, em_order = em_order,
+                r_c = r_c, r_bl = r_bl, n_bl = n_bl, K_bl = K_bl, em_order = em_order,
                 combine = combine, design = design_table,
                 bias_o2 = NULL, debias_applied = FALSE
               ))
@@ -658,18 +652,12 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     EM
   }
 
-  # Projection of the stacked K_bl x D system onto u0. GLS (BLUE) weights the
-  # equations by W = Omega^{-1}:  u0 = (Bb' W Bb)^{-1} Bb' W vec(rhs); the OLS
-  # branch is the legacy unweighted combine B^T rhs / B^T B. vec layout is
-  # column-major (k fast, d slow), matching Bbold in build_ic_noise_sensitivity.
   proj <- if (!is.null(gls)) {
     function(rhs) as.numeric(solve(gls$BtWB, gls$BtW %*% as.vector(rhs)))
   } else {
     function(rhs) as.numeric(crossprod(B, rhs) / BtB)
   }
 
-  # Residual over the K_bl x D system, in the same metric the projection
-  # minimizes: W-weighted for GLS, Frobenius for OLS.
   residual_norm <- function(u0_curr, c4_use = c4) {
     EM <- em_correction(u0_curr, c4_use = c4_use)
     e  <- outer(B, as.numeric(u0_curr)) - (r_trap - EM)   # K_bl x D
@@ -681,11 +669,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     }
   }
 
-  # Fixed-point iteration u0 <- proj(r_trap - EM(u0)), tracking the best iterate
-  # by residual norm. The iteration contracts only when the EM-correction map
-  # has spectral radius < 1 (kappa = O(h^2)); for under-sampled stiff systems
-  # the contraction can fail and iterates blow up, so returning the best-seen
-  # iterate keeps us no worse than the uncorrected LS.
   run_fixed_point <- function(c4_use = c4) {
     u0       <- proj(r_trap)
     u0_hist  <- list(u0)
@@ -729,12 +712,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   diverged  <- fit$diverged
   u0_hist   <- fit$u0_hist
 
-  # Optional EM(2) fixed point on the SAME built system (design sweep only). The
-  # EM-order-difference truncation estimate u0_EM2 - u0_EM4 needs the lower-order
-  # solution; computing it here (c4_use = 0) reuses this build, GLS weights, and
-  # r_trap instead of a second estimate_IC call that would rebuild all of them
-  # and redundantly compute a full covariance the sweep never reads. Bit-identical
-  # to a standalone em_order = 2, debias = FALSE solve.
   u0hat_em2    <- NULL
   em2_diverged <- FALSE
   if (isTRUE(return_em2_u0) && c4 != 0) {
@@ -750,17 +727,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   #   cov_u0_noise - delta-method propagation of data noise (preferred)
   #   cov_u0_param - law-of-total-variance contribution from Cov(phat)
   compute_covariance <- function(u0) {
-    # Residual-based closed-form LS variance (fallback): for the K_bl x 1
-    # per-state regression B u0_d = rhs_d, rhs_d = (r_trap - EM(u0))[, d], the
-    # per-state residual variance is s_d^2 = ||B u0_d - rhs_d||^2 / (K_bl - 1)
-    # and Var(u0_d) = s_d^2 / B^T B. This OVER-states Var(u0hat): the residual
-    # norm absorbs the DETERMINISTIC Euler-Maclaurin / trapezoidal truncation
-    # mismatch on top of the propagated noise (empirically ~1.8x too wide in
-    # SE, ~100% coverage of a nominal-95% interval on the logistic problem).
-    # It is only ever used as the fallback when the noise channel is
-    # unavailable, so its (em_correction-costing) computation is deferred until
-    # after the noise channel below and skipped entirely in `lean` mode (the
-    # design sweep) when the noise channel succeeded.
     compute_resid <- function() tryCatch({
       EM_final <- em_correction(u0)
       rhs      <- r_trap - EM_final            # K_bl x D
@@ -770,16 +736,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       diag(s2 / BtB, nrow = D, ncol = D)
     }, error = function(err) NULL)
 
-    # Implicit-function-theorem machinery shared by the noise and parameter
-    # channels. u0hat is a deterministic function of the data: differentiating
-    # the converged fixed-point relation
-    #   (C Bbold) u0 + C vec(EM(u0)) = C vec(r_trap(U)),
-    # with collapse matrix C = Bbold^T (OLS) or C = Bbold^T W (GLS), gives
-    #   P        = (C Bbold + C EMp)^{-1} C,        EMp = dvec(EM)/du0,
-    #   du0/dU   = P X            (X from build_ic_noise_sensitivity),
-    #   du0/dp_j = P dvec(r_trap - EM)/dp_j.
-    # EMp is taken by central differences. For OLS this reduces to the
-    # (B^T B I + A)^{-1} form exactly: C Bbold = BtB I_D and C EMp = A.
     I_D <- diag(D)
     KD  <- K_bl * D
     EMp <- tryCatch({
@@ -807,16 +763,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       }
     }, error = function(err) NULL) else NULL
 
-    # Noise channel (preferred when J_u and sigma are supplied):
-    #   Cov_noise(u0|p) = (P X) diag(s2) (P X)^T,
-    # the delta-method propagation of the per-point data noise through the
-    # estimator -- only the BL-window samples contribute (X is built on
-    # win_cols). Calibrated ~95% coverage; for GLS the (near-)minimum-variance
-    # combine: with EMp -> 0 it telescopes to (Bbold^T Omega^{-1} Bbold)^{-1}
-    # (Gauss-Markov; see build_ic_gls_weights). NOTE: the weights W are treated
-    # as fixed (feasible GLS); their dependence on U through J_u is one order
-    # down in sigma (MC-calibrated 0.97-1.10).
-    # Falls back to the LS-residual variance only for degenerate sigma.
     cov_u0_noise <- if (!is.null(sens) && !is.null(P)) tryCatch({
       G <- P %*% sens$X
       G %*% (sens$s2 * t(G))
@@ -921,6 +867,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     diverged       = diverged,
     u0_history     = do.call(rbind, u0_hist),
     r_c            = r_c,
+    r_bl           = r_bl,
     n_bl           = n_bl,
     K_bl           = K_bl,
     em_order       = em_order

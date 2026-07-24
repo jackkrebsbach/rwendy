@@ -21,9 +21,9 @@ t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-14)
 
-set.seed(8675309)
+# set.seed(8675309)
 
-nr <- 0.3
+nr <- 0.2
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -43,8 +43,6 @@ time  <- system.time({
     f = f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE, estimate_trajectory = TRUE)
   )
 })
-
-print(time)
 
 t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
@@ -88,3 +86,6 @@ legend(
   bty    = "n",
   cex = 0.7
 )
+
+
+print(time)

@@ -368,12 +368,12 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
   } else NULL
 
   boundary_state <- if (control$estimate_IC && method != "OE") {
-     if (identical(control$test_fun_type, "SSL")) {
-      r_c_bl <- res$rc
-    } else {
-      r_c_bl <- compute_r_c_hat(U, tt, control$S, control$p)$rc
-    }
-    estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c_bl,
+    # Integration-error radius (the parameter-estimation radius). It is only the
+    # OLS fallback inside estimate_IC, which selects its own BL radius r_bl from
+    # an absolute grid; it does NOT bound r_bl.
+    r_c <- if (identical(control$test_fun_type, "SSL")) res$rc
+           else compute_r_c_hat(U, tt, control$S, control$p)$rc
+    estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c,
                 J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat, lean = TRUE)
   } else NULL
 

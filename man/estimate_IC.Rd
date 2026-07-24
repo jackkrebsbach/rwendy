@@ -21,9 +21,10 @@ estimate_IC(
   tol = 1e-12,
   em_order = c(4L, 2L),
   combine = c("gls", "ols"),
-  r_c_grid = NULL,
-  n_bl_grid = NULL,
-  debias = TRUE
+  r_bl_grid = NULL,
+  debias = TRUE,
+  return_em2_u0 = FALSE,
+  lean = FALSE
 )
 }
 \arguments{
@@ -36,9 +37,12 @@ evaluators built from the symbolic engine.}
 
 \item{p}{Numeric parameter vector \eqn{\hat\theta} (held fixed).}
 
-\item{r_c}{Integer; left BL window half-width. Under \code{combine = "gls"}
-with \code{n_bl = NULL} it seeds the design grid (see \code{r_c_grid});
-otherwise it is used as given.}
+\item{r_c}{Integer; the integration-error (parameter-estimation) radius. This
+is NOT the boundary-layer radius: under \code{combine = "gls"} with
+\code{n_bl = NULL} the BL radius \code{r_bl} is selected from
+\code{r_bl_grid} (an absolute grid, independent of \code{r_c}), and
+\code{r_c} is used only as the OLS-fallback window. When \code{n_bl} is given
+explicitly the BL radius equals \code{r_c}.}
 
 \item{J_u}{Callable state Jacobian \eqn{\partial f/\partial u}
 (\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
@@ -56,14 +60,15 @@ state), used to scale the noise-channel \code{cov_u0}.}
 (the explained part of the law of total variance); see Details in the
 covariance comments below.}
 
-\item{n_bl}{Optional integer; number of left BL test functions. When
-\code{NULL} (default) and \code{combine = "gls"}, both \code{r_c} and
-\code{n_bl} are selected by the a-priori minimum-variance design sweep;
-when \code{NULL} under \code{combine = "ols"} the legacy heuristic
-\code{max(3, ceiling(r_c/8))} applies (small count, wide placement --
-under the unweighted combine, clustered test functions inflate
-Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value
-always skips the sweep.}
+\item{n_bl}{Optional integer; number of left (peak-inside) BL test functions.
+When \code{NULL} (default) and \code{combine = "gls"}, the BL radius
+\code{r_bl} is selected from \code{r_bl_grid} by the a-priori MSE proxy and
+the count is maxed, \code{n_bl = r_bl} (one BL function per sample out to the
+radius; see Details). When \code{NULL} under \code{combine = "ols"} the
+legacy heuristic \code{max(3, ceiling(r_c/8))} applies (small count, wide
+placement -- under the unweighted combine, clustered test functions inflate
+Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value skips
+the selection and uses window radius \code{r_c}.}
 
 \item{max_iter, tol}{Fixed-point iteration controls.}
 
@@ -74,14 +79,27 @@ of the BL equations, or \code{"ols"} for the legacy unweighted combine.
 GLS requires a valid \code{sigma} (and \code{J_u}) to build
 \eqn{\Omega}; it degrades to \code{"ols"} otherwise.}
 
-\item{r_c_grid, n_bl_grid}{Optional integer vectors of design candidates for
-the a-priori sweep (defaults \code{c(1, 2, 4) * r_c} capped at
-\code{floor((M-1)/2)} and deduped, and \code{c(3, 8, 16)}). Only used
-when \code{combine = "gls"} and \code{n_bl} is \code{NULL}.}
+\item{r_bl_grid}{Optional integer vector of candidate BL radii for the
+a-priori selection (default the absolute grid
+\code{c(4,8,12,16,20,24,32,40,48)} capped at \code{floor((M-1)/2)}); at each
+candidate the count is maxed (\code{n_bl = r_bl}). Only used when
+\code{combine = "gls"} and \code{n_bl} is \code{NULL}.}
 
 \item{debias}{Logical (default \code{TRUE}). On the GLS path, subtract the
 analytic \eqn{O(\sigma^2)} bias (both channels; see Details). Ignored on
 the OLS path and on diverged solves.}
+
+\item{return_em2_u0}{Logical (default \code{FALSE}, internal). When
+\code{TRUE} and \code{em_order == 4}, additionally solve the EM(2) fixed
+point on the same built system and return it as \code{u0hat_em2} (with
+\code{em2_diverged}). Used by the design sweep to form the EM-order-
+difference truncation estimate without a second \code{estimate_IC} call.}
+
+\item{lean}{Logical (default \code{FALSE}, internal). When \code{TRUE}, skip
+the LS-residual fallback covariance (\code{cov_u0_resid}) whenever the
+noise-propagation channel is available -- it is only ever used as a
+fallback and the design sweep never reads it. The public default computes
+it for reference as before.}
 }
 \value{
 Named list with \code{U_hat} (U with row 1 replaced by
@@ -99,13 +117,17 @@ Named list with \code{U_hat} (U with row 1 replaced by
   (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
   \code{"+param"} suffix when the parameter channel is included, or
   \code{"diverged"}), plus \code{combine} (the combine actually used,
-  after any degradation), \code{design} (the design-sweep table with
-  columns \code{r_c}, \code{n_bl}, \code{obj}, \code{se_mean}, or
-  \code{NULL} when no sweep ran), \code{bias_o2} (the analytic
+  after any degradation), \code{design} (the design-selection table with
+  columns \code{r_bl}, \code{n_bl}, \code{obj} (the MSE proxy), and
+  \code{var_obj} (its variance part), or \code{NULL} when no selection ran),
+  \code{bias_o2} (the analytic
   \eqn{O(\sigma^2)} bias estimate of the UNcorrected solve, length-D, or
   \code{NULL} when not computed), \code{debias_applied} (whether
-  \code{bias_o2} was subtracted from \code{u0hat}), \code{iters},
-  \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c},
+  \code{bias_o2} was subtracted from \code{u0hat}), \code{u0hat_em2} (the
+  EM(2) fixed point, or \code{NULL} unless \code{return_em2_u0} and
+  \code{em_order == 4}), \code{em2_diverged}, \code{iters},
+  \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c} (the
+  integration radius passed in), \code{r_bl} (the BL radius actually used),
   \code{n_bl}, \code{K_bl}, \code{em_order}.
 }
 \description{
@@ -134,11 +156,22 @@ which is minimum-variance among all linear combinations of the equations
 (validated at ~1.05-1.2x the window Cramer-Rao bound, vs up to ~25x for the
 unweighted combine; examples/validation/). Additionally, when \code{n_bl}
 is \code{NULL}, the design \code{(r_c, n_bl)} is selected a priori by
-sweeping a small grid and minimizing the no-EM GLS variance
-\eqn{(\mathbf{B}^T \Omega^{-1} \mathbf{B})^{-1}}, which depends only on the
-design, \code{sigma}, and \code{J_u} along the observed trajectory.
-\code{combine = "ols"} restores the legacy unweighted combine and its
-\code{max(3, ceiling(r_c/8))} count heuristic.
+sweeping a small grid and minimizing a calibrated \eqn{u_0}-MSE proxy
+\deqn{\textstyle\sum_d \mathrm{Var}_d/\sigma_d^2
+      + \sum_d ((u_0^{EM2} - u_0^{EM4})_d + b_d)^2/\sigma_d^2,}
+where \eqn{\mathrm{Var} = \mathrm{diag}(\mathrm{cov\_u0})} folds the EM
+Jacobian and the parameter channel \eqn{S_p \hat C S_p^T},
+\eqn{u_0^{EM2} - u_0^{EM4}} is the oracle-free Euler-Maclaurin order-
+difference estimate of the truncation defect, and \eqn{b} is the analytic
+\eqn{O(\sigma^2)} statistical bias. Each candidate costs a single EM solve
+(the lower-order \eqn{u_0^{EM2}} fixed point is recovered from the same build
+via \code{return_em2_u0}, not a second solve). This replaces the earlier
+noise-only variance objective, which was
+monotone in window/count and so pinned the corner; the MSE proxy turns up
+where the true MSE turns up (validated examples/validation/ic_mse_proxy.R,
+ic_calibrated_criterion.R, ic_realC_overshoot.R). \code{combine = "ols"}
+restores the legacy unweighted combine and its \code{max(3, ceiling(r_c/8))}
+count heuristic.
 
 The feasible GLS estimator carries an \eqn{O(\sigma^2)} bias with two
 partially cancelling channels (noise nonlinearity through \eqn{f''}, and

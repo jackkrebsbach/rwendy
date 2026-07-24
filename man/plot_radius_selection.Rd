@@ -20,8 +20,8 @@ any supplied value overrides the default.}
 }
 \value{
 Invisibly, a list with the swept \code{radii}, the \code{errors}
-curve, the selected \code{radius}, its index \code{ix} into \code{radii},
-and the selection \code{type} (\code{"MSG"} or \code{"SSL"}).
+  curve, the selected \code{radius}, its index \code{ix} into \code{radii},
+  and the selection \code{type} (\code{"MSG"} or \code{"SSL"}).
 }
 \description{
 Visualises the data-driven choice of test-function support radius made when a
