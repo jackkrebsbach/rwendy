@@ -368,13 +368,22 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
   } else NULL
 
   boundary_state <- if (control$estimate_IC && method != "OE") {
-    # Integration-error radius (the parameter-estimation radius). It is only the
-    # OLS fallback inside estimate_IC, which selects its own BL radius r_bl from
-    # an absolute grid; it does NOT bound r_bl.
-    r_c <- if (identical(control$test_fun_type, "SSL")) res$rc
-           else compute_r_c_hat(U, tt, control$S, control$p)$rc
-    estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat, r_c,
-                J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat, lean = TRUE)
+    ic <- estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat,
+                J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat,
+                debias = TRUE, quad_cov = TRUE,  include_interior = TRUE, combine = "gls")
+
+    # Divergence guard: the Picard map contracts only while the grid resolves f.
+    if (isTRUE(ic$diverged) || !isTRUE(ic$converged)) {
+      ic$u0hat      <- as.numeric(U[1, ])
+      ic$U_hat[1, ] <- ic$u0hat
+      # `[<- list(NULL)` keeps the names; dropping them lets `$cov_u0`
+      # partial-match `cov_u0_resid` and read as usable.
+      ic[c("cov_u0", "cov_u0_param", "bias_o2")] <- list(NULL)
+      ic$cov_method     <- if (isTRUE(ic$diverged)) "diverged" else "not_converged"
+      ic$debias_applied <- FALSE
+      ic$fallback       <- TRUE
+    }
+    ic
   } else NULL
 
   state <- if (control$estimate_trajectory && method != "OE") {
