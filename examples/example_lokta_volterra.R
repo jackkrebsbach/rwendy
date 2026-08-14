@@ -19,15 +19,15 @@ u0 <- c(1, 1)
 p_star <- c(1, -0.1, -1.5, 0.075)
 u0 <- c(10,5)
 p0 <- c(2, -0.1, -1, 0.25)
-npoints <- 128
-t_span <- c(0, 10)
+npoints <- 256
+t_span <- c(0, 30)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 
 # Additive Gaussian Noise
-nr <- 0.025
+nr <- 0.1
 
 # set.seed(8675309 + 1)
 
@@ -41,11 +41,14 @@ U <- sol[, -1] + noise
 # U[,1] <- mean(U[,2])
 tt <- matrix(sol[, 1], ncol = 1)
 
+
 time <- system.time({
 res  <- solveWendy(f, U, p0 = p0, tt, method = "IRLS",
- control = list(test_fun_type = "MSG")
+ control = list(estimate_IC = FALSE)
 )
 })
+
+print(time)
 
 # plot(tt, U[,1], col = adjustcolor("brown", alpha.f = 0.3), cex = 0.5,
 #    ylab = "State u₁ & u₂",
@@ -65,4 +68,8 @@ res  <- solveWendy(f, U, p0 = p0, tt, method = "IRLS",
 # # cat(sprintf("\np̂_MLE   = [%s]  rel_err = %.4f\n",
 # #             paste(sprintf("%.4f", res2$phat), collapse = ", "),
 # #             rel_err(res2$phat, p_star)))
-plot_radius_selection(res)
+
+# plot_radius_selection(res)
+plot_IC_radius_selection(res)
+cat("\n\nestimate_IC û₀: ", res$u0hat)
+cat("\n           u*₀: ", as.numeric(sol[,-1][1,]))

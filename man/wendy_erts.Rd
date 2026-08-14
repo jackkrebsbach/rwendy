@@ -39,8 +39,11 @@ from U via \code{estimate_std}.}
 (e.g. \code{estimate_IC()$u0hat}). Defaults to \code{U[1, ]}.}
 
 \item{P0_init}{Optional D x D prior covariance for \code{u0_init}. When
-\code{u0_init} is supplied, defaults to \code{0.1 * sigma^2 I_D} (more
-confident than the raw observation); otherwise \code{sigma^2 I_D}.}
+\code{u0_init} is supplied, defaults to \code{sigma^2 I_D}. When neither is
+supplied the prior is \emph{diffuse} (\code{1e6 * sigma^2 I_D}), so the
+\eqn{k = 1} update returns \code{U[1, ]} with covariance \code{sigma^2 I_D}
+rather than double-counting \code{U[1, ]} as both prior mean and
+measurement (which would report \code{sigma^2 / 2}).}
 
 \item{param_cov}{Optional J x J parameter covariance \eqn{\hat{C}}.}
 

@@ -17,6 +17,20 @@ g_choose <- function(n) {
   v
 }
 
+# Coefficient matrix A ((order+2) x D) with g^(order) = sum_m phi^(m) A[m+1, ].
+g_coeffs <- function(f_derivs, u_vec, order) {
+  n  <- order
+  cf <- g_choose(n)
+  A  <- matrix(0, n + 2L, length(u_vec))
+  A[n + 2L, ] <- A[n + 2L, ] + u_vec
+  for (k in 0:n)
+    A[k + 1L, ] <- A[k + 1L, ] + cf[k + 1L] * f_derivs[[n - k + 1L]]
+  if (n >= 1L)
+    for (k in 0:(n - 1L))
+      A[k + 2L, ] <- A[k + 2L, ] + cf[k + 1L] * f_derivs[[n - k]]
+  A
+}
+
 g_deriv_at_endpoint <- function(phi_scalars, f_derivs, u_vec, order) {
   n      <- order
   cf     <- g_choose(n)                     # choose(n, 0:n)
@@ -74,20 +88,14 @@ build_em_correction <- function(bl_phi_t1, bl_phi_tM,
     f_derivs_t1 <- eval_derivs(u_t1, t1)
     f_derivs_tM <- eval_derivs(u_tM, tM)
 
-    em <- matrix(0, nrow = K_bl, ncol = D)
-    for (k in seq_len(K_bl)) {
-      phi_t1 <- as.list(bl_phi_t1[k, ])   # phi^(0..4) at t_1
-      phi_tM <- as.list(bl_phi_tM[k, ])   # phi^(0..4) at t_M
-
-      g1_t1 <- g_deriv_at_endpoint(phi_t1, f_derivs_t1, u_t1, order = 1L)
-      g1_tM <- g_deriv_at_endpoint(phi_tM, f_derivs_tM, u_tM, order = 1L)
-      g3_t1 <- g_deriv_at_endpoint(phi_t1, f_derivs_t1, u_t1, order = 3L)
-      g3_tM <- g_deriv_at_endpoint(phi_tM, f_derivs_tM, u_tM, order = 3L)
-
-      em[k, ] <- -c2 * (g1_tM - g1_t1) + c4 * (g3_tM - g3_t1)
+    em_coeffs <- function(f_derivs, u_pt, s) {
+      A <- matrix(0, 5L, D)
+      A[1:3, ] <- s * -c2 * g_coeffs(f_derivs, u_pt, 1L)
+      A + s * c4 * g_coeffs(f_derivs, u_pt, 3L)
     }
 
-    em
+    bl_phi_tM %*% em_coeffs(f_derivs_tM, u_tM, 1) +
+      bl_phi_t1 %*% em_coeffs(f_derivs_t1, u_t1, -1)
   }
 }
 
@@ -127,21 +135,20 @@ build_em_jacobian <- function(bl_phi_t1, bl_phi_tM,
     A1 <- dp_at(as.numeric(U[1L, ]), t1)
     AM <- dp_at(as.numeric(U[M,  ]), tM)
 
-    jac <- array(0, c(K_bl, D, J))
-    for (k in seq_len(K_bl)) {
-      phi_t1 <- as.list(bl_phi_t1[k, ])
-      phi_tM <- as.list(bl_phi_tM[k, ])
+    # 5 x (D*J), column-major with d fastest to match jac[k, , j].
+    jac_coeffs <- function(Ax, s) {
+      out <- matrix(0, 5L, D * J)
       for (j in seq_len(J)) {
-        fd1 <- list(A1[[1]][, j], A1[[2]][, j], A1[[3]][, j], A1[[4]][, j])  # dF^(0..3)/dp_j @ t1
-        fdM <- list(AM[[1]][, j], AM[[2]][, j], AM[[3]][, j], AM[[4]][, j])  # @ tM
-        dg1_t1 <- g_deriv_at_endpoint(phi_t1, fd1, zeroD, order = 1L)
-        dg1_tM <- g_deriv_at_endpoint(phi_tM, fdM, zeroD, order = 1L)
-        dg3_t1 <- g_deriv_at_endpoint(phi_t1, fd1, zeroD, order = 3L)
-        dg3_tM <- g_deriv_at_endpoint(phi_tM, fdM, zeroD, order = 3L)
-        jac[k, , j] <- -c2 * (dg1_tM - dg1_t1) + c4 * (dg3_tM - dg3_t1)
+        fd <- list(Ax[[1]][, j], Ax[[2]][, j], Ax[[3]][, j], Ax[[4]][, j])
+        A  <- matrix(0, 5L, D)
+        A[1:3, ] <- s * -c2 * g_coeffs(fd, zeroD, 1L)
+        out[, ((j - 1L) * D + 1L):(j * D)] <- A + s * c4 * g_coeffs(fd, zeroD, 3L)
       }
+      out
     }
-    jac
+
+    array(bl_phi_tM %*% jac_coeffs(AM, 1) + bl_phi_t1 %*% jac_coeffs(A1, -1),
+          c(K_bl, D, J))
   }
 }
 
@@ -152,12 +159,71 @@ build_em_jacobian <- function(bl_phi_t1, bl_phi_tM,
 # derivatives phi^(orders) at t_1, and the data window the rows touch.
 # orders = 0:1 suffices for the design-stage (no-EM) covariance; the estimator
 # itself needs 0:4 for the Euler-Maclaurin correction.
-build_ic_bl_system <- function(tt_vec, r_bl, n_bl, orders = 0:4) {
+#
+# include_interior = TRUE additionally stacks the DENSE interior test-function
+# block (every admissible center at the same radius, build_test_function_matrix)
+# under the BL rows. Interior supports never touch column 1, so phi^(0..4)(t_1)
+# is EXACTLY zero for those rows: they load neither the boundary vector B nor
+# the Euler-Maclaurin defect. They act purely as GLS control variates -- their
+# weak residuals are mean-zero but built from the SAME noisy samples as the BL
+# rows, so the BL<->interior cross-covariance block of Omega lets the GLS
+# combine subtract the estimable part of the boundary noise (Schur complement
+# S_bb - S_bi S_ii^-1 S_ib; zeroing S_bi reverts the variance to BL-only
+# exactly). Under OLS the B-only projection ignores them, hence GLS-only.
+# Validated in examples/validation/ic_interior_{sanity,mechanism,why}.R and
+# ic_bl_split_knob*.R: u0 MSE 7-22x at known p, 1.5-2.2x under phat, coverage
+# held with the parameter channel folded.
+#
+# interior_stride keeps only every s-th admissible center; the default 1 keeps
+# them all. The block must keep spanning the WHOLE trajectory -- interior rows
+# act through the interior<->interior chain, not as a local control variate, and
+# 94-95% of the GLS row weight sits on rows whose support does not touch the BL
+# window at all, so truncating the block to a span near t_1 costs 7.5-9.6x in
+# a-priori SE (examples/validation/ic_audit_structure.R).
+#
+# At one center per sample the block can be over-complete enough to let the GLS
+# claim cancellation that is not there, and thinning is the lever for that. The
+# effect is confined to SMALL radii: over the a-priori grid at p_hat (60 reps
+# per cell, examples/validation/ic_phat_design.R) stride 1 vs 2 differ only at
+# r_bl = 8 on logistic at 20% noise (u0 NRMSE 0.0263 vs 0.0118), and are
+# indistinguishable at every radius the design sweep actually selects (16-20
+# there), across logistic / Lotka-Volterra / Lorenz at 5% and 20% noise: picked
+# NRMSE ratio 0.973-1.10, coverage 0.95-1.00 either way. So stride stays an
+# option rather than a default, and build_ic_noise_quad -- which addresses the
+# same over-completeness from the covariance side -- carries it.
+#
+# The returned K_bl counts ALL stacked rows (downstream helpers use it as the
+# equation count); the last K_int of them are interior. em_rows indexes the
+# rows with nonzero phi at t_1 (the true BL rows) so the EM loops can skip the
+# exactly-zero interior rows.
+build_ic_bl_system <- function(tt_vec, r_bl, n_bl, orders = 0:4,
+                               include_interior = FALSE,
+                               interior_stride = 1L) {
   M <- length(tt_vec)
-  bl_left <- lapply(orders, function(ord)
+  blocks <- lapply(orders, function(ord)
     build_boundary_layer_block(psi, tt_vec, r_bl, order = ord,
                                side = "left", n_bl = n_bl))
-  K_bl <- nrow(bl_left[[1]])
+  K_int <- 0L
+
+  # Interior block: only orders 0/1 carry data (V / Vp rows); orders >= 2 are
+  # consumed solely through their t_1 column, which is exactly zero on interior
+  # support, so zero rows are exact (and cheap).
+  if (include_interior && (2L * r_bl + 1L) <= (M - 2L)) {
+    V_int <- lapply(0:1, function(ord)
+      build_test_function_matrix(psi, tt_vec, r_bl, order = ord))
+    stride <- max(1L, as.integer(interior_stride))
+    if (stride > 1L) {
+      keep  <- seq(1L, nrow(V_int[[1]]), by = stride)
+      V_int <- lapply(V_int, function(V) V[keep, , drop = FALSE])
+    }
+    K_int <- nrow(V_int[[1]])
+    blocks <- lapply(seq_along(orders), function(i) {
+      ord <- orders[i]
+      rbind(blocks[[i]],
+            if (ord <= 1L) V_int[[ord + 1L]] else matrix(0, K_int, M))
+    })
+  }
+  K <- nrow(blocks[[1]])
 
   apply_trap <- function(V) {
     V[, 1] <- V[, 1] * 0.5
@@ -165,15 +231,16 @@ build_ic_bl_system <- function(tt_vec, r_bl, n_bl, orders = 0:4) {
     V
   }
 
-  bl_phi_t1 <- matrix(0, nrow = K_bl, ncol = length(orders))
-  for (i in seq_along(orders)) bl_phi_t1[, i] <- bl_left[[i]][, 1]
+  bl_phi_t1 <- matrix(0, nrow = K, ncol = length(orders))
+  for (i in seq_along(orders)) bl_phi_t1[, i] <- blocks[[i]][, 1]
 
-  win_cols <- which(colSums(abs(bl_left[[1]]) + abs(bl_left[[2]])) > 0)
+  win_cols <- which(colSums(abs(blocks[[1]]) + abs(blocks[[2]])) > 0)
 
   B <- bl_phi_t1[, 1]
-  list(V_BL = apply_trap(bl_left[[1]]), Vp_BL = apply_trap(bl_left[[2]]),
-       B = B, BtB = sum(B * B), K_bl = K_bl, bl_phi_t1 = bl_phi_t1,
-       win_cols = win_cols)
+  list(V_BL = apply_trap(blocks[[1]]), Vp_BL = apply_trap(blocks[[2]]),
+       B = B, BtB = sum(B * B), K_bl = K, K_int = K_int,
+       em_rows = which(rowSums(abs(bl_phi_t1)) > 0),
+       bl_phi_t1 = bl_phi_t1, win_cols = win_cols)
 }
 
 # Per-data-point sensitivity of the K_bl boundary-layer equations,
@@ -197,38 +264,188 @@ build_ic_noise_sensitivity <- function(bl, U, tt_vec, p, J_u, sig_vec, dt) {
   Bbold <- matrix(0, KD, D)
   for (d in seq_len(D)) Bbold[rowblk(d), d] <- bl$B
 
+  # J_u is vectorised: ONE (J + D + 1) x nw call returns nw x D^2, flattened
+  # column-major, so Jflat[i, (cc - 1) * D + d] is Ju(win[i])[d, cc] -- bitwise
+  # identical to the per-sample call. Evaluating one window sample at a time
+  # cost 145-167x more here and was 30-38% of the whole design sweep
+  # (examples/validation/, audit of 2026-08-14).
+  input <- rbind(matrix(rep(p, nw), nrow = length(p)),
+                 t(U[win, , drop = FALSE]),
+                 matrix(tt_vec[win], nrow = 1L))
+  Jflat <- matrix(as.vector(J_u(input)), nrow = nw, ncol = D * D)
+
+  # Block (d, cc) of X is the windowed test-function matrix scaled column-wise
+  # by Ju(.)[d, cc], plus Vp on the diagonal block: D^2 matrix operations
+  # instead of nw * D^2 single-column writes.
+  Vw  <- bl$V_BL[,  win, drop = FALSE]
+  Vpw <- bl$Vp_BL[, win, drop = FALSE]
+
   X  <- matrix(0, KD, nw * D)
   s2 <- numeric(nw * D)
-  for (i in seq_len(nw)) {
-    m    <- win[i]
-    Ju_m <- matrix(as.vector(J_u(c(p, U[m, ], tt_vec[m]))), D, D)
-    for (cc in seq_len(D)) {
-      col     <- (cc - 1L) * nw + i
-      s2[col] <- sig_vec[cc]^2
-      for (d in seq_len(D)) {
-        X[rowblk(d), col] <- -dt * (bl$V_BL[, m] * Ju_m[d, cc] +
-                                    (if (d == cc) bl$Vp_BL[, m] else 0))
-      }
+  for (cc in seq_len(D)) {
+    cols     <- ((cc - 1L) * nw + 1L):(cc * nw)
+    s2[cols] <- sig_vec[cc]^2
+    for (d in seq_len(D)) {
+      blk <- Vw * rep(Jflat[, (cc - 1L) * D + d], each = K_bl)
+      if (d == cc) blk <- blk + Vpw
+      X[rowblk(d), cols] <- -dt * blk
     }
   }
   list(X = X, s2 = s2, Bbold = Bbold)
 }
 
-# GLS (BLUE) weights for the stacked BL system. Omega = X diag(s2) X^T is the
-# delta-method covariance of vec(r_trap): the errors of the K_bl equations are
-# strongly correlated because they integrate the SAME noisy samples near the
-# boundary, which the unweighted (OLS) combine ignores. W = Omega^{-1} (tiny
-# ridge for near-duplicate rows). cov_design = (Bbold^T W Bbold)^{-1} is the
-# no-EM a-priori GLS covariance of u0hat: it depends only on the design
-# (r_c, n_bl), sigma, and J_u along the observed trajectory -- not on the
-# solved u0 -- so it doubles as the design-selection criterion.
+# Covariance of the QUADRATIC-in-noise part of the weak residual: the O(sigma^4)
+# block that the delta-method Omega = X diag(s2) X^T omits.
+#
+# With U = u + eta and eta_{m,c} ~ N(0, sigma_c^2) independent,
+#   r_{k,d} = -dt sum_m [ V_BL[k,m] f_d(U_m) + Vp_BL[k,m] U_{m,d} ]
+#           = r_{k,d}(u) + (X eta)_{k,d} + q_{k,d} + O(eta^3),
+#   q_{k,d} = -dt sum_m V_BL[k,m] * 0.5 eta_m' J_uu(m)[d,,] eta_m
+# (the Vp term is linear in U, so it contributes nothing here). Isserlis gives
+# Cov(0.5 eta'A eta, 0.5 eta'B eta) = 0.5 tr(A S B S) with S = diag(sigma^2), so
+#   Omega2[(k,d),(k',d')] = dt^2 sum_m V_BL[k,m] V_BL[k',m] G_m[d,d'],
+#   G_m[d,d'] = 0.5 sum_{c,c'} J_uu(m)[d,c,c'] J_uu(m)[d',c,c'] sigma_c^2 sigma_c'^2,
+# and there is NO cross-covariance with the linear part because E[eta eta eta]=0.
+#
+# Why it matters even though it is tiny: tr(Omega2)/tr(Omega1) is only 0.03-3.2%
+# on the validated systems, but Omega1 is near-singular (smallest eigenvalues
+# ~1e-19) and Omega2 is O(sigma^4) in exactly those directions -- which are the
+# directions the GLS combine loads. Omitting it lets the combine claim unbounded
+# cancellation where the first-order variance is spuriously zero: an SE that is
+# too small AND real excess MSE. It is also what the ad-hoc 1e-10 ridge in
+# build_ic_gls_weights was standing in for. MC-validated against the empirical
+# covariance of vec(r) (examples/validation/ic_audit_omega2_check.R): relative
+# trace error -0.0370 -> -0.0062 on Lorenz at 20% noise, -0.0044 -> -0.0020 on
+# LV, shrinking with sigma as O(sigma^4)/O(sigma^2). Deployed effect at 20%
+# noise (examples/validation/ic_audit_combined.R): u0 MSE x0.38 (Lorenz M=512,
+# coverage 0.69 -> 0.99, z 2.45 -> 0.97), x0.64 (LV M=512), neutral on logistic.
+#
+# EXACTNESS CAVEAT: the only other O(sigma^4) contribution is Cov(linear, cubic),
+# which needs the third derivative of f. That vanishes identically for the
+# validated systems (logistic, Lotka-Volterra, Lorenz all have f''' == 0), so
+# Omega1 + Omega2 is exact to O(sigma^6) there; for an f with nonzero f''' this
+# is an improvement on Omega1 alone but not the complete O(sigma^4) covariance.
+#
+# Cost is a factor D BELOW forming Omega1: D(D+1)/2 blocks of K x nw times
+# nw x K, against Omega1's KD x nwD times nwD x KD. J_uu comes from the shared
+# build_ic_hessian_cache. Returns NULL when f is linear in u (J_uu == 0).
+build_ic_noise_quad <- function(bl, U, tt_vec, p, J_u, sig_vec, dt, hess_cache = NULL) {
+  D   <- ncol(U)
+  K   <- bl$K_bl
+  win <- bl$win_cols
+  nw  <- length(win)
+  juu <- if (!is.null(hess_cache)) hess_cache
+         else build_ic_hessian_cache(U, tt_vec, p, J_u, D)
+
+  Vw  <- bl$V_BL[, win, drop = FALSE]                    # K x nw
+  # Columns with V_BL == 0 enter only through Vp, i.e. linearly: no curvature.
+  act <- which(colSums(abs(Vw)) > 0)
+  ss  <- outer(sig_vec^2, sig_vec^2)                     # sigma_c^2 sigma_c'^2
+
+  G <- array(0, c(nw, D, D))
+  for (i in act) {
+    H <- juu(win[i])
+    for (d in seq_len(D)) for (dp in d:D) {
+      v <- 0.5 * sum(ss * (matrix(H[d, , ], D, D) * matrix(H[dp, , ], D, D)))
+      G[i, d, dp] <- v
+      G[i, dp, d] <- v
+    }
+  }
+  if (max(abs(G)) <= 0) return(NULL)                     # linear f: Omega2 == 0
+
+  O2 <- matrix(0, K * D, K * D)
+  for (d in seq_len(D)) for (dp in d:D) {
+    blk <- dt^2 * (Vw %*% (G[, d, dp] * t(Vw)))
+    O2[((d - 1L) * K + 1L):(d * K), ((dp - 1L) * K + 1L):(dp * K)] <- blk
+    if (dp != d)
+      O2[((dp - 1L) * K + 1L):(dp * K), ((d - 1L) * K + 1L):(d * K)] <- t(blk)
+  }
+  O2
+}
+
+# GLS (BLUE) weights for the stacked BL system. Omega is the covariance of
+# vec(r_trap): the errors of the K_bl equations are strongly correlated because
+# they integrate the SAME noisy samples, which the unweighted (OLS) combine
+# ignores. The linear (delta-method) part is X diag(s2) X^T; sens$Omega2, when
+# present, adds the O(sigma^4) quadratic-noise block (see build_ic_noise_quad),
+# without which the combine over-trusts the near-null directions of the linear
+# part. W = Omega^{-1} (tiny ridge for near-duplicate rows).
+# cov_design = (Bbold^T W Bbold)^{-1} is the no-EM a-priori GLS covariance of
+# u0hat: it depends only on the design (r_bl, n_bl), sigma, and J_u along the
+# observed trajectory -- not on the solved u0 -- so it doubles as the
+# design-selection criterion.
 build_ic_gls_weights <- function(sens) {
   KD    <- nrow(sens$X)
   Omega <- sens$X %*% (sens$s2 * t(sens$X))
-  Wm    <- solve(Omega + 1e-10 * mean(diag(Omega)) * diag(KD))
+  if (!is.null(sens$Omega2)) Omega <- Omega + sens$Omega2
+  # Wm    <- solve(Omega + 1e-9 * mean(diag(Omega)) * diag(KD))
+  # Ridge required: rank(Omega) <= nw*D < KD once r_bl exceeds ~12.
+  Wm    <- solve(Omega + 1e-11 * mean(diag(Omega)) * diag(KD))
   BtW   <- crossprod(sens$Bbold, Wm)        # D x KD
   BtWB  <- BtW %*% sens$Bbold               # D x D
   list(Wm = Wm, BtW = BtW, BtWB = BtWB, cov_design = solve(BtWB))
+}
+
+# Memoizing state-Hessian cache, Juu[d, c, c'] = d2 f_d / du_c du_c' at an
+# observed sample, by central differences of the state Jacobian J_u.
+#
+# The tensors depend on (U[m, ], p, t_m) alone -- not on the boundary-layer
+# design -- so one cache serves every candidate of the a-priori sweep as well as
+# the final solve.
+#
+# Filled in CHUNKS rather than one sample at a time. The symbolic callables are
+# vectorised: J_u accepts a (J + D + 1) x n input matrix and returns n x D^2
+# (one flattened Jacobian per row, column-major, so matrix(out[i, ], D, D)
+# reproduces the single-point call bitwise). Evaluating one sample at a time
+# therefore costs 2 * D * nw scalar symbolic calls per solve -- 3066 of them on
+# Lorenz at M = 512 -- which profiling put at ~30% of a solve once
+# build_ic_noise_quad started sharing this cache. Chunking collapses that to
+# 2 * D calls per CHUNK_SIZE samples. Values are unchanged: same h0, same
+# central differences, same evaluator.
+#
+# Chunking keeps the lazy contract (consumers sweep window columns in increasing
+# order, so a narrow window still touches only the chunks it needs) without
+# needing to know the window in advance.
+.IC_HESS_CHUNK <- 64L
+
+build_ic_hessian_cache <- function(U, tt_vec, p, J_u, D) {
+  store <- new.env(parent = emptyenv())
+  M     <- nrow(U)
+  J     <- length(p)
+
+  fill <- function(ms) {
+    n  <- length(ms)
+    Um <- U[ms, , drop = FALSE]
+    h0 <- 1e-5 * pmax(1, sqrt(rowSums(Um^2)))       # per-sample FD step
+    pm <- matrix(rep(p, n), nrow = J)
+    tm <- matrix(tt_vec[ms], nrow = 1L)
+    out <- vector("list", D)
+    for (cp in seq_len(D)) {
+      Uu <- Um; Uu[, cp] <- Uu[, cp] + h0
+      Ud <- Um; Ud[, cp] <- Ud[, cp] - h0
+      Ju <- J_u(rbind(pm, t(Uu), tm))               # n x D^2
+      Jd <- J_u(rbind(pm, t(Ud), tm))
+      out[[cp]] <- (matrix(as.vector(Ju), n, D * D) -
+                    matrix(as.vector(Jd), n, D * D)) / (2 * h0)
+    }
+    for (i in seq_len(n)) {
+      v <- array(0, c(D, D, D))
+      for (cp in seq_len(D)) v[, , cp] <- matrix(out[[cp]][i, ], D, D)
+      store[[as.character(ms[i])]] <- v
+    }
+  }
+
+  function(m) {
+    key <- as.character(m)
+    v   <- store[[key]]
+    if (is.null(v)) {
+      ms <- seq.int(m, min(M, m + .IC_HESS_CHUNK - 1L))
+      ms <- ms[vapply(ms, function(k) is.null(store[[as.character(k)]]), TRUE)]
+      fill(ms)
+      v <- store[[key]]
+    }
+    v
+  }
 }
 
 # Analytic O(sigma^2) bias of the feasible-GLS fixed point (both channels).
@@ -253,129 +470,222 @@ build_ic_gls_weights <- function(sens) {
 # tensor algebra matches a dense FD-of-Omega implementation to ~4e-3.
 # Plug-in evaluation at the noisy data costs only O(sigma^3).
 #
+# Both channels contract against a single window column at a time: T_n = dX/dU_n
+# is supported on the one column that carries n, so of S X' a_n only the D
+# entries sharing that column can survive, and likewise only the V_BL-weighted
+# row-block sums of a_n. Those are the block diagonals
+#   Z[i, cc, cp]  = X[, (cc-1)nw+i]' A[, (cp-1)nw+i]
+#   Va[i, d,  cp] = sum_k V_BL[k, win[i]] A[(d-1)K+k, (cp-1)nw+i]
+# of X'A and V_BL'A, so the whole accumulation reduces to D^2 column-sum passes
+# plus one matvec per channel -- O(KD nw D^2), not O(KD nw^2 D^2).
+#
 # P is the IFT projection (Mbar^{-1} Bb' W with Mbar = Bb' W (Bb + EMp)),
-# shared with the covariance channels. Returns list(b1, b2, b = b1 + b2).
-build_ic_bias_o2 <- function(bl, sens, gls, P, EMp, U, tt_vec, p, J_u,
-                             sig_vec, dt) {
+# shared with the covariance channels. hess_cache is a build_ic_hessian_cache
+# closure; one is built here when the caller has none to share.
+# Returns list(b1, b2, b = b1 + b2).
+build_ic_bias_o2 <- function(bl, sens, gls, P, EMp, U, tt_vec, p, J_u, sig_vec, dt,
+                             hess_cache = NULL) {
   D    <- length(sig_vec)
   K    <- bl$K_bl
-  KD   <- K * D
   win  <- bl$win_cols
   nw   <- length(win)
   X    <- sens$X
   s2   <- sens$s2
+  s2v  <- sig_vec^2
   Yvec <- sens$Bbold + EMp
   A    <- gls$Wm %*% (X - Yvec %*% (P %*% X))   # W (I - (Bb+EMp) P) X
-  Eq   <- matrix(0, K, D)
-  cvec <- numeric(KD)
-  for (i in seq_len(nw)) {
-    m <- win[i]
-    if (all(bl$V_BL[, m] == 0)) next            # Vp-only column: linear in U
-    u_m <- as.numeric(U[m, ])
-    h0  <- 1e-5 * max(1, sqrt(sum(u_m^2)))
-    Juu <- array(0, c(D, D, D))                 # [d,c,c'] = d2 f_d / du_c du_c'
-    for (cp in seq_len(D)) {
-      up <- u_m; up[cp] <- up[cp] + h0
-      dn <- u_m; dn[cp] <- dn[cp] - h0
-      Juu[, , cp] <- (matrix(as.vector(J_u(c(p, up, tt_vec[m]))), D, D) -
-                      matrix(as.vector(J_u(c(p, dn, tt_vec[m]))), D, D)) / (2 * h0)
-    }
+  juu  <- if (!is.null(hess_cache)) hess_cache
+          else build_ic_hessian_cache(U, tt_vec, p, J_u, D)
+
+  cblk <- function(c_) ((c_ - 1L) * nw + 1L):(c_ * nw)   # X columns of state c_
+  rblk <- function(d_) ((d_ - 1L) * K  + 1L):(d_ * K)    # vec rows of state d_
+
+  # Columns with V_BL == 0 carry u only through Vp, i.e. linearly: no f''
+  # curvature and no weight feedback.
+  Vw     <- bl$V_BL[, win, drop = FALSE]                 # K x nw
+  active <- which(colSums(abs(Vw)) > 0)
+
+  Z  <- array(0, c(nw, D, D))
+  Va <- array(0, c(nw, D, D))
+  for (cp in seq_len(D)) {
+    Acp <- A[, cblk(cp), drop = FALSE]                   # KD x nw
+    for (cc in seq_len(D))
+      Z[, cc, cp] <- colSums(X[, cblk(cc), drop = FALSE] * Acp)
+    for (d in seq_len(D))
+      Va[, d, cp] <- colSums(Vw * Acp[rblk(d), , drop = FALSE])
+  }
+
+  # Per-window-column coefficients: q the f'' mean channel (b1), g the
+  # T_n S X' half and cf the X S T_n' half of dOmega/dU_n (both b2).
+  q  <- matrix(0, nw, D)
+  g  <- matrix(0, D, nw)
+  cf <- numeric(nw * D)
+  for (i in active) {
+    Juu <- juu(win[i])
     for (d in seq_len(D)) {
       tr_d <- 0
-      for (cc in seq_len(D)) tr_d <- tr_d + Juu[d, cc, cc] * sig_vec[cc]^2
-      Eq[, d] <- Eq[, d] - dt * bl$V_BL[, m] * (0.5 * tr_d)
+      for (cc in seq_len(D)) tr_d <- tr_d + Juu[d, cc, cc] * s2v[cc]
+      q[i, d] <- -dt * 0.5 * tr_d
     }
     for (cp in seq_len(D)) {
-      n   <- (cp - 1L) * nw + i
-      a_n <- A[, n]
-      w   <- s2 * as.vector(crossprod(X, a_n))  # S X' a_n
-      Tw  <- numeric(KD)
-      XSy <- numeric(KD)
-      for (d in seq_len(D)) {
-        coef <- 0
-        for (cc in seq_len(D)) coef <- coef + w[(cc - 1L) * nw + i] * Juu[d, cc, cp]
-        Tw[((d - 1L) * K + 1L):(d * K)] <- -dt * bl$V_BL[, m] * coef
-      }
+      w <- s2[(seq_len(D) - 1L) * nw + i] * Z[i, , cp]   # (S X' a_n) at column i
+      for (d in seq_len(D))
+        g[d, i] <- g[d, i] - dt * s2v[cp] * sum(w * Juu[d, , cp])
       for (cc in seq_len(D)) {
-        sdc <- 0
-        for (d in seq_len(D))
-          sdc <- sdc + Juu[d, cc, cp] *
-                 sum(bl$V_BL[, m] * a_n[((d - 1L) * K + 1L):(d * K)])
-        col <- (cc - 1L) * nw + i
-        XSy <- XSy + X[, col] * (s2[col] * (-dt * sdc))
+        col     <- (cc - 1L) * nw + i
+        cf[col] <- cf[col] -
+                   dt * s2v[cp] * s2[col] * sum(Juu[, cc, cp] * Va[i, , cp])
       }
-      cvec <- cvec + sig_vec[cp]^2 * (Tw + XSy)
     }
   }
-  b1 <- as.numeric(P %*% as.vector(Eq))
+
+  cvec <- as.vector(X %*% cf)
+  for (d in seq_len(D)) cvec[rblk(d)] <- cvec[rblk(d)] + as.vector(Vw %*% g[d, ])
+
+  b1 <- as.numeric(P %*% as.vector(Vw %*% q))
   b2 <- -as.numeric(P %*% cvec)
   list(b1 = b1, b2 = b2, b = b1 + b2)
 }
 
-# A-priori BL-radius selection (count maxed, n_bl = r_bl) by the calibrated
-# u0-MSE proxy over an absolute r_bl grid. For each
-# candidate design one EM(4) solve (which also returns the EM(2) fixed point on
-# the same built system, via return_em2_u0) gives
-#   crit = sum_d Var_d / sigma_d^2  [variance]  + sum_d ( (u0_EM2 - u0_EM4)_d + bias_o2_d )^2 / sigma_d^2  [bias^2]
-# (sum over states relative to the data noise, scale-free). Var = diag(cov_u0)
-# folds the EM Jacobian AND the parameter channel S_p Chat S_p^T (law of total
-# variance); (u0_EM2 - u0_EM4) is the oracle-free Euler-Maclaurin order-
-# difference estimate of the truncation defect; bias_o2 is the analytic
-# O(sigma^2) statistical bias. Validated against the true Monte-Carlo u0-MSE
-# (examples/validation/ic_mse_proxy.R, ic_calibrated_criterion.R,
-# ic_realC_overshoot.R): the proxy tracks the oracle argmin across systems and
-# noise 0.05-0.20, and -- fed the real Fisher Chat (~sigma^2) via param_cov --
-# does NOT over-shoot to the corner on smooth systems the way a variance-only
-# criterion does. It self-protects at tiny r_c (the EM Jacobian inflates Var and
-# the EM-difference term penalizes truncation), so the grid may roam below the
-# pipe radius. Each candidate is a single EM solve (the EM(2) fixed point used
-# for the order-difference is recovered from the same build, not a second
-# estimate_IC call; for em_order == 2 there is no lower order to difference); the
-# selected design is solved once more by the caller. Replaces the earlier
-# noise-only no-EM variance objective, whose monotonicity in n_bl/window pinned
-# the corner.
+# A-PRIORI design selection: scores every candidate WITHOUT solving.
+#
+#   obj = sum_d Var_d/sig_d^2 + sum_d (emb_d + statb_d)^2/sig_d^2
+#
+# is the same MSE proxy as before, but the fixed point enters it only through
+# the point at which EMp, P and the h^4 Euler-Maclaurin term are evaluated --
+# the build (V_BL, X, Omega, W, Bbold) does not involve u0 at all. So the raw
+# first observation U[1, ] is plugged in there instead of the converged u0hat,
+# and no candidate runs a Picard iteration.
+#
+# The EM order-difference term was the one piece defined by two solves. It is
+# linearised instead: going EM(2) -> EM(4) adds Delta = -c4 * phi_t1 %*% g3 to
+# the EM block, and P maps a residual perturbation to a u0 shift, so
+#   u0_EM2 - u0_EM4 = P vec(Delta) + O(||Delta||^2),
+# one evaluation rather than a second fixed point.
+#
+# Validated in examples/validation/ic_apriori_proxy.R over
+# logistic/LV/Lorenz x nr in {1, 5, 20}%, 20 reps: within-rep Spearman against
+# the old solve-based objective 0.96-1.00, the same median r_bl selected in
+# every cell, and equal informativeness about the true u0 error (rank
+# correlation with err_true within 0.02 of the solve-based objective).
+# The plug-in itself is only ~5% of a candidate, so the win is modest; the
+# cost now lives in the per-candidate build (65-76%) and build_ic_bias_o2
+# (19-32%).
 select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
-                             sigma, sig_vec, param_cov, em_order,
-                             r_bl_grid, rc_cap) {
-  r_bls <- sort(unique(pmin(pmax(as.integer(r_bl_grid), 2L), rc_cap)))
-  D    <- ncol(U)
-  s2   <- sig_vec^2
+                             sig_vec, param_cov, em_order,
+                             r_bl_grid, rc_cap, include_interior = TRUE,
+                             hess_cache = NULL, quad_cov = TRUE,
+                             interior_stride = 1L, include_bias_o2 = TRUE) {
+  r_bls  <- sort(unique(pmin(pmax(as.integer(r_bl_grid), 2L), rc_cap)))
+  D      <- ncol(U)
+  M      <- nrow(U)
+  J      <- length(p)
+  s2     <- sig_vec^2
+  tt_vec <- as.vector(tt)
+  dt     <- mean(diff(tt_vec))
+  c2     <- dt^2 / 12
+  c4     <- if (em_order >= 4L) dt^4 / 720 else 0
+  u0p    <- as.numeric(U[1, ])            # the a-priori plug-in
+
+  # EM correction at an arbitrary u0, plus its h^4 block alone (Delta4).
+  em_parts <- function(bl, u0, p_use = p) {
+    u   <- as.vector(u0)
+    inp <- matrix(c(p_use, u, tt_vec[1]), ncol = 1L)
+    fd  <- list(as.vector(f_(inp)),       as.vector(dF_dt_(inp)),
+                as.vector(d2F_dt2_(inp)), as.vector(d3F_dt3_(inp)))
+    A <- matrix(0, 5L, D)
+    A[1:3, ] <- c2 * g_coeffs(fd, u, 1L)
+    A4 <- if (c4 != 0) -c4 * g_coeffs(fd, u, 3L) else matrix(0, 5L, D)
+    er  <- bl$em_rows
+    phi <- bl$bl_phi_t1[er, , drop = FALSE]
+    EM <- matrix(0, bl$K_bl, D); EM[er, ] <- phi %*% (A + A4)
+    D4 <- matrix(0, bl$K_bl, D); D4[er, ] <- phi %*% A4
+    list(EM = EM, Delta4 = D4)
+  }
+
+  r_trap_of <- function(bl, p_use) {
+    input <- rbind(matrix(rep(p_use, M), nrow = J), t(U), matrix(tt_vec, nrow = 1L))
+    -dt * (bl$V_BL %*% f_(input)) - dt * (bl$Vp_BL %*% U)
+  }
+
   rows <- vector("list", length(r_bls))
+  best_obj <- Inf
+  best_sys <- NULL
   i <- 0L
   for (r_bl in r_bls) {
-    n_bl <- as.integer(min(r_bl, rc_cap))   # maximum peak-inside count for r_bl
+    n_bl <- as.integer(min(r_bl, rc_cap))
     res <- tryCatch({
-      # EM(em_order) solve: deployed covariance (noise + param), statbias. With
-      # return_em2_u0 the same call also returns the EM(2) fixed point (u0hat_em2)
-      # from the same built system, so the EM-order-difference truncation estimate
-      # needs no second estimate_IC solve (bit-identical to the former e_lo).
-      e_hi <- estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_bl,
-                          J_u = J_u, sigma = sigma, param_cov = param_cov,
-                          n_bl = n_bl, combine = "gls", debias = TRUE,
-                          em_order = em_order, return_em2_u0 = em_order > 2L,
-                          lean = TRUE)
-      if (is.null(e_hi$cov_u0) || isTRUE(e_hi$diverged))
-        stop("no covariance", call. = FALSE)
-      statb <- if (!is.null(e_hi$bias_o2)) e_hi$bias_o2 else rep(0, D)
-      u0_hi <- e_hi$u0hat + (if (isTRUE(e_hi$debias_applied)) statb else 0)
-      # Truncation defect via the EM-order difference (oracle-free). Needs a
-      # lower EM order, so it vanishes for em_order == 2 (criterion reduces to
-      # variance + statbias^2 there).
-      emb <- if (em_order > 2L) {
-        if (isTRUE(e_hi$em2_diverged)) stop("lower-order diverged", call. = FALSE)
-        e_hi$u0hat_em2 - u0_hi
+      bl   <- build_ic_bl_system(tt_vec, r_bl, n_bl, orders = 0:4,
+                                 include_interior = include_interior,
+                                 interior_stride = interior_stride)
+      sens <- build_ic_noise_sensitivity(bl, U, tt_vec, p, J_u, sig_vec, dt)
+      if (isTRUE(quad_cov))
+        sens$Omega2 <- tryCatch(
+          build_ic_noise_quad(bl, U, tt_vec, p, J_u, sig_vec, dt,
+                              hess_cache = hess_cache),
+          error = function(err) NULL)
+      gls <- build_ic_gls_weights(sens)
+
+      # IFT sensitivities at the plug-in
+      h   <- 1e-6 * max(1, sqrt(sum(u0p^2)))
+      EMp <- matrix(0, bl$K_bl * D, D)
+      for (d_ in seq_len(D)) {
+        up <- u0p; up[d_] <- up[d_] + h
+        dn <- u0p; dn[d_] <- dn[d_] - h
+        EMp[, d_] <- as.vector((em_parts(bl, up)$EM -
+                                em_parts(bl, dn)$EM) / (2 * h))
+      }
+      P <- solve(gls$BtWB + gls$BtW %*% EMp, gls$BtW)
+
+      G   <- P %*% sens$X
+      cov <- G %*% (sens$s2 * t(G))
+      if (!is.null(sens$Omega2)) cov <- cov + (P %*% sens$Omega2) %*% t(P)
+
+      # Parameter channel S_p C S_p' (law of total variance), as in cov_u0
+      if (!is.null(param_cov)) {
+        S_p <- matrix(0, D, J)
+        for (j in seq_len(J)) {
+          hj <- 1e-6 * max(1, abs(p[j]))
+          pu <- p; pu[j] <- pu[j] + hj
+          pd <- p; pd[j] <- pd[j] - hj
+          du <- as.vector(r_trap_of(bl, pu) - em_parts(bl, u0p, pu)$EM)
+          dd <- as.vector(r_trap_of(bl, pd) - em_parts(bl, u0p, pd)$EM)
+          S_p[, j] <- P %*% ((du - dd) / (2 * hj))
+        }
+        cov <- cov + S_p %*% param_cov %*% t(S_p)
+      }
+
+      statb <- if (isTRUE(include_bias_o2)) {
+        b <- tryCatch(
+          build_ic_bias_o2(bl, sens, gls, P, EMp, U, tt_vec, p, J_u,
+                           sig_vec, dt, hess_cache = hess_cache)$b,
+          error = function(err) NULL)
+        if (is.null(b) || !all(is.finite(b))) rep(0, D) else b
       } else rep(0, D)
-      vobj <- sum(diag(e_hi$cov_u0) / s2)
-      c(vobj + sum((emb + statb)^2 / s2), vobj)
-    }, error = function(err) c(NA_real_, NA_real_))
+
+      emb <- if (c4 != 0)
+        as.numeric(P %*% as.vector(em_parts(bl, u0p)$Delta4)) else rep(0, D)
+
+      vobj <- sum(diag(cov) / s2)
+      if (!is.finite(vobj)) stop("non-finite objective", call. = FALSE)
+      list(obj = vobj + sum((emb + statb)^2 / s2), var_obj = vobj,
+           sys = list(bl = bl, sens = sens, gls = gls))
+    }, error = function(err) list(obj = NA_real_, var_obj = NA_real_, sys = NULL))
     i <- i + 1L
     rows[[i]] <- data.frame(r_bl = r_bl, n_bl = n_bl,
-                            obj = res[1], var_obj = res[2])
+                            obj = res$obj, var_obj = res$var_obj)
+    # Hand the winner's system back so estimate_IC does not rebuild it. Only the
+    # best-so-far is retained (one KD x KD set, not one per candidate); strict
+    # `<` keeps the first of any tie, matching which.min below.
+    if (is.finite(res$obj) && res$obj < best_obj) {
+      best_obj <- res$obj
+      best_sys <- res$sys
+    }
   }
   tab <- do.call(rbind, rows)
   if (!any(is.finite(tab$obj))) return(NULL)
   best <- which.min(tab$obj)
-  list(table = tab, r_bl = tab$r_bl[best], n_bl = tab$n_bl[best])
+  list(table = tab, r_bl = tab$r_bl[best], n_bl = tab$n_bl[best], sys = best_sys)
 }
 
 #' Estimate u(0) via iterative defect-correction on left BL test functions
@@ -403,7 +713,7 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #' which is minimum-variance among all linear combinations of the equations
 #' (validated at ~1.05-1.2x the window Cramer-Rao bound, vs up to ~25x for the
 #' unweighted combine; examples/validation/). Additionally, when \code{n_bl}
-#' is \code{NULL}, the design \code{(r_c, n_bl)} is selected a priori by
+#' is \code{NULL}, the design \code{(r_bl, n_bl)} is selected a priori by
 #' sweeping a small grid and minimizing a calibrated \eqn{u_0}-MSE proxy
 #' \deqn{\textstyle\sum_d \mathrm{Var}_d/\sigma_d^2
 #'       + \sum_d ((u_0^{EM2} - u_0^{EM4})_d + b_d)^2/\sigma_d^2,}
@@ -411,14 +721,21 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #' Jacobian and the parameter channel \eqn{S_p \hat C S_p^T},
 #' \eqn{u_0^{EM2} - u_0^{EM4}} is the oracle-free Euler-Maclaurin order-
 #' difference estimate of the truncation defect, and \eqn{b} is the analytic
-#' \eqn{O(\sigma^2)} statistical bias. Each candidate costs a single EM solve
-#' (the lower-order \eqn{u_0^{EM2}} fixed point is recovered from the same build
-#' via \code{return_em2_u0}, not a second solve). This replaces the earlier
+#' \eqn{O(\sigma^2)} statistical bias. The selection is genuinely A PRIORI: no
+#' candidate is solved. Every term reaches the fixed point only through the
+#' point at which \eqn{\partial \mathrm{EM}/\partial u_0}, the IFT projection
+#' \eqn{P} and the \eqn{h^4} endpoint term are evaluated, so the raw first
+#' observation \code{U[1, ]} is plugged in there, and the order-difference term
+#' is linearised as \eqn{u_0^{EM2} - u_0^{EM4} = P\,\mathrm{vec}(\Delta)} with
+#' \eqn{\Delta = -c_4 \phi(t_1) g^{(3)}} (one evaluation, not two solves).
+#' Validated in \code{examples/validation/ic_apriori_proxy.R}: within-rep rank
+#' correlation 0.96-1.00 against the former solve-per-candidate objective, same
+#' median radius selected in every cell. This replaces the earlier
 #' noise-only variance objective, which was
 #' monotone in window/count and so pinned the corner; the MSE proxy turns up
 #' where the true MSE turns up (validated examples/validation/ic_mse_proxy.R,
 #' ic_calibrated_criterion.R, ic_realC_overshoot.R). \code{combine = "ols"}
-#' restores the legacy unweighted combine and its \code{max(3, ceiling(r_c/8))}
+#' restores the legacy unweighted combine and its \code{max(3, ceiling(r_bl/8))}
 #' count heuristic.
 #'
 #' The feasible GLS estimator carries an \eqn{O(\sigma^2)} bias with two
@@ -434,32 +751,62 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #' SE — a correction that large signals a regime where the expansion itself
 #' is suspect.
 #'
+#' \eqn{\Omega} carries two pieces. The linear (delta-method) part
+#' \eqn{X \mathrm{diag}(\sigma^2) X^T} is the covariance of \eqn{X\eta}; the
+#' residual is also quadratic in the noise through \eqn{f''}, contributing an
+#' \eqn{O(\sigma^4)} block \eqn{\Omega_2} (see \code{build_ic_noise_quad}) that
+#' \code{quad_cov = TRUE} (default) adds to both the weights and
+#' \code{cov_u0}. \eqn{\Omega_2} is only 0.03-3\% of \eqn{\mathrm{tr}(\Omega)},
+#' but \eqn{\Omega_1} is near-singular and \eqn{\Omega_2} dominates in exactly
+#' the near-null directions the GLS combine loads, so omitting it makes the
+#' combine over-trust cancellation that is not there. Deployed effect at 20\%
+#' noise: \eqn{u_0} MSE \eqn{\times}0.38 on Lorenz (coverage 0.69 -> 0.99,
+#' RMS z 2.45 -> 0.97) and \eqn{\times}0.64 on Lotka-Volterra, neutral on
+#' logistic (examples/validation/ic_audit_omega2_check.R,
+#' ic_audit_combined.R).
+#'
 #' @param U Numeric matrix (M x D) of observed states.
 #' @param f_,dF_dt_,d2F_dt2_,d3F_dt3_ Callable RHS and total time-derivative
 #'   evaluators built from the symbolic engine.
 #' @param tt Numeric vector (length M) of time points.
 #' @param p Numeric parameter vector \eqn{\hat\theta} (held fixed).
-#' @param r_c Integer; the integration-error (parameter-estimation) radius. This
-#'   is NOT the boundary-layer radius: under \code{combine = "gls"} with
-#'   \code{n_bl = NULL} the BL radius \code{r_bl} is selected from
-#'   \code{r_bl_grid} (an absolute grid, independent of \code{r_c}), and
-#'   \code{r_c} is used only as the OLS-fallback window. When \code{n_bl} is given
-#'   explicitly the BL radius equals \code{r_c}.
 #' @param n_bl Optional integer; number of left (peak-inside) BL test functions.
 #'   When \code{NULL} (default) and \code{combine = "gls"}, the BL radius
 #'   \code{r_bl} is selected from \code{r_bl_grid} by the a-priori MSE proxy and
 #'   the count is maxed, \code{n_bl = r_bl} (one BL function per sample out to the
 #'   radius; see Details). When \code{NULL} under \code{combine = "ols"} the
-#'   legacy heuristic \code{max(3, ceiling(r_c/8))} applies (small count, wide
+#'   legacy heuristic \code{max(3, ceiling(r_bl/8))} applies (small count, wide
 #'   placement -- under the unweighted combine, clustered test functions inflate
 #'   Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value skips
-#'   the selection and uses window radius \code{r_c}.
-#' @param max_iter,tol Fixed-point iteration controls.
+#'   the selection and uses \code{r_bl}.
+#' @param r_bl Optional integer; the boundary-layer radius for the paths that do
+#'   NOT sweep -- an explicit \code{n_bl}, \code{combine = "ols"}, or a sweep
+#'   that failed. Ignored when the a-priori selection runs, since that picks
+#'   \code{r_bl} from \code{r_bl_grid}. Defaults to \code{min(16, (M-1)/2)}.
+#' @param max_iter,tol Fixed-point iteration controls. \code{tol} is compared
+#'   against the step norm scaled by \code{max(1, ||u_0||)}, i.e. it is a
+#'   relative tolerance for states of size \eqn{\ge 1}. The default \code{1e-10}
+#'   is deliberately above the achievable roundoff floor so that
+#'   \code{converged} is a usable health flag rather than always \code{FALSE}
+#'   on large-amplitude states -- callers gate the divergence fallback on it
+#'   (see the divergence guard in \code{solveWendy}).
 #' @param em_order Either 2 or 4.
 #' @param combine \code{"gls"} (default) for the minimum-variance GLS combine
 #'   of the BL equations, or \code{"ols"} for the legacy unweighted combine.
 #'   GLS requires a valid \code{sigma} (and \code{J_u}) to build
 #'   \eqn{\Omega}; it degrades to \code{"ols"} otherwise.
+#' @param interior_stride Integer (default \code{1}, i.e. keep every centre).
+#'   Retains only every s-th interior control-variate centre. At one centre per
+#'   sample the interior block can be over-complete enough for the GLS combine
+#'   to claim cancellation that is not there, and thinning is the lever for
+#'   that; the effect is confined to small radii and does not reach the radii
+#'   the a-priori sweep selects, so it is offered as an option rather than
+#'   imposed (measured in \code{examples/validation/ic_phat_design.R}; strides
+#'   above 2 break down). See \code{build_ic_bl_system}.
+#' @param quad_cov Logical (default \code{TRUE}). Include the
+#'   \eqn{O(\sigma^4)} quadratic-noise block \eqn{\Omega_2} in the GLS weights
+#'   and in \code{cov_u0} (see \code{build_ic_noise_quad} and Details). GLS path
+#'   only.
 #' @param debias Logical (default \code{TRUE}). On the GLS path, subtract the
 #'   analytic \eqn{O(\sigma^2)} bias (both channels; see Details). Ignored on
 #'   the OLS path and on diverged solves.
@@ -468,11 +815,11 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #'   point on the same built system and return it as \code{u0hat_em2} (with
 #'   \code{em2_diverged}). Used by the design sweep to form the EM-order-
 #'   difference truncation estimate without a second \code{estimate_IC} call.
-#' @param lean Logical (default \code{FALSE}, internal). When \code{TRUE}, skip
-#'   the LS-residual fallback covariance (\code{cov_u0_resid}) whenever the
-#'   noise-propagation channel is available -- it is only ever used as a
-#'   fallback and the design sweep never reads it. The public default computes
-#'   it for reference as before.
+#' @param hess_cache Optional memoizing state-Hessian closure (internal, from
+#'   \code{build_ic_hessian_cache}). The \eqn{f''} tensors the
+#'   \eqn{O(\sigma^2)} debias needs depend on \code{U}, \code{p} and \code{tt}
+#'   alone, not on the boundary-layer design, so one cache is built here and
+#'   shared across every candidate of the a-priori sweep and the final solve.
 #' @param r_bl_grid Optional integer vector of candidate BL radii for the
 #'   a-priori selection (default the absolute grid
 #'   \code{c(4,8,12,16,20,24,32,40,48)} capped at \code{floor((M-1)/2)}); at each
@@ -505,31 +852,38 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #'   \code{NULL} when not computed), \code{cov_method}
 #'   (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
 #'   \code{"+param"} suffix when the parameter channel is included, or
-#'   \code{"diverged"}), plus \code{combine} (the combine actually used,
+#'   \code{"diverged"} / \code{"not_converged"}), plus \code{combine} (the combine actually used,
 #'   after any degradation), \code{design} (the design-selection table with
 #'   columns \code{r_bl}, \code{n_bl}, \code{obj} (the MSE proxy), and
 #'   \code{var_obj} (its variance part), or \code{NULL} when no selection ran),
 #'   \code{bias_o2} (the analytic
 #'   \eqn{O(\sigma^2)} bias estimate of the UNcorrected solve, length-D, or
 #'   \code{NULL} when not computed), \code{debias_applied} (whether
-#'   \code{bias_o2} was subtracted from \code{u0hat}), \code{u0hat_em2} (the
+#'   \code{bias_o2} was subtracted from \code{u0hat}), \code{fallback}
+#'   (\code{TRUE} only when the design was degenerate and \code{u0hat} is the
+#'   raw observation; the divergence guard is applied by the caller, see
+#'   \code{solveWendy}), \code{u0hat_em2} (the
 #'   EM(2) fixed point, or \code{NULL} unless \code{return_em2_u0} and
 #'   \code{em_order == 4}), \code{em2_diverged}, \code{iters},
-#'   \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c} (the
-#'   integration radius passed in), \code{r_bl} (the BL radius actually used),
+#'   \code{converged}, \code{diverged}, \code{u0_history},
+#'   \code{r_bl} (the BL radius actually used),
 #'   \code{n_bl}, \code{K_bl}, \code{em_order}.
 #' @export
-estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigma,
+estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, sigma,
                         param_cov      = NULL,
                         n_bl           = NULL,
+                        r_bl           = NULL,
                         max_iter       = 20L,
-                        tol            = 1e-12,
+                        tol            = 1e-10,
                         em_order       = c(4L, 2L),
                         combine        = c("gls", "ols"),
+                        include_interior = TRUE,
+                        interior_stride  = 1L,
+                        quad_cov       = TRUE,
                         r_bl_grid      = NULL,
                         debias         = TRUE,
                         return_em2_u0  = FALSE,
-                        lean           = FALSE) {
+                        hess_cache     = NULL) {
   em_order <- as.integer(em_order[1])
   if (!em_order %in% c(2L, 4L)) {
     stop("em_order must be 2 or 4", call. = FALSE)
@@ -543,9 +897,12 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   dt     <- mean(diff(tt_vec))
 
   rc_cap <- floor((M - 1L) / 2L)
-  r_c    <- min(r_c, rc_cap)   # integration-error radius (parameter estimate);
-                               # here only the OLS-fallback BL radius.
-  r_bl   <- r_c                # BL test-function radius actually used (set below)
+  # BL radius for the paths that do NOT sweep (explicit n_bl, OLS, or a failed
+  # sweep). The a-priori sweep selects r_bl from an absolute grid, so no
+  # integration-error radius is needed here any more.
+  r_bl_fixed <- if (!is.null(r_bl)) min(as.integer(r_bl), rc_cap)
+                else                min(16L, rc_cap)
+  r_bl <- r_bl_fixed           # BL radius actually used (reset below if swept)
 
   use_noiseprop <- length(sigma) %in% c(1L, D) && all(is.finite(sigma))
   sig_vec <- if (use_noiseprop) {
@@ -554,18 +911,29 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 
   if (combine == "gls" && !use_noiseprop) combine <- "ols"
 
+  # Shared by the sweep candidates and the final debias (design-independent)
+  if (is.null(hess_cache) && use_noiseprop){
+    hess_cache <- build_ic_hessian_cache(U, tt_vec, p, J_u, D)
+  }
+
   design_table <- NULL
+  sel_sys      <- NULL          # the winning candidate's already-built system
   if (combine == "gls" && is.null(n_bl)) {
-    if (is.null(r_bl_grid))
-      r_bl_grid <- sort(unique(pmin(c(4L, 8L, 12L, 16L, 20L, 24L, 32L, 40L, 48L), rc_cap)))
-      sel <- tryCatch(
-        select_ic_design(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
-                         sigma, sig_vec, param_cov, em_order, r_bl_grid, rc_cap),
-        error = function(err) NULL)
+    if (is.null(r_bl_grid)){
+      r_bl_grid <- c(4, 6, 8, 10, 12, 16, 20, 24, 32, 40)
+    }
+    sel <- tryCatch(
+      select_ic_design(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
+                       sig_vec, param_cov, em_order, r_bl_grid, rc_cap,
+                       include_interior = include_interior,
+                       hess_cache = hess_cache, quad_cov = quad_cov,
+                       interior_stride = interior_stride),
+      error = function(err) NULL)
     if (!is.null(sel)) {
       design_table <- sel$table
       r_bl         <- sel$r_bl
       n_bl         <- sel$n_bl
+      sel_sys      <- sel$sys
     }
   }
 
@@ -573,25 +941,35 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
           else  as.integer(min(r_bl, rc_cap))
 
   build_system <- function(r_bl_use, n_bl_use) {
-    bl <- build_ic_bl_system(tt_vec, r_bl_use, n_bl_use, orders = 0:4)
+    bl <- build_ic_bl_system(tt_vec, r_bl_use, n_bl_use, orders = 0:4,
+                             include_interior = isTRUE(include_interior) &&
+                                                combine == "gls",
+                             interior_stride = interior_stride)
     sens <- if (use_noiseprop) tryCatch(
       build_ic_noise_sensitivity(bl, U, tt_vec, p, J_u, sig_vec, dt),
       error = function(err) NULL) else NULL
+
+    if (isTRUE(quad_cov) && combine == "gls" && !is.null(sens))
+      sens$Omega2 <- tryCatch(
+        build_ic_noise_quad(bl, U, tt_vec, p, J_u, sig_vec, dt, hess_cache = hess_cache),
+        error = function(err) NULL)
     gls <- if (combine == "gls" && !is.null(sens)) tryCatch(
       build_ic_gls_weights(sens),
       error = function(err) NULL) else NULL
     list(bl = bl, sens = sens, gls = gls)
   }
 
-  sys <- build_system(r_bl, n_bl)
+  # The sweep already built this exact design (same bl / sens / Omega2 / gls
+  # arguments), so reuse it rather than paying for one more candidate.
+  sys <- if (!is.null(sel_sys)) sel_sys else build_system(r_bl, n_bl)
   if (combine == "gls" && is.null(sys$gls)) {
     combine <- "ols"
     if (!is.null(design_table)) {
       design_table <- NULL
-      r_bl <- r_c
+      r_bl <- r_bl_fixed
       n_bl <- max(3L, as.integer(ceiling(r_bl / 8)))
-      sys  <- build_system(r_bl, n_bl)
     }
+    sys <- build_system(r_bl, n_bl)   # rebuilt without the interior block
   }
 
   bl        <- sys$bl
@@ -602,7 +980,9 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   bl_phi_t1 <- bl$bl_phi_t1
   B         <- bl$B
   BtB       <- bl$BtB
-  K_bl      <- bl$K_bl
+  K_bl      <- bl$K_bl     # total stacked equations (BL + interior)
+  K_int     <- bl$K_int
+  em_rows   <- bl$em_rows  # rows with nonzero phi(t_1); interior EM is exactly 0
 
   if (!is.finite(BtB) || BtB < .Machine$double.eps) {
     u0_obs <- as.numeric(U[1, ])
@@ -610,9 +990,10 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     return(list(U_hat = U_hat, u0hat = u0_obs, cov_u0 = NULL,
                 iters = 0L, converged = FALSE, diverged = FALSE,
                 u0_history = matrix(u0_obs, nrow = 1),
-                r_c = r_c, r_bl = r_bl, n_bl = n_bl, K_bl = K_bl, em_order = em_order,
+                r_bl = r_bl, n_bl = n_bl, K_bl = K_bl, K_int = K_int,
+                em_order = em_order,
                 combine = combine, design = design_table,
-                bias_o2 = NULL, debias_applied = FALSE
+                bias_o2 = NULL, debias_applied = FALSE, fallback = TRUE
               ))
   }
 
@@ -626,11 +1007,6 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   c2 <- dt^2 / 12
   c4 <- if (em_order >= 4L) dt^4 / 720 else 0
 
-  # c4_use lets a single built system evaluate the EM defect at either order:
-  # c4_use = c4 (default) is the deployed em_order correction; c4_use = 0 drops
-  # the h^4 term (and skips the order-3 work), reproducing the EM(2) defect. The
-  # design sweep uses this to get the EM(2) fixed point from the EM(4) build
-  # without a second estimate_IC call (see return_em2_u0 below).
   em_correction <- function(u0_curr, p_use = p, c4_use = c4) {
     u_t1   <- as.vector(u0_curr)
     inp_t1 <- matrix(c(p_use, u_t1, tt_vec[1]), ncol = 1L)
@@ -640,15 +1016,11 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       as.vector(d2F_dt2_(inp_t1)),
       as.vector(d3F_dt3_(inp_t1))
     )
-    EM <- matrix(0, nrow = K_bl, ncol = D)
-    for (k in seq_len(K_bl)) {
-      phi_t1_k <- as.list(bl_phi_t1[k, ])
-      g1 <- g_deriv_at_endpoint(phi_t1_k, fd_t1, u_t1, order = 1L)
-      g3 <- if (c4_use != 0)
-              g_deriv_at_endpoint(phi_t1_k, fd_t1, u_t1, order = 3L)
-            else rep(0, D)
-      EM[k, ] <- c2 * g1 - c4_use * g3
-    }
+    A <- matrix(0, 5L, D)
+    A[1:3, ] <- c2 * g_coeffs(fd_t1, u_t1, 1L)
+    if (c4_use != 0) A <- A - c4_use * g_coeffs(fd_t1, u_t1, 3L)
+    EM <- matrix(0, nrow = K_bl, ncol = D)   # interior rows stay exactly 0
+    EM[em_rows, ] <- bl_phi_t1[em_rows, , drop = FALSE] %*% A
     EM
   }
 
@@ -661,12 +1033,9 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
   residual_norm <- function(u0_curr, c4_use = c4) {
     EM <- em_correction(u0_curr, c4_use = c4_use)
     e  <- outer(B, as.numeric(u0_curr)) - (r_trap - EM)   # K_bl x D
-    if (!is.null(gls)) {
-      ev <- as.vector(e)
-      sqrt(sum(ev * (gls$Wm %*% ev)))
-    } else {
-      sqrt(sum(e * e))
-    }
+    m  <- if (!is.null(gls)) as.numeric(gls$BtW %*% as.vector(e))   # D
+          else               as.numeric(crossprod(B, e))            # D
+    sqrt(sum(m * m))
   }
 
   run_fixed_point <- function(c4_use = c4) {
@@ -695,7 +1064,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 
       delta <- sqrt(sum((u0_new - u0)^2))
       u0    <- u0_new
-      if (is.finite(delta) && delta < tol) {
+      if (is.finite(delta) && delta < tol * max(1, sqrt(sum(u0_new^2)))) {
         converged <- TRUE
         break
       }
@@ -763,23 +1132,19 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       }
     }, error = function(err) NULL) else NULL
 
+    # Noise channel: P Omega P^T. The linear part is (P X) diag(s2) (P X)^T; the
+    # quadratic block (build_ic_noise_quad) has to be carried here as well as in
+    # the weights, otherwise the reported SE keeps understating the variance in
+    # exactly the near-null directions the combine loads (LV at 20% noise:
+    # empirical SD / reported SE was 2.9-4.0 before, ~1.0 after).
     cov_u0_noise <- if (!is.null(sens) && !is.null(P)) tryCatch({
       G <- P %*% sens$X
-      G %*% (sens$s2 * t(G))
+      C <- G %*% (sens$s2 * t(G))
+      if (!is.null(sens$Omega2)) C <- C + (P %*% sens$Omega2) %*% t(P)
+      C
     }, error = function(err) NULL) else NULL
 
-    # Parameter channel: the noise propagation above is conditional on p = phat,
-    # i.e. only the "unexplained" part of the law of total variance
-    #   Var(u0hat) = E_p[Var(u0hat | p)] + Var_p(E[u0hat | p]).
-    # The "explained" part comes from the dependence of u0hat on phat.
-    # Differentiating the fixed-point relation w.r.t. p_j at fixed data U gives
-    #   S_p[, j] = P dvec(r_trap - EM)/dp_j,
-    # with the p-derivatives taken by central differences (EM's p-dependence
-    # runs through total time derivatives of f up to order 3 — messy
-    # analytically, trivial numerically), and
-    #   Cov_param(u0) = S_p Cov(phat) S_p^T.
-    # The cross term between the two channels (phat is estimated from the same
-    # data U) is ignored, as in wendy_erts's parameter fold.
+    #
     cov_u0_param <- if (!is.null(param_cov) && !is.null(P)) tryCatch({
       rhs_of_p <- function(p_use)
         as.vector(compute_r_trap(U, p_use) - em_correction(u0, p_use))
@@ -793,7 +1158,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       S_p %*% param_cov %*% t(S_p)
     }, error = function(err) NULL) else NULL
 
-    cov_u0_resid <- if (!lean || is.null(cov_u0_noise)) compute_resid() else NULL
+    cov_u0_resid <- compute_resid()
 
     cov_u0     <- if (!is.null(cov_u0_noise)) cov_u0_noise else cov_u0_resid
     cov_method <- if (!is.null(cov_u0_noise)) "noise_propagation" else "ls_residual"
@@ -836,7 +1201,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
       !is.null(P) && !is.null(EMp) && !is.null(cov_u0_noise)) {
     bias_o2 <- tryCatch(
       build_ic_bias_o2(bl, sens, gls, P, EMp, U, tt_vec, p, J_u,
-                       sig_vec, dt)$b,
+                       sig_vec, dt, hess_cache = hess_cache)$b,
       error = function(err) NULL)
     if (!is.null(bias_o2) && all(is.finite(bias_o2))) {
       se_gate <- sqrt(pmax(diag(cov_u0_noise), 0))
@@ -847,6 +1212,9 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     }
   }
 
+  # The divergence / non-convergence guard is NOT applied here: the raw iterate
+  # and its health flags (converged, diverged) are returned as-is, and the
+  # caller decides whether to fall back to U[1, ] (see solveWendy in wendy.R).
   U_hat <- U; U_hat[1, ] <- u0
 
   list(
@@ -860,16 +1228,17 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
     design         = design_table,
     bias_o2        = bias_o2,
     debias_applied = debias_applied,
+    fallback       = FALSE,
     u0hat_em2      = u0hat_em2,
     em2_diverged   = em2_diverged,
     iters          = iters,
     converged      = converged,
     diverged       = diverged,
     u0_history     = do.call(rbind, u0_hist),
-    r_c            = r_c,
     r_bl           = r_bl,
     n_bl           = n_bl,
     K_bl           = K_bl,
+    K_int          = K_int,
     em_order       = em_order
   )
 }
@@ -917,8 +1286,11 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, r_c, J_u, sigm
 #' @param u0_init Optional length-D vector to seed the filter at \code{tt[1]}
 #'   (e.g. \code{estimate_IC()$u0hat}). Defaults to \code{U[1, ]}.
 #' @param P0_init Optional D x D prior covariance for \code{u0_init}. When
-#'   \code{u0_init} is supplied, defaults to \code{0.1 * sigma^2 I_D} (more
-#'   confident than the raw observation); otherwise \code{sigma^2 I_D}.
+#'   \code{u0_init} is supplied, defaults to \code{sigma^2 I_D}. When neither is
+#'   supplied the prior is \emph{diffuse} (\code{1e6 * sigma^2 I_D}), so the
+#'   \eqn{k = 1} update returns \code{U[1, ]} with covariance \code{sigma^2 I_D}
+#'   rather than double-counting \code{U[1, ]} as both prior mean and
+#'   measurement (which would report \code{sigma^2 / 2}).
 #' @param param_cov Optional J x J parameter covariance \eqn{\hat{C}}.
 #' @param J_p Optional callable returning the D x J Jacobian
 #'   \eqn{\nabla_p f(p, u, t)} (flattened d-fast, like the rest of the package).
@@ -959,8 +1331,22 @@ wendy_erts <- function(U, f_, J_u, tt, p, test_function_params, sigma = NULL, u0
     uk + (h / 6) * (k1 + 2*k2 + 2*k3 + k4)
   }
 
+  # With no prior supplied the filter has no information about u(0) independent
+  # of the data, so the honest encoding is a DIFFUSE prior. Taking
+  # P0 = noise_sd^2 I instead would double-count U[1, ] -- it would be both the
+  # prior mean and the k = 1 measurement, two sources the Kalman update treats
+  # as independent when they are the identical number. That gives K0 = I/2 and
+  # P_filt[1] = noise_sd^2 / 2, half the variance one noisy sample supports.
+  # With P0 = diffuse_scale * R_obs the k = 1 update returns exactly
+  # (U[1, ], R_obs) up to O(1/diffuse_scale). Validated in
+  # examples/validation/ic_kf_diffuse_prior.R: P_filt[1] doubles as predicted;
+  # the RTS pass dilutes it to nothing where later data pins u(0) (logistic/LV
+  # SE ratio ~1.00) but on chaos it lifts u(0) coverage .61-.69 -> .75-.78.
+  diffuse_scale <- 1e6
   u0 <- if (!is.null(u0_init)) as.vector(u0_init) else as.vector(U[1, ])
-  P0 <- if (!is.null(P0_init)) P0_init else noise_sd^2 * I_D
+  P0 <- if (!is.null(P0_init)) P0_init
+        else if (!is.null(u0_init)) noise_sd^2 * I_D
+        else diffuse_scale * noise_sd^2 * I_D
 
   # One EKF forward pass + RTS backward pass at a fixed p̂
   erts_pass <- function(p_use, want_cov) {
