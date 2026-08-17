@@ -404,3 +404,88 @@ plot_radius_selection <- function(object, log = "y", ...) {
     ix     = ix
   ))
 }
+
+#' Plot the boundary-layer radius selection from estimate_IC
+#'
+#' Draws the a-priori \eqn{u_0} MSE proxy over the swept \code{r_bl} grid and
+#' marks the selected radius. With \code{show_terms}, the variance part
+#' \eqn{\sum_d \mathrm{Var}_d/\sigma_d^2} and the bias part
+#' \eqn{\sum_d (\Delta^{EM}_d + b_d)^2/\sigma_d^2} are overlaid.
+#'
+#' @param object A \code{wendy} object from \code{\link{solveWendy}}, or the list
+#'   returned by \code{\link{estimate_IC}}.
+#' @param log Character passed to \code{\link[graphics]{plot}}; dropped if any
+#'   plotted value is non-positive.
+#' @param show_terms Logical; overlay the variance and bias parts. Off by
+#'   default: the bias part runs orders of magnitude below the objective, so
+#'   including it in the y-range flattens the minimum out of view.
+#' @param ... Additional graphical parameters forwarded to
+#'   \code{\link[graphics]{plot}}.
+#' @return Invisibly, a list with the \code{design} table, the selected
+#'   \code{r_bl}, and its index \code{ix}.
+#' @export
+plot_IC_radius_selection <- function(object, log = "y", show_terms = FALSE, ...) {
+  bs       <- object$boundary_state %||% object
+  design   <- bs$design
+  selected <- bs$r_bl
+
+  if (is.null(design) || is.null(selected)) {
+    stop("No IC design-selection table found. estimate_IC only sweeps r_bl when ",
+         "combine = \"gls\" and n_bl is NULL.")
+  }
+
+  d   <- design[is.finite(design$obj), , drop = FALSE]
+  var <- d$var_obj
+  bia <- d$obj - var
+  ix  <- which.min(abs(d$r_bl - selected))
+
+  ys <- c(d$obj, if (show_terms) c(var, bia))
+  ys <- ys[is.finite(ys)]
+  if (grepl("y", log, fixed = TRUE) && any(ys <= 0)) {
+    log <- gsub("y", "", log, fixed = TRUE)
+  }
+
+  # Headroom for the legend, which otherwise lands on the curve: the objective
+  # is U-shaped in r_bl, so both upper corners are occupied.
+  yl <- range(ys)
+  yl[2] <- if (grepl("y", log, fixed = TRUE)) yl[2] * (yl[2] / yl[1])^0.28
+           else yl[2] + 0.28 * diff(yl)
+
+  plot_args <- utils::modifyList(
+    list(
+      x    = d$r_bl,
+      y    = d$obj,
+      type = "b",
+      pch  = 16,
+      col  = "#1f77b4",
+      log  = log,
+      ylim = yl,
+      xlab = "Boundary-layer radius",
+      ylab = expression("MSE proxy" ),
+      main = expression("IC boundary-layer radius selection")
+    ),
+    list(...)
+  )
+  do.call(graphics::plot, plot_args)
+
+  if (show_terms) {
+    graphics::lines(d$r_bl, var, type = "b", pch = 1, lty = 3, col = "#2ca02c")
+    graphics::lines(d$r_bl, bia, type = "b", pch = 2, lty = 3, col = "#9467bd")
+  }
+
+  graphics::abline(v = selected, col = "#d62728", lty = 2, lwd = 1.5)
+  graphics::points(d$r_bl[ix], d$obj[ix], col = "#d62728", pch = 19, cex = 1.7)
+
+  graphics::legend(
+    "topright",
+    legend = c("MSE proxy (obj)",
+               if (show_terms) c("variance part", "bias part"),
+               sprintf("Selected r_bl = %g", selected)),
+    col    = c(plot_args$col, if (show_terms) c("#2ca02c", "#9467bd"), "#d62728"),
+    pch    = c(plot_args$pch, if (show_terms) c(1, 2), 19),
+    lty    = c(1, if (show_terms) c(3, 3), 2),
+    bty    = "n"
+  )
+
+  invisible(list(design = d, r_bl = selected, ix = ix))
+}

@@ -12,19 +12,22 @@ estimate_IC(
   d3F_dt3_,
   tt,
   p,
-  r_c,
   J_u,
   sigma,
   param_cov = NULL,
   n_bl = NULL,
+  r_bl = NULL,
   max_iter = 20L,
-  tol = 1e-12,
+  tol = 1e-10,
   em_order = c(4L, 2L),
   combine = c("gls", "ols"),
+  include_interior = TRUE,
+  interior_stride = 1L,
+  quad_cov = TRUE,
   r_bl_grid = NULL,
   debias = TRUE,
   return_em2_u0 = FALSE,
-  lean = FALSE
+  hess_cache = NULL
 )
 }
 \arguments{
@@ -36,13 +39,6 @@ evaluators built from the symbolic engine.}
 \item{tt}{Numeric vector (length M) of time points.}
 
 \item{p}{Numeric parameter vector \eqn{\hat\theta} (held fixed).}
-
-\item{r_c}{Integer; the integration-error (parameter-estimation) radius. This
-is NOT the boundary-layer radius: under \code{combine = "gls"} with
-\code{n_bl = NULL} the BL radius \code{r_bl} is selected from
-\code{r_bl_grid} (an absolute grid, independent of \code{r_c}), and
-\code{r_c} is used only as the OLS-fallback window. When \code{n_bl} is given
-explicitly the BL radius equals \code{r_c}.}
 
 \item{J_u}{Callable state Jacobian \eqn{\partial f/\partial u}
 (\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
@@ -65,12 +61,23 @@ When \code{NULL} (default) and \code{combine = "gls"}, the BL radius
 \code{r_bl} is selected from \code{r_bl_grid} by the a-priori MSE proxy and
 the count is maxed, \code{n_bl = r_bl} (one BL function per sample out to the
 radius; see Details). When \code{NULL} under \code{combine = "ols"} the
-legacy heuristic \code{max(3, ceiling(r_c/8))} applies (small count, wide
+legacy heuristic \code{max(3, ceiling(r_bl/8))} applies (small count, wide
 placement -- under the unweighted combine, clustered test functions inflate
 Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value skips
-the selection and uses window radius \code{r_c}.}
+the selection and uses \code{r_bl}.}
 
-\item{max_iter, tol}{Fixed-point iteration controls.}
+\item{r_bl}{Optional integer; the boundary-layer radius for the paths that do
+NOT sweep -- an explicit \code{n_bl}, \code{combine = "ols"}, or a sweep
+that failed. Ignored when the a-priori selection runs, since that picks
+\code{r_bl} from \code{r_bl_grid}. Defaults to \code{min(16, (M-1)/2)}.}
+
+\item{max_iter, tol}{Fixed-point iteration controls. \code{tol} is compared
+against the step norm scaled by \code{max(1, ||u_0||)}, i.e. it is a
+relative tolerance for states of size \eqn{\ge 1}. The default \code{1e-10}
+is deliberately above the achievable roundoff floor so that
+\code{converged} is a usable health flag rather than always \code{FALSE}
+on large-amplitude states -- callers gate the divergence fallback on it
+(see the divergence guard in \code{solveWendy}).}
 
 \item{em_order}{Either 2 or 4.}
 
@@ -78,6 +85,20 @@ the selection and uses window radius \code{r_c}.}
 of the BL equations, or \code{"ols"} for the legacy unweighted combine.
 GLS requires a valid \code{sigma} (and \code{J_u}) to build
 \eqn{\Omega}; it degrades to \code{"ols"} otherwise.}
+
+\item{interior_stride}{Integer (default \code{1}, i.e. keep every centre).
+Retains only every s-th interior control-variate centre. At one centre per
+sample the interior block can be over-complete enough for the GLS combine
+to claim cancellation that is not there, and thinning is the lever for
+that; the effect is confined to small radii and does not reach the radii
+the a-priori sweep selects, so it is offered as an option rather than
+imposed (measured in \code{examples/validation/ic_phat_design.R}; strides
+above 2 break down). See \code{build_ic_bl_system}.}
+
+\item{quad_cov}{Logical (default \code{TRUE}). Include the
+\eqn{O(\sigma^4)} quadratic-noise block \eqn{\Omega_2} in the GLS weights
+and in \code{cov_u0} (see \code{build_ic_noise_quad} and Details). GLS path
+only.}
 
 \item{r_bl_grid}{Optional integer vector of candidate BL radii for the
 a-priori selection (default the absolute grid
@@ -95,11 +116,11 @@ point on the same built system and return it as \code{u0hat_em2} (with
 \code{em2_diverged}). Used by the design sweep to form the EM-order-
 difference truncation estimate without a second \code{estimate_IC} call.}
 
-\item{lean}{Logical (default \code{FALSE}, internal). When \code{TRUE}, skip
-the LS-residual fallback covariance (\code{cov_u0_resid}) whenever the
-noise-propagation channel is available -- it is only ever used as a
-fallback and the design sweep never reads it. The public default computes
-it for reference as before.}
+\item{hess_cache}{Optional memoizing state-Hessian closure (internal, from
+\code{build_ic_hessian_cache}). The \eqn{f''} tensors the
+\eqn{O(\sigma^2)} debias needs depend on \code{U}, \code{p} and \code{tt}
+alone, not on the boundary-layer design, so one cache is built here and
+shared across every candidate of the a-priori sweep and the final solve.}
 }
 \value{
 Named list with \code{U_hat} (U with row 1 replaced by
@@ -116,18 +137,21 @@ Named list with \code{U_hat} (U with row 1 replaced by
   \code{NULL} when not computed), \code{cov_method}
   (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
   \code{"+param"} suffix when the parameter channel is included, or
-  \code{"diverged"}), plus \code{combine} (the combine actually used,
+  \code{"diverged"} / \code{"not_converged"}), plus \code{combine} (the combine actually used,
   after any degradation), \code{design} (the design-selection table with
   columns \code{r_bl}, \code{n_bl}, \code{obj} (the MSE proxy), and
   \code{var_obj} (its variance part), or \code{NULL} when no selection ran),
   \code{bias_o2} (the analytic
   \eqn{O(\sigma^2)} bias estimate of the UNcorrected solve, length-D, or
   \code{NULL} when not computed), \code{debias_applied} (whether
-  \code{bias_o2} was subtracted from \code{u0hat}), \code{u0hat_em2} (the
+  \code{bias_o2} was subtracted from \code{u0hat}), \code{fallback}
+  (\code{TRUE} only when the design was degenerate and \code{u0hat} is the
+  raw observation; the divergence guard is applied by the caller, see
+  \code{solveWendy}), \code{u0hat_em2} (the
   EM(2) fixed point, or \code{NULL} unless \code{return_em2_u0} and
   \code{em_order == 4}), \code{em2_diverged}, \code{iters},
-  \code{converged}, \code{diverged}, \code{u0_history}, \code{r_c} (the
-  integration radius passed in), \code{r_bl} (the BL radius actually used),
+  \code{converged}, \code{diverged}, \code{u0_history},
+  \code{r_bl} (the BL radius actually used),
   \code{n_bl}, \code{K_bl}, \code{em_order}.
 }
 \description{
@@ -155,7 +179,7 @@ correlated with covariance \eqn{\Omega = X \mathrm{diag}(\sigma^2) X^T}
 which is minimum-variance among all linear combinations of the equations
 (validated at ~1.05-1.2x the window Cramer-Rao bound, vs up to ~25x for the
 unweighted combine; examples/validation/). Additionally, when \code{n_bl}
-is \code{NULL}, the design \code{(r_c, n_bl)} is selected a priori by
+is \code{NULL}, the design \code{(r_bl, n_bl)} is selected a priori by
 sweeping a small grid and minimizing a calibrated \eqn{u_0}-MSE proxy
 \deqn{\textstyle\sum_d \mathrm{Var}_d/\sigma_d^2
       + \sum_d ((u_0^{EM2} - u_0^{EM4})_d + b_d)^2/\sigma_d^2,}
@@ -170,7 +194,7 @@ noise-only variance objective, which was
 monotone in window/count and so pinned the corner; the MSE proxy turns up
 where the true MSE turns up (validated examples/validation/ic_mse_proxy.R,
 ic_calibrated_criterion.R, ic_realC_overshoot.R). \code{combine = "ols"}
-restores the legacy unweighted combine and its \code{max(3, ceiling(r_c/8))}
+restores the legacy unweighted combine and its \code{max(3, ceiling(r_bl/8))}
 count heuristic.
 
 The feasible GLS estimator carries an \eqn{O(\sigma^2)} bias with two
@@ -185,4 +209,18 @@ examples/validation/tmp_bias_debias_race.R). The correction is skipped
 (with \code{debias_applied = FALSE}) when any component exceeds twice its
 SE — a correction that large signals a regime where the expansion itself
 is suspect.
+
+\eqn{\Omega} carries two pieces. The linear (delta-method) part
+\eqn{X \mathrm{diag}(\sigma^2) X^T} is the covariance of \eqn{X\eta}; the
+residual is also quadratic in the noise through \eqn{f''}, contributing an
+\eqn{O(\sigma^4)} block \eqn{\Omega_2} (see \code{build_ic_noise_quad}) that
+\code{quad_cov = TRUE} (default) adds to both the weights and
+\code{cov_u0}. \eqn{\Omega_2} is only 0.03-3\% of \eqn{\mathrm{tr}(\Omega)},
+but \eqn{\Omega_1} is near-singular and \eqn{\Omega_2} dominates in exactly
+the near-null directions the GLS combine loads, so omitting it makes the
+combine over-trust cancellation that is not there. Deployed effect at 20\%
+noise: \eqn{u_0} MSE \eqn{\times}0.38 on Lorenz (coverage 0.69 -> 0.99,
+RMS z 2.45 -> 0.97) and \eqn{\times}0.64 on Lotka-Volterra, neutral on
+logistic (examples/validation/ic_audit_omega2_check.R,
+ic_audit_combined.R).
 }
