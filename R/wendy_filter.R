@@ -562,15 +562,6 @@ build_ic_bias_o2 <- function(bl, sens, gls, P, EMp, U, tt_vec, p, J_u, sig_vec, 
 # the EM block, and P maps a residual perturbation to a u0 shift, so
 #   u0_EM2 - u0_EM4 = P vec(Delta) + O(||Delta||^2),
 # one evaluation rather than a second fixed point.
-#
-# Validated in examples/validation/ic_apriori_proxy.R over
-# logistic/LV/Lorenz x nr in {1, 5, 20}%, 20 reps: within-rep Spearman against
-# the old solve-based objective 0.96-1.00, the same median r_bl selected in
-# every cell, and equal informativeness about the true u0 error (rank
-# correlation with err_true within 0.02 of the solve-based objective).
-# The plug-in itself is only ~5% of a candidate, so the win is modest; the
-# cost now lives in the per-candidate build (65-76%) and build_ic_bias_o2
-# (19-32%).
 select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
                              sig_vec, param_cov, em_order,
                              r_bl_grid, rc_cap, include_interior = TRUE,
@@ -674,9 +665,7 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
     i <- i + 1L
     rows[[i]] <- data.frame(r_bl = r_bl, n_bl = n_bl,
                             obj = res$obj, var_obj = res$var_obj)
-    # Hand the winner's system back so estimate_IC does not rebuild it. Only the
-    # best-so-far is retained (one KD x KD set, not one per candidate); strict
-    # `<` keeps the first of any tie, matching which.min below.
+
     if (is.finite(res$obj) && res$obj < best_obj) {
       best_obj <- res$obj
       best_sys <- res$sys
@@ -920,7 +909,7 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, sigma,
   sel_sys      <- NULL          # the winning candidate's already-built system
   if (combine == "gls" && is.null(n_bl)) {
     if (is.null(r_bl_grid)){
-      r_bl_grid <- c(4, 6, 8, 10, 12, 16, 20, 24, 32, 40)
+      r_bl_grid <- c(4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 50, 80, 100)
     }
     sel <- tryCatch(
       select_ic_design(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,

@@ -18,7 +18,7 @@ f <- function(u, p, t) {
 p_star <- c(1, 1/10)
 u0 <- c(0.1)
 p0 <- c(1.25, 0.25)
-npoints <- 256
+npoints <- 64
 t_span <- c(0.0, 10)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -27,7 +27,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rto
 
 # set.seed(8675309)
 
-nr <- 0.25
+nr <- 0.1
 U_vec <- as.vector(sol[,-1])
 
 # Additive Gaussian Noise
@@ -46,7 +46,7 @@ t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints);
 sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
 
 time <- system.time({
-  res <- solveWendy(f = f, U, tt, method = "IRLS",  control = list(estimate_IC = TRUE, estimate_trajectory = TRUE))
+  res <- solveWendy(f = f, U, tt, method = "IRLS",  control = list(estimate_IC = TRUE, estimate_trajectory = FALSE))
 })
 
 cat("\nWall Time:", time[1],"seconds")
@@ -56,7 +56,7 @@ cat("\nWall Time:", time[1],"seconds")
 # u0_smooth <- U_star[1, 1]
 # tt_vec    <- as.vector(tt)
 
-# t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints);
+# t_eval_dense <- seq(t_span[1], t_span[2], length.out = npoints)
 # sol_true <- deSolve::ode(y = u0, times = t_eval_dense, func = modelODE, parms = p_star)
 
 # U_star    <- res$state$U_star
@@ -99,14 +99,14 @@ cat("\nWall Time:", time[1],"seconds")
 #   cex = 0.7
 # )
 
-res1 <- solveWendy(f = f, U, tt, method = "IRLS", control = list(estimate_IC = FALSE, estimate_trajectory = TRUE))
+# res1 <- solveWendy(f = f, U, tt, method = "IRLS", control = list(estimate_IC = FALSE, estimate_trajectory = TRUE))
 
-cat("\n\nestimate_IC û₀: ", res$u0hat)
-cat("\nSeeded      û₀: ", res$state$U_star[1,])
+# cat("\n\nestimate_IC û₀: ", res$u0hat)
+# cat("\nSeeded      û₀: ", res$state$U_star[1,])
 # cat("rel error:\n")
 # cat(rel_err(res$u0hat, sol[,-1][1]))
 # cat(res$state$U_star[1,])
 
-cat("\nUnseeded    û₀: ",res1$state$U_star[1,] )
+# cat("\nUnseeded    û₀: ",res1$state$U_star[1,] )
 
-# plot_IC_radius_selection(res)
+# # plot_IC_radius_selection(res)

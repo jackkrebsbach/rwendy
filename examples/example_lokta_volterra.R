@@ -44,7 +44,7 @@ tt <- matrix(sol[, 1], ncol = 1)
 
 time <- system.time({
 res  <- solveWendy(f, U, p0 = p0, tt, method = "IRLS",
- control = list(estimate_IC = FALSE)
+ control = list(estimate_IC = TRUE)
 )
 })
 
