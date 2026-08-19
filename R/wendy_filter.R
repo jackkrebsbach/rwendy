@@ -1052,6 +1052,18 @@ pool_ic_radii <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, sig_vec
 #'   \eqn{O(\sigma^2)} debias needs depend on \code{U}, \code{p} and \code{tt}
 #'   alone, not on the boundary-layer design, so one cache is built here and
 #'   shared across every candidate of the a-priori sweep and the final solve.
+#' @param pool_radii Logical. When \code{TRUE} (default) the per-radius estimates
+#'   over \code{r_bl_grid} are COMBINED by GLS using their cross-radius covariance
+#'   (\code{pool_ic_radii}) instead of keeping the argmin of the MSE proxy. Cheaper
+#'   than the sweep it replaces (0.47-0.69x) and better wherever the O(sigma^2) bias
+#'   differentiates the radii -- which is where the gain comes from, since pooling
+#'   averages differently-BIASED members rather than reducing variance.
+#'   LIMITATION: on fine grids at low noise (validated: Lorenz M=512, and the
+#'   M=256 nr=0.05 corner) the modelled cross-radius correlation understates the
+#'   truth by 15-30x, capping the attainable gain at ~4.5%, and the pool comes out
+#'   1.02-1.05x worse than the argmin. No detector distinguishes that regime -- see
+#'   examples/validation/ic_pool_underdispersion_guard.R. Set \code{FALSE} to
+#'   restore the argmin sweep.
 #' @param r_bl_grid Optional integer vector of candidate BL radii for the
 #'   a-priori selection (default the absolute grid
 #'   \code{c(4,8,12,16,20,24,32,40,48)} capped at \code{floor((M-1)/2)}); at each
