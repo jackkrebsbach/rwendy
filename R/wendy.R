@@ -362,14 +362,24 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
       S_uq <- build_S(function(p) sweep(res$L(p), 2L, ratio_cols, `*`), res$W, control$diag_reg)
       Sp <- S_uq(res$phat)
       Gp <- if (lip) res$G else res$Jp_r(res$phat)
-      R  <- chol(Sp)
-      solve(crossprod(Gp, backsolve(R, forwardsolve(t(R), Gp))))
+      R  <- chol(Sp)                                  # Sp = RᵀR
+      # (Gᵀ S⁻¹ G)⁻¹ via the whitened Jacobian, matching summary.wendy (lib.R).
+      # crossprod(Gt) is symmetric by construction and chol2inv keeps the inverse
+      # PSD; the previous solve(crossprod(Gp, Sp⁻¹Gp)) formed an asymmetric product
+      # and returned a NEGATIVE eigenvalue on LV in 12/30 fits (cond 8e2-1.5e4),
+      # which downstream survives only because cov_u0 reads diag() of S_p Ĉ S_pᵀ.
+      Gt <- backsolve(R, Gp, transpose = TRUE)        # R⁻ᵀG
+      chol2inv(chol(crossprod(Gt)))
     }, error = function(e) NULL)
   } else NULL
 
   boundary_state <- if (control$estimate_IC && method != "OE") {
+    # Pool over the MSG-convention radius grid anchored at min_radius.
+    ic_grid <- if (!is.null(res$min_radius) && is.finite(res$min_radius))
+                 .ic_msg_grid(res$min_radius, floor((nrow(U) - 1L) / 2L)) else NULL
     ic <- estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat,
                 J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat,
+                r_bl_grid = ic_grid, pool_radii = TRUE,
                 debias = TRUE, quad_cov = TRUE,  include_interior = TRUE, combine = "gls")
 
     # Divergence guard: the Picard map contracts only while the grid resolves f.
