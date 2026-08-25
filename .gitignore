@@ -16,3 +16,4 @@ examples/validation/
 
 **/*.quarto_ipynb
 .vscode
+examples/scripts
