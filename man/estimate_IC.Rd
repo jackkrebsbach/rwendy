@@ -86,6 +86,13 @@ of the BL equations, or \code{"ols"} for the legacy unweighted combine.
 GLS requires a valid \code{sigma} (and \code{J_u}) to build
 \eqn{\Omega}; it degrades to \code{"ols"} otherwise.}
 
+\item{include_interior}{Logical (default \code{TRUE}). Append interior
+test-function rows (\eqn{\phi(t_1) = 0}, so they load nothing on
+\eqn{u_0}) to the boundary-layer system. They cannot identify
+\eqn{u_0}; they act as GLS control variates through the off-diagonal
+blocks of \eqn{\Omega}. GLS combine only -- ignored under
+\code{combine = "ols"}, which has no weights to exploit.}
+
 \item{interior_stride}{Integer (default \code{1}, i.e. keep every centre).
 Retains only every s-th interior control-variate centre. At one centre per
 sample the interior block can be over-complete enough for the GLS combine
@@ -102,7 +109,8 @@ only.}
 
 \item{r_bl_grid}{Optional integer vector of candidate BL radii for the
 a-priori selection (default the absolute grid
-\code{c(4,8,12,16,20,24,32,40,48)} capped at \code{floor((M-1)/2)}); at each
+\code{c(4,6,8,10,12,16,20,24,32,40,50,80,100)} capped at
+\code{floor((M-1)/2)}, deduplicated); at each
 candidate the count is maxed (\code{n_bl = r_bl}). Only used when
 \code{combine = "gls"} and \code{n_bl} is \code{NULL}.}
 
@@ -187,9 +195,16 @@ where \eqn{\mathrm{Var} = \mathrm{diag}(\mathrm{cov\_u0})} folds the EM
 Jacobian and the parameter channel \eqn{S_p \hat C S_p^T},
 \eqn{u_0^{EM2} - u_0^{EM4}} is the oracle-free Euler-Maclaurin order-
 difference estimate of the truncation defect, and \eqn{b} is the analytic
-\eqn{O(\sigma^2)} statistical bias. Each candidate costs a single EM solve
-(the lower-order \eqn{u_0^{EM2}} fixed point is recovered from the same build
-via \code{return_em2_u0}, not a second solve). This replaces the earlier
+\eqn{O(\sigma^2)} statistical bias. The selection is genuinely A PRIORI: no
+candidate is solved. Every term reaches the fixed point only through the
+point at which \eqn{\partial \mathrm{EM}/\partial u_0}, the IFT projection
+\eqn{P} and the \eqn{h^4} endpoint term are evaluated, so the raw first
+observation \code{U[1, ]} is plugged in there, and the order-difference term
+is linearised as \eqn{u_0^{EM2} - u_0^{EM4} = P\,\mathrm{vec}(\Delta)} with
+\eqn{\Delta = -c_4 \phi(t_1) g^{(3)}} (one evaluation, not two solves).
+Validated in \code{examples/validation/ic_apriori_proxy.R}: within-rep rank
+correlation 0.96-1.00 against the former solve-per-candidate objective, same
+median radius selected in every cell. This replaces the earlier
 noise-only variance objective, which was
 monotone in window/count and so pinned the corner; the MSE proxy turns up
 where the true MSE turns up (validated examples/validation/ic_mse_proxy.R,

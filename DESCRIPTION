@@ -23,7 +23,8 @@ Imports:
     minpack.lm,
     stats,
     graphics,
-    pracma
+    pracma,
+    utils
 Suggests:
     symengine,
     deSolve
