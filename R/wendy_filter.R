@@ -796,6 +796,12 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #'   \eqn{O(\sigma^4)} quadratic-noise block \eqn{\Omega_2} in the GLS weights
 #'   and in \code{cov_u0} (see \code{build_ic_noise_quad} and Details). GLS path
 #'   only.
+#' @param include_interior Logical (default \code{TRUE}). Append interior
+#'   test-function rows (\eqn{\phi(t_1) = 0}, so they load nothing on
+#'   \eqn{u_0}) to the boundary-layer system. They cannot identify
+#'   \eqn{u_0}; they act as GLS control variates through the off-diagonal
+#'   blocks of \eqn{\Omega}. GLS combine only -- ignored under
+#'   \code{combine = "ols"}, which has no weights to exploit.
 #' @param debias Logical (default \code{TRUE}). On the GLS path, subtract the
 #'   analytic \eqn{O(\sigma^2)} bias (both channels; see Details). Ignored on
 #'   the OLS path and on diverged solves.
@@ -811,7 +817,8 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u,
 #'   shared across every candidate of the a-priori sweep and the final solve.
 #' @param r_bl_grid Optional integer vector of candidate BL radii for the
 #'   a-priori selection (default the absolute grid
-#'   \code{c(4,8,12,16,20,24,32,40,48)} capped at \code{floor((M-1)/2)}); at each
+#'   \code{c(4,6,8,10,12,16,20,24,32,40,50,80,100)} capped at
+#'   \code{floor((M-1)/2)}, deduplicated); at each
 #'   candidate the count is maxed (\code{n_bl = r_bl}). Only used when
 #'   \code{combine = "gls"} and \code{n_bl} is \code{NULL}.
 #' @param J_u Callable state Jacobian \eqn{\partial f/\partial u}
@@ -926,8 +933,12 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, sigma,
     }
   }
 
-  n_bl <- if (!is.null(n_bl)) max(1L, as.integer(n_bl))
-          else  as.integer(min(r_bl, rc_cap))
+  # Under the unweighted (OLS) combine, clustered BL test functions inflate
+  # Var(u0hat) by 7-19%, so that path wants the small-count wide placement its
+  # documentation promises; the GLS sweep sets n_bl = r_bl itself.
+  n_bl <- if (!is.null(n_bl))       max(1L, as.integer(n_bl))
+          else if (combine == "ols") max(3L, as.integer(ceiling(r_bl / 8)))
+          else                       as.integer(min(r_bl, rc_cap))
 
   build_system <- function(r_bl_use, n_bl_use) {
     bl <- build_ic_bl_system(tt_vec, r_bl_use, n_bl_use, orders = 0:4,
@@ -1089,7 +1100,12 @@ estimate_IC <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, sigma,
       EM_final <- em_correction(u0)
       rhs      <- r_trap - EM_final            # K_bl x D
       e        <- outer(B, u0) - rhs            # K_bl x D residuals
-      df       <- max(K_bl - 1L, 1L)
+      # Only the BL rows (em_rows: phi(t_1) != 0) estimate u0 -- interior rows
+      # have B = 0 and EM = 0, so e is the raw interior weak residual there and
+      # summing it against a BtB that covers the BL rows alone inflated this by
+      # 2.6x on logistic M=128 / r_bl=20 (86 interior rows against 20 BL).
+      e        <- e[em_rows, , drop = FALSE]
+      df       <- max(length(em_rows) - 1L, 1L)
       s2       <- colSums(e * e) / df           # length-D
       diag(s2 / BtB, nrow = D, ncol = D)
     }, error = function(err) NULL)

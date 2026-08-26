@@ -60,6 +60,7 @@ summary.wendy <- function(object, ...) {
 
   if(!is.null(object$phat)) {
     phat <- object$phat
+    param_cov_ols <- NULL   # only the GLS branch has a weak-form G to sandwich
 
     if (method %in% c("OE", "HYBRID")) {
       # OE / HYBRID: the final estimate comes from output_error, so use the
@@ -257,7 +258,18 @@ coef.wendy <- function(object, ...) {
 #' @method residuals wendy
 #' @export
 residuals.wendy <- function(object, ...) {
+  .stop_if_no_weak_form(object)
   as.numeric(object$g(object$phat) - object$b)
+}
+
+# method = "OE" never builds the weak form, so g/b/S are NULL and the callers
+# below would die with "attempt to apply non-function".
+.stop_if_no_weak_form <- function(object) {
+  if (is.null(object$g) || is.null(object$b) || is.null(object$S)) {
+    stop("No weak residual on this wendy object. It is not built for ",
+         "method = \"OE\"; use summary() for the output-error fit instead.",
+         call. = FALSE)
+  }
 }
 
 #' Extract corrected residuals from a wendy object
@@ -267,6 +279,7 @@ residuals.wendy <- function(object, ...) {
 #' @return Numeric vector of weak residuals
 #' @export
 residuals_weighted <- function(object, ...) {
+  .stop_if_no_weak_form(object)
   S_mat <- object$S(object$phat)
   r     <- object$b - object$g(object$phat)
   RT    <- t(chol(S_mat))
@@ -281,6 +294,50 @@ residuals_weighted <- function(object, ...) {
 #' @export
 rel_err <- function(x,y){
   norm(x - y, type = "2") / norm(y, type = "2")
+}
+
+# Shared drawing for the radius-selection diagnostics: strip a log axis the data
+# cannot carry, merge caller graphics args over the defaults, overlay any extra
+# series, mark the selected radius and assemble the legend. `extra` is a list of
+# list(y, label, col, pch, lty).
+.plot_radius_curve <- function(x, y, selected, ix, log, defaults, dots,
+                               series_label, selected_label,
+                               extra = list(), headroom = 0) {
+  ys <- c(y, unlist(lapply(extra, `[[`, "y")))
+  if (grepl("y", log, fixed = TRUE) && any(!is.finite(ys) | ys <= 0)) {
+    log <- gsub("y", "", log, fixed = TRUE)
+  }
+  logy <- grepl("y", log, fixed = TRUE)
+
+  if (headroom > 0) {
+    yl <- range(ys[is.finite(ys)])
+    yl[2] <- if (logy) yl[2] * (yl[2] / yl[1])^headroom else yl[2] + headroom * diff(yl)
+    defaults$ylim <- yl
+  }
+
+  plot_args <- utils::modifyList(
+    c(list(x = x, y = y, type = "b", pch = 16, col = "#1f77b4", log = log), defaults),
+    dots)
+  do.call(graphics::plot, plot_args)
+
+  for (e in extra) {
+    graphics::lines(x, e$y, type = "b", pch = e$pch, lty = e$lty, col = e$col)
+  }
+
+  graphics::abline(v = selected, col = "#d62728", lty = 2, lwd = 1.5)
+  graphics::points(x[ix], y[ix], col = "#d62728", pch = 19, cex = 1.7)
+
+  graphics::legend(
+    "topright",
+    legend = c(series_label,
+               vapply(extra, `[[`, "", "label"),
+               sprintf(selected_label, selected)),
+    col    = c(plot_args$col, vapply(extra, `[[`, "", "col"), "#d62728"),
+    pch    = c(plot_args$pch, vapply(extra, function(e) e$pch, 0), 19),
+    lty    = c(1, vapply(extra, function(e) e$lty, 0), 2),
+    bty    = "n"
+  )
+  invisible(plot_args)
 }
 
 #' Plot the test-function radius selection diagnostic
@@ -361,40 +418,14 @@ plot_radius_selection <- function(object, log = "y", ...) {
   # The selected radius is one of the swept radii; recover its index.
   ix <- which.min(abs(radii - selected))
 
-  # Log-y is only valid for strictly positive errors.
-  if (grepl("y", log, fixed = TRUE) && any(!is.finite(errors) | errors <= 0)) {
-    log <- gsub("y", "", log, fixed = TRUE)
-  }
-
-  plot_args <- utils::modifyList(
-    list(
-      x    = radii,
-      y    = errors,
-      type = "b",
-      pch  = 16,
-      col  = "#1f77b4",
-      log  = log,
-      xlab = "Test-function support radius (grid points)",
-      ylab = "Integration error",
-      main = main_def
-    ),
-    list(...)
-  )
-  do.call(graphics::plot, plot_args)
-
-  # Mark the selected radius (the change-point elbow).
-  graphics::abline(v = selected, col = "#d62728", lty = 2, lwd = 1.5)
-  graphics::points(radii[ix], errors[ix], col = "#d62728", pch = 19, cex = 1.7)
-
-  graphics::legend(
-    "topright",
-    legend = c("Integration error",
-               sprintf("Selected radius = %g", selected)),
-    col    = c(plot_args$col, "#d62728"),
-    pch    = c(plot_args$pch, 19),
-    lty    = c(1, 2),
-    bty    = "n"
-  )
+  .plot_radius_curve(
+    radii, errors, selected, ix, log,
+    defaults = list(xlab = "Test-function support radius (grid points)",
+                    ylab = "Integration error",
+                    main = main_def),
+    dots = list(...),
+    series_label   = "Integration error",
+    selected_label = "Selected radius = %g")
 
   invisible(list(
     type   = type,
@@ -439,53 +470,22 @@ plot_IC_radius_selection <- function(object, log = "y", show_terms = FALSE, ...)
   bia <- d$obj - var
   ix  <- which.min(abs(d$r_bl - selected))
 
-  ys <- c(d$obj, if (show_terms) c(var, bia))
-  ys <- ys[is.finite(ys)]
-  if (grepl("y", log, fixed = TRUE) && any(ys <= 0)) {
-    log <- gsub("y", "", log, fixed = TRUE)
-  }
+  extra <- if (show_terms) list(
+    list(y = var, label = "variance part", col = "#2ca02c", pch = 1, lty = 3),
+    list(y = bia, label = "bias part",     col = "#9467bd", pch = 2, lty = 3)
+  ) else list()
 
-  # Headroom for the legend, which otherwise lands on the curve: the objective
-  # is U-shaped in r_bl, so both upper corners are occupied.
-  yl <- range(ys)
-  yl[2] <- if (grepl("y", log, fixed = TRUE)) yl[2] * (yl[2] / yl[1])^0.28
-           else yl[2] + 0.28 * diff(yl)
-
-  plot_args <- utils::modifyList(
-    list(
-      x    = d$r_bl,
-      y    = d$obj,
-      type = "b",
-      pch  = 16,
-      col  = "#1f77b4",
-      log  = log,
-      ylim = yl,
-      xlab = "Boundary-layer radius",
-      ylab = expression("MSE proxy" ),
-      main = expression("IC boundary-layer radius selection")
-    ),
-    list(...)
-  )
-  do.call(graphics::plot, plot_args)
-
-  if (show_terms) {
-    graphics::lines(d$r_bl, var, type = "b", pch = 1, lty = 3, col = "#2ca02c")
-    graphics::lines(d$r_bl, bia, type = "b", pch = 2, lty = 3, col = "#9467bd")
-  }
-
-  graphics::abline(v = selected, col = "#d62728", lty = 2, lwd = 1.5)
-  graphics::points(d$r_bl[ix], d$obj[ix], col = "#d62728", pch = 19, cex = 1.7)
-
-  graphics::legend(
-    "topright",
-    legend = c("MSE proxy (obj)",
-               if (show_terms) c("variance part", "bias part"),
-               sprintf("Selected r_bl = %g", selected)),
-    col    = c(plot_args$col, if (show_terms) c("#2ca02c", "#9467bd"), "#d62728"),
-    pch    = c(plot_args$pch, if (show_terms) c(1, 2), 19),
-    lty    = c(1, if (show_terms) c(3, 3), 2),
-    bty    = "n"
-  )
+  # headroom: the objective is U-shaped in r_bl, so both upper corners are
+  # occupied and the legend would otherwise land on the curve.
+  .plot_radius_curve(
+    d$r_bl, d$obj, selected, ix, log,
+    defaults = list(xlab = "Boundary-layer radius",
+                    ylab = expression("MSE proxy"),
+                    main = expression("IC boundary-layer radius selection")),
+    dots = list(...),
+    series_label   = "MSE proxy (obj)",
+    selected_label = "Selected r_bl = %g",
+    extra = extra, headroom = 0.28)
 
   invisible(list(design = d, r_bl = selected, ix = ix))
 }

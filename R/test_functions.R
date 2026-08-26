@@ -40,15 +40,27 @@ psi_hat <- function(freqs, radius, dt, T, C, p = 16){
 .tfd_cache <- new.env(parent = emptyenv())
 
 test_function_derivative <- function(test_function, radius, dt, order) {
-  # deparse() captures formals + body, so two test functions sharing a body but
-  # differing in (e.g.) the default smoothness p do not collide.
-  key <- paste(paste(deparse(test_function), collapse = ""),
+  r <- radius * dt
+
+  # deparse() is NOT a sufficient identity: a closure that captures its shape
+  # parameter -- build_full_test_function_matrices_ssl builds
+  # `function(t, r) psi(t, r, p = p_shape)` from control$p -- deparses to the
+  # same string for every value of p_shape, so all of them shared one key and
+  # whichever p was built first in the session was served to the rest (V, V' and
+  # V'' all wrong; norm_factor calls test_function directly and stays correct,
+  # so the two even became mutually inconsistent). Fingerprint the function
+  # numerically instead: sample it at fixed offsets inside its support, at full
+  # double precision. Asymmetric offsets are included so an odd component cannot
+  # cancel. Costs a handful of scalar evaluations, on cache misses only.
+  probe <- r * c(0.05, 0.17, -0.23, 0.31, 0.43, -0.61, 0.57, 0.68, 0.79, 0.91)
+  fingerprint <- paste(sprintf("%.17g", as.numeric(test_function(probe, r))),
+                       collapse = ",")
+  key <- paste(paste(deparse(test_function), collapse = ""), fingerprint,
                radius, dt, order, sep = "|")
   hit <- .tfd_cache[[key]]
   if (!is.null(hit)) return(hit)
 
   t <- sym_symbol("t")
-  r <- radius * dt
   phi_sym <- test_function(t, r)
 
   phi_deriv_sym <- phi_sym
