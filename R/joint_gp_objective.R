@@ -19,16 +19,16 @@
     L <- coordinates$L[[d]]
     if (length(L)==1L) B*L else B%*%L
   }
-  Jdata <- matrix(0,n*length(observed),J+m*D)
-  for (k in seq_along(observed))
-    Jdata[(k-1L)*n+seq_len(n),index[[observed[k]]]] <- -transform(H,observed[k])/noise[k]
-  Jprior <- matrix(0,m*length(prior_components),J+m*D)
-  for (k in seq_along(prior_components)) {
+  data_blocks <- lapply(seq_along(observed),function(k) -transform(H,observed[k])/noise[k])
+  prior_blocks <- lapply(seq_along(prior_components),function(k) {
     d <- prior_components[k]
     L <- coordinates$L[[d]]
-    Jprior[(k-1L)*m+seq_len(m),index[[d]]] <- if (prior_whitened) diag(m) else
+    if (prior_whitened) diag(m) else
       forwardsolve(prior_state$L[[d]],if (length(L)==1L) diag(L,m) else L)
-  }
+  })
+  # Scalar optimizers only need the nonzero component blocks. Assemble the
+  # stacked constant rows lazily when LM or a diagnostic requests them.
+  linear_jacobian <- NULL
   whiten <- prior_whitened && identical(weak$integration,"gp_gauss")
   ode_scale <- sqrt(lambda); last <- cached <- NULL
   function(theta,jacobian=TRUE,scalar=FALSE) {
@@ -42,7 +42,7 @@
       rp[,k] <- if (prior_whitened) theta[index[[d]]] else
         forwardsolve(prior_state$L[[d]],U[,d]-prior_state$mu[,d])
     }
-    v <- .jgp_weak_eval(U,p,weak,model,jacobian,whiten)
+    v <- .jgp_weak_eval(U,p,weak,model,jacobian,whiten,adjoint=scalar)
     wr <- as.vector(weights$W%*%v$r); ode <- ode_scale*wr
     qi <- weights$interior$rank
     contributions <- c(data=sum(rd^2)/2,gp=sum(rp^2)/2,
@@ -51,21 +51,39 @@
     if (jacobian) {
       if (scalar) {
         score <- lambda*crossprod(weights$W,wr)
-        gu <- as.vector(crossprod(v$Ju,score))
-        gradient <- as.vector(crossprod(Jdata,as.vector(rd))+crossprod(Jprior,as.vector(rp)))
-        gradient[seq_len(J)] <- as.vector(crossprod(v$Jp,score))*pscale
+        derivative <- if (is.null(v$pullback))
+          list(p=as.vector(crossprod(v$Jp,score)),U=as.vector(crossprod(v$Ju,score))) else
+            v$pullback(score)
+        gu <- derivative$U
+        gradient <- numeric(J+m*D)
+        for (k in seq_along(observed)) {
+          ix <- index[[observed[k]]]
+          gradient[ix] <- as.vector(crossprod(data_blocks[[k]],rd[,k]))
+        }
+        for (k in seq_along(prior_components)) {
+          ix <- index[[prior_components[k]]]
+          gradient[ix] <- gradient[ix]+as.vector(crossprod(prior_blocks[[k]],rp[,k]))
+        }
+        gradient[seq_len(J)] <- derivative$p*pscale
         for (d in seq_len(D)) {
           g <- gu[(d-1L)*m+seq_len(m)]; L <- coordinates$L[[d]]
           gradient[index[[d]]] <- gradient[index[[d]]]+if (whiten) g else
             if (length(L)==1L) L*g else as.vector(crossprod(L,g))
         }
       } else {
+        if (is.null(linear_jacobian)) {
+          linear_jacobian <<- matrix(0,n*length(observed)+m*length(prior_components),J+m*D)
+          for (k in seq_along(observed))
+            linear_jacobian[(k-1L)*n+seq_len(n),index[[observed[k]]]] <<- data_blocks[[k]]
+          for (k in seq_along(prior_components))
+            linear_jacobian[n*length(observed)+(k-1L)*m+seq_len(m),index[[prior_components[k]]]] <<- prior_blocks[[k]]
+        }
         JU <- matrix(0,nrow(v$Ju),m*D)
         for (d in seq_len(D)) {
           block <- v$Ju[,(d-1L)*m+seq_len(m),drop=FALSE]
           JU[,index[[d]]-J] <- if (whiten) block else transform(block,d)
         }
-        jac <- rbind(Jdata,Jprior,ode_scale*weights$W%*%
+        jac <- rbind(linear_jacobian,ode_scale*weights$W%*%
           cbind(sweep(v$Jp,2,pscale,"*"),JU))
         gradient <- as.vector(crossprod(jac,c(rd,rp,ode)))
       }

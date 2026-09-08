@@ -4,8 +4,8 @@
 # in PHYSICAL coordinates with a scalar preconditioner and no latent prior
 # penalty, which is what keeps the joint MAP over state and amplitude from being
 # unbounded below. Stage 2 fits a GP to the stage-1 curve. Stage 3 restarts from
-# the resulting smoothed curve, using that GP only as the PRECONDITIONER -- its
-# penalty is off by default. An invertible preconditioner changes neither the
+# the stage-1 curve, using that GP only as the PRECONDITIONER -- its penalty is
+# off by default. An invertible preconditioner changes neither the
 # physical objective nor the set of admissible grid states. See latent_penalty.
 
 .jgl_split <- function(U) {
@@ -212,6 +212,7 @@
 
 # Both latent stages use exactly the same residual engine as observed fits.
 .jgl_objective <- function(prep,cache,coordinates,prior=NULL,penalty=FALSE) {
+  coordinates <- .jgp_bounded_coordinates(coordinates,attr(prep$ctl,"state_bounds"),prep$units)
   state <- cache$prior_state; components <- prep$observed
   if (penalty) {
     state$L[[cache$d]] <- prior$L; state$mu[,cache$d] <- prior$mean
@@ -229,11 +230,14 @@
       latent_gp=unname(v$prior_contributions[as.character(cache$d)]))
     if (!is.null(prior)) {
       ix <- prep$J+(match(cache$d,coordinates$order)-1L)*cache$M+seq_len(cache$M)
-      v$latent_z <- sum(par[ix]^2)/2
+      v$latent_z <- if (length(coordinates$L[[cache$d]])==1L)
+        sum(forwardsolve(prior$L,v$U[,cache$d]-prior$mean)^2)/2 else sum(par[ix]^2)/2
     }
     v
   }
   attr(fn,"coordinates") <- coordinates
+  attr(fn,"bounds") <- .jgp_coordinate_bounds(coordinates,prep$lower,prep$upper,
+    attr(prep$ctl,"state_bounds"))
   fn
 }
 
@@ -241,19 +245,23 @@
                         solver = "nlminb", gradient_tol = 1e-4) {
   J <- length(prep$p0); M <- cache$M; nz <- M * length(prep$observed); d <- cache$d
   U <- prep$pilot; p <- prep$p0 * multiplier
-  par <- c(p / cache$pscale, unlist(lapply(prep$observed,function(o)
-    forwardsolve(cache$st$L[[o]],U[,o]-cache$st$mu[,o]))), U[,d]/cache$scale)
   fn <- .jgl_stage1_objective(prep, cache)
+  bounds <- attr(fn,"bounds")
+  par <- .jgp_pack_coordinates(p,U,attr(fn,"coordinates"))
+  par <- pmax(bounds$lower,pmin(bounds$upper,par))
   # Warm phase on the parameters and the latent only, holding the observed
   # blocks at their posterior-preconditioned start.
   warm <- .jgp_scalar_optimize(par, fn, min(75L,maxit), solver,
-                       active = c(seq_len(J), J + nz + seq_len(M)))
+                       active = c(seq_len(J), J + nz + seq_len(M)),
+                       lower=bounds$lower,upper=bounds$upper)
   par <- warm$par
-  a <- .jgp_scalar_optimize(par, fn, maxit, solver)
-  res <- fn(a$par)
+  a <- .jgp_scalar_optimize(par,fn,maxit,solver,lower=bounds$lower,upper=bounds$upper)
+  # Preserve the physical weak Jacobian in the stage-1 record; only the final
+  # point needs this matrix, never the scalar optimizer's intermediate steps.
+  res <- fn(a$par,TRUE,FALSE)
   check <- .jgl_diagnostics(prep,cache,res$p,res$U,gradient_tol)
   list(value = res$value, p = res$p, U = res$U, Ju = res$Ju,
-       contributions = res$contributions, multiplier = multiplier,
+       contributions = res$contributions, multiplier = multiplier,theta=a$par,
        converged = check$stationary, stationarity = check,
        optimizer = a[setdiff(names(a),"par")], warm = warm[setdiff(names(warm),"par")],
        projected_gradient = max(abs(res$gradient)))
@@ -267,7 +275,7 @@
   }
   .jgp_fit_diagnostics(U,p,prep$Y,prep$H,prep$noise,prep$weak,prep$model,
     prep$weights,prep$ctl,state,components,observed=prep$observed,
-    tolerance=tolerance,rank=rank)
+    lower=prep$lower,upper=prep$upper,tolerance=tolerance,rank=rank)
 }
 
 # Stage 2: fit the latent prior to the stage-1 curve. The nugget absorbs the
@@ -293,10 +301,10 @@
                         penalty = FALSE, solver = "nlminb", gradient_tol = 1e-4) {
   J <- length(prep$p0); M <- cache$M; D <- prep$D; d <- cache$d
   st <- cache$st; st$L[[d]] <- prior$L; st$mu[, d] <- prior$mean
-  par <- c(p0 / cache$pscale, unlist(lapply(seq_len(D), function(k)
-    forwardsolve(st$L[[k]], U0[, k] - st$mu[, k]))))
   fn <- .jgl_stage3_objective(prep, cache, prior, penalty)
-  a <- .jgp_scalar_optimize(par, fn, maxit, solver)
+  bounds <- attr(fn,"bounds")
+  par <- .jgp_pack_coordinates(p0,U0,attr(fn,"coordinates"))
+  a <- .jgp_scalar_optimize(par,fn,maxit,solver,lower=bounds$lower,upper=bounds$upper)
   res <- fn(a$par)
   check <- .jgl_diagnostics(prep,cache,res$p,res$U,gradient_tol,prior,penalty)
   list(value = res$value, p = res$p, U = res$U, contributions = res$contributions,
@@ -321,6 +329,17 @@
   scale_pilot <- .jgl_initial(U, tt, grid, obs, lat)
   init <- .jgl_initial(U, tt, grid, obs, lat, latent_initial)
   initf <- .jgl_initial(U, tt, fine, obs, lat, latent_initial)
+  bounds <- attr(control,"state_bounds")
+  if (!is.null(bounds)) {
+    # Smooth bounded observed starts before interpolation: high-order extension
+    # of raw noise can leave a model's domain even when its grid values do not.
+    for (k in seq_along(obs)) if (bounds$bounded[obs[k]]) {
+      init[,obs[k]] <- .jgl_gp_mean(gps[[k]],grid)
+      initf[,obs[k]] <- .jgl_gp_mean(gps[[k]],fine)
+    }
+    init <- .jgp_clip_state(init,bounds)
+    initf <- .jgp_clip_state(initf,bounds)
+  }
   design <- if (is.null(control$weak_radii)) .jgp_design_pool(grid, control) else
     .jgp_test_design(tt,gps,control)
   ni <- nrow(design$interior); nb <- nrow(design$boundary)
@@ -383,16 +402,19 @@
 #'   ode_component_scale control the ODE metric. Supply component scales when
 #'   the latent units cannot be inferred from the observed components; the
 #'   default latent scale is an initializer-based heuristic, not unit invariant.
-#' @param starts Finite parameter multipliers. Only stationary completed
-#'   runs are eligible; failures are retained in runs. With latent_penalty=TRUE
+#' @param starts Finite parameter multipliers. Stationary completed runs are
+#'   preferred, followed by finite feasible stage-3 estimates, then stage-1
+#'   fallbacks. Runs in the preferred group are ranked by objective value;
+#'   all runs are retained. With latent_penalty=TRUE
 #'   only one start is supported, so different fitted priors are not compared.
 #' @param modes NULL for the full numerical span, or that span's size. Truncation
 #'   is not supported for the unpenalized latent stage.
 #' @param screen Must be FALSE. The obsolete trapezoid pilot screen is not used;
 #'   the actual Gauss residual, Jacobian and Gram are checked instead.
 #' @param latent_penalty Add a frozen latent GP quadratic in stage 3. FALSE uses
-#'   its fitted covariance only as an invertible preconditioner and restarts
-#'   from the smoothed stage-1 curve; the physical stage-1 objective is unchanged.
+#'   its fitted covariance only as an invertible preconditioner and starts from
+#'   the stage-1 estimate, preserving its physical stationarity. TRUE starts
+#'   from the smoothed stage-1 curve for the new penalized objective.
 #' @param maxit Iteration cap per optimization phase, default 5000. An explicit
 #'   argument takes precedence over control$maxit; otherwise that override is used.
 #' @param gradient_tol Maximum Jacobian-column-scaled projected gradient in
@@ -403,20 +425,28 @@
 #'   times. It does not change the frozen component scales. By default the row
 #'   mean of observations is used, falling back to the observed column of
 #'   largest RMS if the row mean cancels numerically.
+#' @inheritParams solveWendyGP
 #' @return A jointgp object (also inheriting wendygp_latent) with parameter/state estimates, all start
 #'   records, native optimizer exits, physical stationarity, local Jacobian
-#'   rank, and separate grid-resolution and quadrature diagnostics. If no run
-#'   reaches stationarity, a wendygp_latent_convergence_error carries all runs.
+#'   rank, and separate grid-resolution and quadrature diagnostics. A finite
+#'   feasible stage-3 estimate is returned even without stationarity, with a
+#'   warning and converged=FALSE. Stage 1 is returned only if no usable stage-3
+#'   estimate exists. If neither stage has a finite feasible estimate, a
+#'   wendygp_latent_numerical_error carries all runs.
 #'   Local stationarity and rank do not establish global identifiability.
 #' @export
 solveWendyGPLatent <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
                                starts=1,modes=NULL,screen=FALSE,latent_penalty=FALSE,
                                maxit=5000L,gradient_tol=1e-4,
-                               solver=c("nlminb","lbfgsb"),latent_initial=NULL) {
+                               solver=c("nlminb","lbfgsb"),latent_initial=NULL,
+                               parameter_lower=NULL,parameter_upper=NULL,
+                               state_lower=NULL,state_upper=NULL,lower=NULL,upper=NULL) {
   # Compatibility only: validation, preparation and fitting live in solveWendyGP.
   args <- list(f=f,U=U,tt=tt,p0=p0,noise_sd=noise_sd,control=control,
     formulation="latent",starts=starts,modes=modes,screen=screen,
-    latent_penalty=latent_penalty,solver=match.arg(solver),latent_initial=latent_initial)
+    latent_penalty=latent_penalty,solver=match.arg(solver),latent_initial=latent_initial,
+    parameter_lower=parameter_lower,parameter_upper=parameter_upper,
+    lower=lower,upper=upper,state_lower=state_lower,state_upper=state_upper)
   if (!missing(maxit)) args$maxit <- maxit
   if (!missing(gradient_tol)) args$gradient_tol <- gradient_tol
   answer <- do.call(solveWendyGP,args)
@@ -428,7 +458,8 @@ solveWendyGPLatent <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
                                starts = 1, modes = NULL, screen = FALSE,
                                latent_penalty = FALSE, maxit = 5000L,
                                gradient_tol = 1e-4,
-                               solver = c("nlminb", "lbfgsb"), latent_initial = NULL) {
+                               solver = c("nlminb", "lbfgsb"), latent_initial = NULL,
+                               lower=NULL,upper=NULL,state_lower=NULL,state_upper=NULL) {
   solver <- match.arg(solver)
   supplied <- if (is.null(control)) list() else control
   if (missing(maxit) && "maxit" %in% names(supplied)) maxit <- supplied$maxit
@@ -474,7 +505,10 @@ solveWendyGPLatent <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
   if (J<1L) stop("Supply p0 so the number of parameters is known.")
   if (is.null(p0)) p0 <- rep(1,J)
   if (!is.numeric(p0) || any(!is.finite(p0))) stop("p0 must be a finite numeric vector.")
-  lower <- rep(-Inf,J); upper <- rep(Inf,J)
+  bounds <- .jgp_bound_pair(lower,upper,J,"parameter")
+  lower <- bounds$lower; upper <- bounds$upper
+  p0 <- pmax(lower,pmin(upper,p0))
+  attr(control,"state_bounds") <- .jgp_bound_pair(state_lower,state_upper,D,"state")
   expected_extension <- ifelse(seq_len(D)%in%sp$observed,"lagrange","gp")
   if ("weak_extension" %in% names(supplied) &&
       !identical(supplied$weak_extension,"lagrange") &&
@@ -497,64 +531,95 @@ solveWendyGPLatent <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
     run <- list(multiplier=mult,status="error",stage1=NULL,prior=NULL,stage3=NULL)
     tryCatch({
       run$stage1 <- .jgl_stage1(prep,cache,mult,maxit,solver,gradient_tol)
-      if (!run$stage1$converged) stop("Stage 1 did not reach physical stationarity within the iteration budget.")
       run$stage1$accuracy <- accuracy(run$stage1$U,run$stage1$p)
+      if (!run$stage1$converged) {
+        run$status <- "not_stationary"
+        run$message <- "Stage 1 did not reach physical stationarity."
+        return(run)
+      }
       run$prior <- .jgl_stage2(prep,run$stage1$U[,cache$d])
-      if (run$prior$fit$convergence!=0L) stop("Stage-2 GP fitting did not converge.")
-      U0 <- run$stage1$U; U0[,cache$d] <- run$prior$smooth
+      if (run$prior$fit$convergence!=0L) {
+        run$status <- "gp_not_converged"
+        run$message <- "Stage-2 GP fitting did not converge."
+        return(run)
+      }
+      U0 <- run$stage1$U
+      if (latent_penalty) U0[,cache$d] <- run$prior$smooth
       run$stage3 <- .jgl_stage3(prep,cache,run$prior,run$stage1$p,U0,maxit,
         penalty=latent_penalty,solver=solver,gradient_tol=gradient_tol)
-      if (!run$stage3$converged) stop("Stage 3 did not reach physical stationarity within the iteration budget.")
+      if (!run$stage3$converged) {
+        run$status <- "not_stationary"
+        run$message <- "Stage 3 did not reach physical stationarity."
+        return(run)
+      }
       run$status <- "stationary"
       run
     },error=function(e) {run$message <- conditionMessage(e); run})
   })
+  usable <- function(x) !is.null(x) && is.finite(x$value) &&
+    all(is.finite(c(x$p,x$U))) && isTRUE(x$stationarity$feasible)
   valid <- which(vapply(runs,function(r)identical(r$status,"stationary"),logical(1)))
-  if (!length(valid)) stop(structure(list(
-    message="No latent start reached the required stage-1 and stage-3 stationarity. Inspect condition$runs; this is not an identifiability conclusion.",
-    call=NULL,runs=runs,gradient_tol=gradient_tol),
-    class=c("wendygp_latent_convergence_error","error","condition")))
-  chosen <- valid[which.min(vapply(runs[valid],function(r)r$stage3$value,numeric(1)))]
-  best <- runs[[chosen]]
-  check <- .jgl_diagnostics(prep,cache,best$stage3$p,best$stage3$U,
-    gradient_tol,best$prior,latent_penalty,rank=TRUE)
-  acc <- accuracy(best$stage3$U,best$stage3$p)
+  selected_stage <- vapply(runs,function(r) {
+    if (usable(r$stage3)) 3L else
+      if (usable(r$stage1)) 1L else 0L
+  },integer(1))
+  # Return the final optimization's estimate even when it is nonstationary or
+  # has a higher objective than stage 1. Keep stage 1 as a numerical fallback.
+  stage3_available <- which(selected_stage==3L)
+  eligible <- if (length(valid)) valid else if (length(stage3_available))
+    stage3_available else which(selected_stage==1L)
+  if (!length(eligible)) stop(structure(list(
+    message="No finite, feasible latent estimate was produced. Inspect condition$runs for numerical failures.",
+    call=NULL,runs=runs),class=c("wendygp_latent_numerical_error","error","condition")))
+  values <- vapply(eligible,function(k) runs[[k]][[paste0("stage",selected_stage[k])]]$value,numeric(1))
+  chosen <- eligible[which.min(values)]
+  best <- runs[[chosen]]; final_stage <- selected_stage[chosen]
+  final <- best[[paste0("stage",final_stage)]]
+  applied_penalty <- latent_penalty && final_stage==3L
+  check <- .jgl_diagnostics(prep,cache,final$p,final$U,
+    gradient_tol,best$prior,applied_penalty,rank=TRUE)
+  acc <- accuracy(final$U,final$p)
+  pipeline_converged <- identical(best$status,"stationary") && check$stationary
+  reason <- if (pipeline_converged) final$optimizer$reason else
+    paste0(best$message," Returning the stage-",final_stage," estimate.")
+  if (!pipeline_converged) warning(reason," See fit$runs; converged=FALSE.",call.=FALSE)
   grid_passed <- initial_accuracy$passed && best$stage1$accuracy$passed && acc$passed
-  weak_passed <- initial_accuracy$weak_passed && best$stage1$accuracy$weak_passed && acc$weak_passed
+  weak_passed <- acc$quadrature_passed
   if (!grid_passed) {
     msg <- "Latent fit observation-operator error exceeds grid_tol; inspect initial_quadrature and final_grid."
     if (control$grid_action=="error") stop(msg) else warning(msg,call.=FALSE)
   }
-  if (!weak_passed) warning("Latent weak-form accuracy checks failed; inspect quadrature and grid resolution separately.",call.=FALSE)
-  evaluate <- .jgl_stage3_objective(prep,cache,best$prior,latent_penalty)
-  structure(list(phat=best$stage3$p,U_hat=best$stage3$U,
-    U_obs_hat=prep$H%*%best$stage3$U[,prep$observed,drop=FALSE],
+  if (!weak_passed) warning(.jgp_quadrature_message(acc,control),call.=FALSE)
+  evaluate <- if (final_stage==3L) .jgl_stage3_objective(prep,cache,best$prior,applied_penalty) else
+    .jgl_stage1_objective(prep,cache)
+  structure(list(phat=final$p,U_hat=final$U,
+    U_obs_hat=prep$H%*%final$U[,prep$observed,drop=FALSE],
     U_stage1=best$stage1$U,U_smooth=best$prior$smooth,
     observed=prep$observed,latent=prep$latent,tt=prep$grid,tt_obs=tt,
     Y=prep$Y,noise_sd=prep$noise,gp=prep$gps,latent_prior=best$prior,
     lambda=control$lambda,ode_weighting=control$ode_weighting,ode_units=control$ode_units,
-    objective=best$stage3$value,converged=check$stationary,
-    optimizer=best$stage3$optimizer,contributions=best$stage3$contributions,
+    objective=final$value,converged=pipeline_converged,
+    optimizer=final$optimizer,contributions=final$contributions,
     runs=runs,multiplier=best$multiplier,selected_start=chosen,
-    diagnostics=list(modes=length(idx),available=mo$rank,
-      weak_rows=prep$weak$K*D,state_variables=length(best$stage3$U),
+    diagnostics=list(final_stage=final_stage,pipeline_converged=pipeline_converged,
+      stage_status=best$status,modes=length(idx),available=mo$rank,
+      weak_rows=prep$weak$K*D,state_variables=length(final$U),
       stage1_variables=J+length(best$stage1$U),
-      extension=acc$extension,extension_passed=initial_accuracy$extension_passed &&
-        best$stage1$accuracy$extension_passed && acc$extension_passed,
+      extension=acc$extension,extension_passed=acc$extension_passed,
       weak_extension=control$weak_extension,ode_scaling=prep$scaling,
       stationarity=check,scaled_gradient=check$scaled_gradient,gradient_tol=gradient_tol,
       grid_passed=grid_passed,weak_grid_passed=weak_passed,
-      quadrature_passed=initial_accuracy$quadrature_passed &&
-        best$stage1$accuracy$quadrature_passed && acc$quadrature_passed,
+      quadrature_passed=acc$quadrature_passed,
       initial_quadrature=initial_accuracy,stage1_grid=best$stage1$accuracy,final_grid=acc,
       gp_converged=vapply(prep$gps,function(g)g$convergence==0,logical(1)),
       stage1_value=best$stage1$value,stage1_converged=best$stage1$converged,
       latent_nugget_sd=best$prior$nugget_sd,latent_tau=best$prior$tau,
-      latent_penalty=latent_penalty,latent_z=best$stage3$latent_z),
-    problem=list(evaluate=function(theta,jacobian=TRUE,scalar=FALSE) evaluate(theta,jacobian,scalar),theta=best$stage3$theta,
+      latent_penalty=applied_penalty,latent_penalty_requested=latent_penalty,latent_z=final$latent_z),
+    problem=list(evaluate=function(theta,jacobian=TRUE,scalar=FALSE) evaluate(theta,jacobian,scalar),theta=final$theta,
       coordinates=attr(evaluate,"coordinates"),H=prep$H,weak=prep$weak,model=prep$model,
-      weights=prep$weights,control=control,lower=lower,upper=upper),
+      weights=prep$weights,control=control,lower=lower,upper=upper,
+      state_bounds=attr(control,"state_bounds")),
     include_gp_prior=TRUE,weak_integration="gp_gauss",
-    convergence_reason=best$stage3$optimizer$reason,iterations=best$stage3$optimizer$iterations,
+    convergence_reason=reason,iterations=final$optimizer$iterations,
     control=control,call=match.call()),class=c("jointgp","wendygp_latent"))
 }

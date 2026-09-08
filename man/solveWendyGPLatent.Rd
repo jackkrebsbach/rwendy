@@ -18,7 +18,13 @@ solveWendyGPLatent(
   maxit = 5000L,
   gradient_tol = 1e-04,
   solver = c("nlminb", "lbfgsb"),
-  latent_initial = NULL
+  latent_initial = NULL,
+  parameter_lower = NULL,
+  parameter_upper = NULL,
+  state_lower = NULL,
+  state_upper = NULL,
+  lower = NULL,
+  upper = NULL
 )
 }
 \arguments{
@@ -42,8 +48,10 @@ ode_component_scale control the ODE metric. Supply component scales when
 the latent units cannot be inferred from the observed components; the
 default latent scale is an initializer-based heuristic, not unit invariant.}
 
-\item{starts}{Finite parameter multipliers. Only stationary completed
-runs are eligible; failures are retained in runs. With latent_penalty=TRUE
+\item{starts}{Finite parameter multipliers. Stationary completed runs are
+preferred, followed by finite feasible stage-3 estimates, then stage-1
+fallbacks. Runs in the preferred group are ranked by objective value;
+all runs are retained. With latent_penalty=TRUE
 only one start is supported, so different fitted priors are not compared.}
 
 \item{modes}{NULL for the full numerical span, or that span's size. Truncation
@@ -53,8 +61,9 @@ is not supported for the unpenalized latent stage.}
 the actual Gauss residual, Jacobian and Gram are checked instead.}
 
 \item{latent_penalty}{Add a frozen latent GP quadratic in stage 3. FALSE uses
-its fitted covariance only as an invertible preconditioner and restarts
-from the smoothed stage-1 curve; the physical stage-1 objective is unchanged.}
+its fitted covariance only as an invertible preconditioner and starts from
+the stage-1 estimate, preserving its physical stationarity. TRUE starts
+from the smoothed stage-1 curve for the new penalized objective.}
 
 \item{maxit}{Iteration cap per optimization phase, default 5000. An explicit
 argument takes precedence over control$maxit; otherwise that override is used.}
@@ -69,12 +78,30 @@ argument takes precedence over control$gtol. No objective normalization is used.
 times. It does not change the frozen component scales. By default the row
 mean of observations is used, falling back to the observed column of
 largest RMS if the row mean cancels numerically.}
+
+\item{parameter_lower, parameter_upper}{Optional physical parameter bounds
+for both formulations. Supply vectors in parameter-index order (p[1],
+p[2], ...); names are labels, not used for matching. A scalar applies to
+every parameter. NULL means unbounded on that side. Each lower bound must
+be strictly smaller than its upper bound.}
+
+\item{state_lower, state_upper}{Optional physical state bounds, scalar or
+one value per column of U in column order, including the latent column.
+These constrain fitted grid states, not the entire continuous GP curve.
+NULL means unbounded on that side.}
+
+\item{lower, upper}{Compatibility aliases for parameter_lower and
+parameter_upper. Do not supply an alias and its corresponding explicit
+argument together.}
 }
 \value{
 A jointgp object (also inheriting wendygp_latent) with parameter/state estimates, all start
   records, native optimizer exits, physical stationarity, local Jacobian
-  rank, and separate grid-resolution and quadrature diagnostics. If no run
-  reaches stationarity, a wendygp_latent_convergence_error carries all runs.
+  rank, and separate grid-resolution and quadrature diagnostics. A finite
+  feasible stage-3 estimate is returned even without stationarity, with a
+  warning and converged=FALSE. Stage 1 is returned only if no usable stage-3
+  estimate exists. If neither stage has a finite feasible estimate, a
+  wendygp_latent_numerical_error carries all runs.
   Local stationarity and rank do not establish global identifiability.
 }
 \description{

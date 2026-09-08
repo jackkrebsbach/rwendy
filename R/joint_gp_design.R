@@ -251,7 +251,9 @@
   weights <- metric$weights
   theta0 <- c(pilot, .jgp_state_start(state))
   objective <- .jgp_objective(Y, H, state, weak, model, weights, noise, control$lambda)
-  result <- .jgp_optimize(theta0, objective, control, c(lower,rep(-Inf,m*D)), c(upper,rep(Inf,m*D)))
+  coordinates <- state$coordinates; coordinates$pscale <- rep(1,J)
+  bounds <- .jgp_coordinate_bounds(coordinates,lower,upper,state$bounds)
+  result <- .jgp_optimize(theta0,objective,control,bounds$lower,bounds$upper)
   point <- .jgp_unpack(result$par, state, J); final <- objective(result$par, TRUE)
   stationarity <- .jgp_fit_diagnostics(point$U,point$p,Y,H,noise,weak,model,weights,control,
     state,if (state$include_gp_prior) seq_len(D) else integer(),lower=lower,upper=upper)
@@ -272,7 +274,7 @@
       ode_weighting = .jgp_ode_mode(control),
       ode_scaling = metric$scaling,
       include_gp_prior = state$include_gp_prior,
-      state_coordinates = if (state$include_gp_prior) "gp_whitened" else "physical",
+      state_coordinates = if (state$prior_whitened) "gp_whitened" else "physical_or_mixed",
       gp_uncertainty_propagated = .jgp_ode_mode(control) == "gp_delta",
       rho_is_gp_standardized = .jgp_ode_mode(control) == "gp_delta", ode_metric_frozen = TRUE,
       radius_selection = spec$diagnostics, stationarity = stationarity,
@@ -288,7 +290,7 @@
       covariance_frozen = TRUE, hyperparameters_frozen = TRUE),
     problem = list(evaluate = objective, theta = result$par, state = state, H = H,
       weak = weak, model = model, Omega = metric$Omega, Omega_raw = spec$Omega, weights = weights,
-      control = control, lower = lower, upper = upper)), class = "jointgp")
+      control = control, lower = lower, upper = upper,state_bounds=state$bounds)), class = "jointgp")
 }
 
 # Controlled groups are used by validation to compare all spaces on a common
