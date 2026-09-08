@@ -11,6 +11,8 @@
   if (!inherits(fit, "jointgp") || is.null(fit$problem)) stop("Supply a solveWendyGP fit.")
   if (identical(fit$formulation,"latent"))
     stop("Laplace lambda inference currently requires the observed formulation.")
+  if (!is.null(fit$problem$state_bounds) && any(fit$problem$state_bounds$bounded))
+    stop("Laplace lambda inference does not yet integrate truncated state priors; state bounds are unsupported.")
   if (!isTRUE(fit$include_gp_prior))
     stop("Laplace lambda inference requires the GP prior.")
   if (!is.null(fit$beta) && !identical(as.numeric(fit$beta), 1))

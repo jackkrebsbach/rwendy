@@ -80,7 +80,7 @@ plot(t_eval_dense, sol_true[, 2], col = "red", type = "l",
 # polygon(c(tt_vec, rev(tt_vec)), c(band_post_lo, rev(band_post_hi)),
         # col = adjustcolor("#1f77b4", alpha.f = 0.25), border = NA)
 # lines(tt_vec, U_star[, 1], col = "#1f77b4", lwd = 2)
-points(tt, U, col = "black", cex = 0.5)
+points(tt, U, col = "black", cex = 0.75)
 lines(resj$tt, resj$U_hat[, 1], col = "#2ca02c", lwd = 2, lty = 2)
 # points(tt[1], u0hat,     pch = 2, col = "#1f77b4", cex = 1)
 # points(tt[1], u0_smooth, pch = 2, col = "#ff7f0e", cex = 1)

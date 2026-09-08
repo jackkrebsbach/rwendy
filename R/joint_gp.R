@@ -40,6 +40,12 @@
 #' Numerical failures are reported and warned about; only observation error gates
 #' grid acceptance. gp_delta propagates the frozen GRID-state covariance through
 #' this representation; it does not add conditional between-grid GP innovations.
+#' Lagrange stencil widths are fixed within each integration interval so changes
+#' in quadrature order integrate the same piecewise-polynomial representation.
+#' weak_extension_tol compares GP conditional SD with fitted-state RMS. This is
+#' advisory GP uncertainty, not a deterministic interpolation or quadrature error;
+#' it does not trigger an accuracy warning. Final quadrature checks determine
+#' quadrature_passed and weak_grid_passed; initializer checks remain in diagnostics.
 #' weak_radius_method defaults to "svd": an independent dense geometric
 #' multiscale pool, screened for quadrature accuracy and compressed by SVD.
 #' Alternatives include "gp" (the legacy GP-radius-transfer baseline) and
@@ -670,9 +676,10 @@ wendygp_control <- function(...) {
        em_order = control$em_order)
 }
 
-.jgp_weak_eval <- function(U, p, weak, model, jacobian = TRUE, whiten = FALSE) {
+.jgp_weak_eval <- function(U, p, weak, model, jacobian = TRUE, whiten = FALSE,
+                           adjoint = FALSE) {
   if (identical(weak$integration, "gp_gauss"))
-    return(.jgp_gauss_eval(U, p, weak, model, jacobian, whiten))
+    return(.jgp_gauss_eval(U, p, weak, model, jacobian, whiten, adjoint))
   if (whiten) stop("Whitened state Jacobians are only built by gp_gauss integration.")
   m <- nrow(U); D <- model$D; J <- model$J; K <- weak$K
   input <- rbind(matrix(p, J, m), t(U), weak$tt)
@@ -916,7 +923,16 @@ wendygp_control <- function(...) {
     projected[theta <= lower & gradient > 0 | theta >= upper & gradient < 0] <- 0
     gn <- max(abs(projected) / colscale)
     if (gn <= control$gtol) { converged <- TRUE; reason <- "scaled gradient"; break }
-    step <- if (!is.null(current$prior)) {
+    blocked <- (theta<=lower & gradient>0) | (theta>=upper & gradient<0)
+    step <- if (any(blocked)) {
+      free <- which(!blocked); A <- sweep(J[,free,drop=FALSE],2,colscale[free],"/")
+      tryCatch({
+        out <- numeric(length(theta))
+        out[free] <- as.vector(qr.solve(rbind(A,diag(sqrt(damping),length(free))),
+          c(-current$r,rep(0,length(free))),tol=1e-12))/colscale[free]
+        out
+      },error=function(e)NULL)
+    } else if (!is.null(current$prior)) {
       # Exact Schur/Woodbury solve of the SAME damped normal equations. The
       # grid-state prior is diagonal in whitened coordinates, so dense QR over
       # all grid variables is unnecessary. No state modes are truncated here.
@@ -926,12 +942,19 @@ wendygp_control <- function(...) {
         other <- J[-meta$rows, , drop = FALSE]
         P <- other[, ip, drop = FALSE]; Z <- other[, iz, drop = FALSE]
         diagonal <- meta$weight + damping * colscale[iz]^2
-        ZD <- sweep(Z, 2, diagonal, "/")
-        small <- chol(diag(nrow(Z)) + tcrossprod(ZD, Z))
-        state_solve <- function(B) {
-          if (is.null(dim(B))) B <- matrix(B, ncol = 1L)
-          DB <- B / diagonal
-          DB - t(ZD) %*% .jgp_solve(small, Z %*% DB)
+        if (ncol(Z) <= nrow(Z)) {
+          # Factor the state system when it is smaller than the residual
+          # system. It also avoids the subtractive Woodbury reconstruction.
+          small <- chol(crossprod(Z)+diag(diagonal,length(diagonal)))
+          state_solve <- function(B) .jgp_solve(small,B)
+        } else {
+          ZD <- sweep(Z, 2, diagonal, "/")
+          small <- chol(diag(nrow(Z)) + tcrossprod(ZD, Z))
+          state_solve <- function(B) {
+            if (is.null(dim(B))) B <- matrix(B, ncol = 1L)
+            DB <- B / diagonal
+            DB - t(ZD) %*% .jgp_solve(small, Z %*% DB)
+          }
         }
         cross <- crossprod(Z, P)
         hz <- state_solve(cbind(-gradient[iz], cross))
@@ -946,6 +969,13 @@ wendygp_control <- function(...) {
       tryCatch(as.vector(qr.solve(rbind(A, diag(sqrt(damping), length(theta))),
                      c(-current$r, rep(0, length(theta))), tol = 1e-12)) / colscale,
                      error = function(e) NULL)
+    }
+    if (is.null(step) && !is.null(current$prior) && !any(blocked)) {
+      # Near rank deficiency, subtracting the Schur complement can lose
+      # positive definiteness. Fall back to the unsquared augmented system.
+      A <- sweep(J,2,colscale,"/")
+      step <- tryCatch(as.vector(qr.solve(rbind(A,diag(sqrt(damping),length(theta))),
+        c(-current$r,rep(0,length(theta))),tol=1e-12))/colscale,error=function(e)NULL)
     }
     if (is.null(step)) { damping <- damping * 10; next }
     candidate <- pmax(lower, pmin(upper, theta + step)); step <- candidate - theta
@@ -1018,38 +1048,47 @@ wendygp_control <- function(...) {
 .jgp_state <- function(fits, tt, control) {
   pred <- lapply(fits, .jgp_gp_predict, tt = tt)
   chol <- lapply(pred, function(x) .jgp_chol(x$K, control$gp_jitter, "GP state covariance"))
-  list(mean = do.call(cbind, lapply(pred, `[[`, "mean")),
+  state <- list(mean = do.call(cbind, lapply(pred, `[[`, "mean")),
        mu = matrix(rep(vapply(fits, `[[`, numeric(1), "mean"), each = length(tt)), length(tt)),
        L = lapply(chol, function(c) t(c$R)),
        Sigma = Map(function(p, c) p$Sigma + diag(c$added, length(tt)), pred, chol),
        radius = do.call(cbind, lapply(pred, `[[`, "radius")),
        jitter = vapply(chol, `[[`, numeric(1), "added"),
        include_gp_prior = !isFALSE(control$include_gp_prior))
+  use_prior <- state$include_gp_prior
+  state$bounds <- attr(control,"state_bounds")
+  state$mean <- .jgp_clip_state(state$mean,state$bounds)
+  state$coordinates <- .jgp_bounded_coordinates(list(
+    mu=if (use_prior) state$mu else state$mu*0,
+    L=if (use_prior) state$L else rep(list(1),ncol(state$mu)),
+    order=seq_len(ncol(state$mu))),state$bounds)
+  state$prior_whitened <- use_prior && (is.null(state$bounds) || !any(state$bounds$bounded))
+  state
 }
 
 .jgp_state_start <- function(state) {
-  if (isFALSE(state$include_gp_prior)) return(as.vector(state$mean))
-  unlist(lapply(seq_len(ncol(state$mean)), function(d)
-    forwardsolve(state$L[[d]], state$mean[,d]-state$mu[,d])))
+  coordinates <- state$coordinates
+  coordinates$pscale <- numeric()
+  .jgp_pack_coordinates(numeric(),state$mean,coordinates)
 }
 
-.jgp_unpack <- function(theta, state, J) {
+.jgp_unpack <- function(theta,state,J) {
+  coordinates <- state$coordinates
   m <- nrow(state$mu); D <- ncol(state$mu)
-  z <- matrix(theta[-seq_len(J)], m, D)
-  if (isFALSE(state$include_gp_prior)) return(list(p=theta[seq_len(J)],U=z,z=NULL))
-  U <- state$mu
-  for (d in seq_len(D)) U[, d] <- U[, d] + state$L[[d]] %*% z[, d]
-  list(p = theta[seq_len(J)], U = U, z = z)
+  z <- matrix(theta[-seq_len(J)],m,D); U <- coordinates$mu
+  for (d in seq_len(D)) {
+    L <- coordinates$L[[d]]
+    U[,d] <- U[,d]+if (length(L)==1L) L*z[,d] else as.vector(L%*%z[,d])
+  }
+  list(p=theta[seq_len(J)],U=U,z=if (state$prior_whitened) z else NULL)
 }
 
 # Observed-coordinate preparation for the shared objective.
 .jgp_objective <- function(Y,H,state,weak,model,weights,noise,lambda) {
   use_prior <- !isFALSE(state$include_gp_prior)
-  coordinates <- list(mu=if (use_prior) state$mu else state$mu*0,
-    L=if (use_prior) state$L else rep(list(1),model$D),
-    order=seq_len(model$D),pscale=rep(1,model$J))
+  coordinates <- state$coordinates; coordinates$pscale <- rep(1,model$J)
   .jgp_joint_objective(Y,H,weak,model,weights,noise,lambda,coordinates,state,
-    if (use_prior) seq_len(model$D) else integer(),prior_whitened=use_prior)
+    if (use_prior) seq_len(model$D) else integer(),prior_whitened=state$prior_whitened)
 }
 
 # Grid quadrature only. Both call sites are on the grid path; gp_gauss returns
@@ -1130,8 +1169,18 @@ wendygp_control <- function(...) {
 #' @param noise_sd Known positive scalar or per-observed-component measurement SD, or
 #'   NULL to estimate it by GP marginal likelihood.
 #' @param control Named overrides from [wendygp_control()].
-#' @param lower,upper Optional parameter bounds, scalar or parameter-length,
-#'   for the observed formulation only.
+#' @param parameter_lower,parameter_upper Optional physical parameter bounds
+#'   for both formulations. Supply vectors in parameter-index order (p[1],
+#'   p[2], ...); names are labels, not used for matching. A scalar applies to
+#'   every parameter. NULL means unbounded on that side. Each lower bound must
+#'   be strictly smaller than its upper bound.
+#' @param state_lower,state_upper Optional physical state bounds, scalar or
+#'   one value per column of U in column order, including the latent column.
+#'   These constrain fitted grid states, not the entire continuous GP curve.
+#'   NULL means unbounded on that side.
+#' @param lower,upper Compatibility aliases for parameter_lower and
+#'   parameter_upper. Do not supply an alias and its corresponding explicit
+#'   argument together.
 #' @param formulation "auto" (default) selects "observed" for finite data or
 #'   "latent" for exactly one entirely NA column with finite observed columns.
 #'   Partial missingness and multiple latent columns are unsupported. Set
@@ -1140,7 +1189,9 @@ wendygp_control <- function(...) {
 #'   Observed fits also accept "nlminb" and "lbfgsb"; latent fits accept those
 #'   two scalar optimizers. All use analytic derivatives of the same objective.
 #' @param starts Finite parameter multipliers for latent starts (default 1).
-#'   Only stationary completed runs are eligible. latent_penalty=TRUE requires
+#'   Stationary completed runs are preferred, followed by finite feasible
+#'   stage-3 estimates, then stage-1 fallbacks. Runs in the preferred group are
+#'   ranked by objective value. latent_penalty=TRUE requires
 #'   one start because different fitted priors are different objectives.
 #' @param latent_initial Optional finite latent starting curve at observation
 #'   times. Default: row mean of observations, falling back to their largest-RMS
@@ -1199,12 +1250,13 @@ wendygp_control <- function(...) {
 #' The latent formulation uses the same fixed-covariance objective engine,
 #' with likelihood rows only for observed components. Stage 1 optimizes physical
 #' latent values with no latent prior. Stage 2 fits a GP to that curve. Stage 3
-#' freezes this covariance, restarts from the smoothed curve and uses whitened
-#' latent coordinates; its optional quadratic is controlled by latent_penalty.
+#' freezes this covariance and changes optimization coordinates while keeping
+#' the stage-1 curve as its start. When latent_penalty=TRUE, it instead starts
+#' from the smoothed curve and adds the frozen latent quadratic.
 #' No stage jointly optimizes latent values and GP amplitude. With the quadratic
 #' off, stages 1 and 3 have the same physical objective.
 #' Latent fits require matern52, gp_gauss, observed GP priors, test_gram or
-#' identity weighting, full numerical test span, and no bounds. Their observed
+#' identity weighting, and full numerical test span. Their observed
 #' extension is Lagrange and latent extension is GP. Default latent ODE scales
 #' are initializer-based heuristics; use ode_component_scale for known units.
 #' This is a plug-in generalized MAP estimate, not full Bayesian inference.
@@ -1219,11 +1271,17 @@ wendygp_control <- function(...) {
 #' analytic gradient. With scalar=TRUE it avoids assembling the stacked
 #' Jacobian; jacobian=FALSE requests values only. Latent fits additionally include
 #' stage records in runs, observed/latent column indices, and class wendygp_latent.
-#' If no latent start reaches stationarity, a wendygp_latent_convergence_error
-#' carries all runs. solveWendyGPLatent is a compatibility wrapper.
+#' A finite feasible latent stage-3 estimate is returned even without
+#' stationarity, with a warning and converged=FALSE. Stage 1 is returned only
+#' if no usable stage-3 estimate exists. If neither stage has a finite feasible
+#' estimate, a wendygp_latent_numerical_error carries all runs.
+#' solveWendyGPLatent is a compatibility wrapper.
 #' diagnostics$stationarity includes a local joint Jacobian rank; neither that
 #' rank nor stationarity guarantees global identifiability. On the Gauss path,
-#' quadrature and grid resolution are checked separately at initial/final states.
+#' quadrature_passed and weak_grid_passed describe the returned estimate's
+#' residual, Jacobian and Gram integration checks. Initial checks are retained
+#' for inspection. extension and extension_passed report advisory GP conditional
+#' uncertainty relative to fitted-state RMS; they do not gate numerical accuracy.
 #' @examples
 #' \dontrun{
 #' tt <- seq(0, 8, length.out = 41)
@@ -1235,9 +1293,12 @@ wendygp_control <- function(...) {
 #' }
 #' @export
 solveWendyGP <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
-                         lower=NULL,upper=NULL,formulation=c("auto","observed","latent"),
+                         parameter_lower=NULL,parameter_upper=NULL,formulation=c("auto","observed","latent"),
                          solver=NULL,starts=1,latent_initial=NULL,latent_penalty=FALSE,
-                         maxit=NULL,gradient_tol=NULL,modes=NULL,screen=FALSE) {
+                         maxit=NULL,gradient_tol=NULL,modes=NULL,screen=FALSE,
+                         state_lower=NULL,state_upper=NULL,lower=NULL,upper=NULL) {
+  lower <- .jgp_parameter_bound_alias(parameter_lower,lower,"parameter_lower","lower")
+  upper <- .jgp_parameter_bound_alias(parameter_upper,upper,"parameter_upper","upper")
   formulation <- match.arg(formulation)
   if (formulation=="auto") {
     if (is.vector(U) && is.numeric(U)) U <- matrix(U,ncol=1L)
@@ -1255,26 +1316,29 @@ solveWendyGP <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
   if (!is.null(gradient_tol)) control$gtol <- gradient_tol
   tt <- as.vector(tt)
   if (formulation=="latent") {
-    if (!is.null(lower) || !is.null(upper)) stop("The latent formulation does not support parameter bounds.")
     if (solver=="lm") stop("The latent formulation requires solver='nlminb' or 'lbfgsb'.")
     if (is.null(control$maxit)) control$maxit <- 5000L
     if (is.null(control$gtol)) control$gtol <- 1e-4
     answer <- .jgp_latent_solve(f,U,tt,p0,noise_sd,control,starts,modes,screen,
       latent_penalty,maxit=control$maxit,gradient_tol=control$gtol,
-      solver=solver,latent_initial=latent_initial)
+      solver=solver,latent_initial=latent_initial,lower=lower,upper=upper,
+      state_lower=state_lower,state_upper=state_upper)
   } else {
     if (!is.null(latent_initial) || !identical(latent_penalty,FALSE) ||
         !identical(as.numeric(starts),1) || !is.null(modes) || !identical(screen,FALSE))
       stop("starts, latent_initial, latent_penalty, modes and screen apply only to formulation='latent'.")
-    answer <- .jgp_observed_solve(f,U,tt,p0,noise_sd,control,lower,upper,solver)
+    answer <- .jgp_observed_solve(f,U,tt,p0,noise_sd,control,lower,upper,solver,state_lower,state_upper)
     answer$observed <- seq_len(ncol(answer$U_hat)); answer$latent <- integer()
   }
+  answer$bounds <- list(parameter_lower=answer$problem$lower,parameter_upper=answer$problem$upper,
+    state_lower=answer$problem$state_bounds$lower,state_upper=answer$problem$state_bounds$upper)
   answer$formulation <- formulation; answer$call <- match.call()
   answer
 }
 
 .jgp_observed_solve <- function(f, U, tt, p0 = NULL, noise_sd = NULL, control = NULL,
-                         lower = NULL, upper = NULL, solver = "lm") {
+                         lower = NULL, upper = NULL, solver = "lm",
+                         state_lower = NULL, state_upper = NULL) {
   control <- do.call(wendygp_control, if (is.null(control)) list() else control)
   attr(control,"solver") <- solver
   if (is.vector(U) && is.numeric(U)) U <- matrix(U, ncol = 1L)
@@ -1285,17 +1349,14 @@ solveWendyGP <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
   if (!is.numeric(tt) || length(tt) != nrow(U) || any(!is.finite(tt)) || any(diff(tt) <= 0))
     stop("tt must be finite, strictly increasing, and match U's rows.")
   D <- ncol(U); n <- nrow(U)
+  attr(control,"state_bounds") <- .jgp_bound_pair(state_lower,state_upper,D,"state")
   J <- if (is.null(p0)) detect_n_params(f) else length(p0)
   if (J < 1L) stop("Supply p0 so the number of parameters is known.")
   if (is.null(p0)) p0 <- rep(1, J)
   if (!is.numeric(p0) || any(!is.finite(p0))) stop("p0 must be a finite numeric vector.")
-  bound <- function(x, default) {
-    if (is.null(x)) return(rep(default, J))
-    if (!is.numeric(x) || !length(x) %in% c(1L, J) || anyNA(x)) stop("Invalid parameter bounds.")
-    rep_len(x, J)
-  }
-  lower <- bound(lower, -Inf); upper <- bound(upper, Inf)
-  if (any(lower >= upper)) stop("Each lower bound must be smaller than its upper bound.")
+  bounds <- .jgp_bound_pair(lower,upper,J,"parameter")
+  lower <- bounds$lower; upper <- bounds$upper
+  p0 <- pmax(lower,pmin(upper,p0))
   if (!is.null(noise_sd)) {
     if (!is.numeric(noise_sd) || !length(noise_sd) %in% c(1L, D) || any(!is.finite(noise_sd) | noise_sd <= 0))
       stop("noise_sd must be NULL or a positive scalar/per-component vector.")
@@ -1353,7 +1414,9 @@ solveWendyGP <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
   theta0 <- c(pinit, .jgp_state_start(state))
   objective <- .jgp_objective(U, H, state, weak, model, weights, noise, control$lambda)
   if (control$verbose) message("Joint ", solver, ": ", length(theta0), " variables.")
-  result <- .jgp_optimize(theta0, objective, control, c(lower, rep(-Inf, m * D)), c(upper, rep(Inf, m * D)))
+  coordinates <- state$coordinates; coordinates$pscale <- rep(1,J)
+  bounds <- .jgp_coordinate_bounds(coordinates,lower,upper,state$bounds)
+  result <- .jgp_optimize(theta0,objective,control,bounds$lower,bounds$upper)
   point <- .jgp_unpack(result$par, state, J)
   final <- objective(result$par, TRUE)
   stationarity <- .jgp_fit_diagnostics(point$U,point$p,U,H,noise,weak,model,weights,control,
@@ -1381,7 +1444,7 @@ solveWendyGP <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
       ode_weighting = control$ode_weighting,
       ode_scaling = metric$scaling,
       include_gp_prior = state$include_gp_prior,
-      state_coordinates = if (state$include_gp_prior) "gp_whitened" else "physical",
+      state_coordinates = if (state$prior_whitened) "gp_whitened" else "physical_or_mixed",
       gp_uncertainty_propagated = control$ode_weighting == "gp_delta",
       rho_is_gp_standardized = control$ode_weighting == "gp_delta", ode_metric_frozen = TRUE,
       radius_selection = design$radius_selection,
@@ -1399,7 +1462,7 @@ solveWendyGP <- function(f,U,tt,p0=NULL,noise_sd=NULL,control=NULL,
     problem = list(evaluate = objective, theta = result$par, state = state, H = H,
       weak = weak, model = model, Omega = metric$Omega, Omega_raw = Omega,
       weights = weights, control = control,
-      lower = lower, upper = upper), call = match.call()), class = "jointgp")
+      lower = lower, upper = upper,state_bounds=state$bounds), call = match.call()), class = "jointgp")
 }
 
 #' @export
@@ -1413,8 +1476,11 @@ print.jointgp <- function(x, ...) {
   if (identical(x$weak_integration,"gp_gauss"))
     cat("Weak integration: continuous GP / Gauss (fixed optimized grid)\n")
   cat("GP prior:", if (isFALSE(x$include_gp_prior)) "disabled" else "enabled", "\n")
-  cat("Stationary:", x$converged, "\n")
-  cat("Optimizer exit:", x$convergence_reason, "\n")
+  cat("Converged:", x$converged, "\n")
+  if (!is.null(x$diagnostics$stationarity))
+    cat("Physical stationarity:", x$diagnostics$stationarity$stationary, "\n")
+  cat("Optimizer exit:", if (is.null(x$optimizer$reason)) x$convergence_reason else x$optimizer$reason, "\n")
+  if (!x$converged) cat("Fit status:", x$convergence_reason, "\n")
   cat("Observation-operator accuracy passed:", x$diagnostics$grid_passed, "\n")
   invisible(x)
 }
