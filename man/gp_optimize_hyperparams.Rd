@@ -15,13 +15,16 @@ gp_optimize_hyperparams(tt, y, sigma2_n = NULL, n_restarts = 3L, n_scales = 5L)
 
 \item{n_restarts}{Additional random restarts beyond the length-scale grid.}
 
-\item{n_scales}{Number of grid length scales to try (default 5).}
+\item{n_scales}{Number of grid length scales to try (default 5),
+log-spaced from twice the smallest time step up to the full time range.}
 }
 \value{
 Named list with sigma2, ell, sigma2_n.
 }
 \description{
-Uses a grid of initial length scales (t_range times 2^(-i) for i=0..n_scales-1)
+Uses a grid of initial length scales log-spaced over \code{[2*dt, t_range]}
 so that both slow and fast features are candidates, then adds random
-restarts for robustness.
+restarts for robustness. The lower end matters: seeding only from
+\code{t_range} downward by halving cannot reach a short length scale, and the
+optimiser then collapses fast components to \code{ell = 0}.
 }
