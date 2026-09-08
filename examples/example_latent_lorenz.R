@@ -19,7 +19,7 @@ f <- function(u, p, t) {
 
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 u0 <- c(-8, 8, 27)
-npoints <- 64
+npoints <- 128
 t_span <- c(0, 5)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -30,9 +30,9 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star,
 truth <- sol[, -1]
 tt <- sol[, 1]
   
-set.seed(8675309)
+# set.seed(8675309)
 
-nr <- 0.1
+nr <- 0.15
 
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
@@ -56,7 +56,7 @@ U[, 3] <- NA_real_
 
 # Joint inference. Stage 1 carries the latent grid values with no prior penalty,
 # stage 2 fits its prior to the stage-1 curve, stage 3 refits with that prior
-# frozen and restarted from the smoothed curve.
+# frozen as a preconditioner, starting from the stage-1 estimate.
 time <- system.time({
   fit <- solveWendyGP(f, U, tt, control = list(grid_min = 129L))
 })
@@ -70,13 +70,13 @@ cat(sprintf("test modes %d of %d available, %d weak rows, %d state variables\n",
   fit$diagnostics$modes, fit$diagnostics$available,
   fit$diagnostics$weak_rows, fit$diagnostics$state_variables))
 
-# This gate is the GP conditional sd at the quadrature nodes divided by the
+# This advisory is the GP conditional sd at the quadrature nodes divided by the
 # component scale: how much the working grid leaves the state undetermined
 # BETWEEN grid points. It is advisory here -- it fails at grid_min = 129 while
 # the fit is still good -- and the remedy if you want it clear is a larger
 # grid_min. Quadrature errors are checked separately at twice weak_quad_order.
 
-cat(sprintf("grid resolution gate: %.2e (tol %.0e) passed=%s\n",
+cat(sprintf("GP between-grid uncertainty (advisory): %.2e (threshold %.0e) below=%s\n",
   max(fit$diagnostics$extension), 5e-3, fit$diagnostics$extension_passed))
 
 cat(sprintf("\np*   = [%s]\n", paste(sprintf("%8.4f", p_star), collapse = ", ")))

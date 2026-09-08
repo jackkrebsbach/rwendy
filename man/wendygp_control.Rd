@@ -51,6 +51,12 @@ coordinates, independently of the optimizer's coordinate transformation.
 Numerical failures are reported and warned about; only observation error gates
 grid acceptance. gp_delta propagates the frozen GRID-state covariance through
 this representation; it does not add conditional between-grid GP innovations.
+Lagrange stencil widths are fixed within each integration interval so changes
+in quadrature order integrate the same piecewise-polynomial representation.
+weak_extension_tol compares GP conditional SD with fitted-state RMS. This is
+advisory GP uncertainty, not a deterministic interpolation or quadrature error;
+it does not trigger an accuracy warning. Final quadrature checks determine
+quadrature_passed and weak_grid_passed; initializer checks remain in diagnostics.
 weak_radius_method defaults to "svd": an independent dense geometric
 multiscale pool, screened for quadrature accuracy and compressed by SVD.
 Alternatives include "gp" (the legacy GP-radius-transfer baseline) and
