@@ -15,7 +15,7 @@ p_star <- c(3, -3, 3, -1/3, 17/150, 1/15);
 u0 <- c(0,0.1);
 u0 <- c(-1,1)
 p0 <- c(1,-1, 1, -0.2, 0.01, 0.01);
-npoints <- 1000
+npoints <- 128
 t_span <- c(0.001, 25);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -34,11 +34,17 @@ U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
 res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_trajectory = FALSE))
+# time_j <- system.time({ resj <- solveWendyGP(f, U, tt) })
+
+# cat("\nJoint GP Wall Time:", time_j[1], "seconds")
+
 # res <- solveWendy(f, U, tt, p0=p0, method = "OE")
 sol_hat <- deSolve::ode(u0, t_eval, modelODE, res$phat)
 
 plot(tt, U[,1], cex = 0.5)
+points(tt, U[,2], cex = 0.5)
 lines(tt, sol[,2], col = "blue")
+lines(tt, sol[,3], col = "green")
 points(tt, sol_hat[,2], cex = 0.5, col = "red")
 
-print(norm(res$phat - p_star, type = "2") / norm(p_star, type = "2"))
+cat("RCE:", norm(res$phat - p_star, type = "2") / norm(p_star, type = "2"))

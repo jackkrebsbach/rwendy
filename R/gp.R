@@ -79,15 +79,18 @@ gp_log_ml <- function(log_theta, tt, y) {
 
 #' Optimise Matern 5/2 GP hyperparameters via marginal likelihood
 #'
-#' Uses a grid of initial length scales (t_range times 2^(-i) for i=0..n_scales-1)
+#' Uses a grid of initial length scales log-spaced over \code{[2*dt, t_range]}
 #' so that both slow and fast features are candidates, then adds random
-#' restarts for robustness.
+#' restarts for robustness. The lower end matters: seeding only from
+#' \code{t_range} downward by halving cannot reach a short length scale, and the
+#' optimiser then collapses fast components to \code{ell = 0}.
 #'
 #' @param tt         Observed time points.
 #' @param y          Observations.
 #' @param sigma2_n   Fixed noise variance; if NULL it is also optimised.
 #' @param n_restarts Additional random restarts beyond the length-scale grid.
-#' @param n_scales   Number of grid length scales to try (default 5).
+#' @param n_scales   Number of grid length scales to try (default 5),
+#'   log-spaced from twice the smallest time step up to the full time range.
 #' @return Named list with sigma2, ell, sigma2_n.
 #' @export
 gp_optimize_hyperparams <- function(tt, y, sigma2_n = NULL, n_restarts = 3L,
@@ -108,8 +111,22 @@ gp_optimize_hyperparams <- function(tt, y, sigma2_n = NULL, n_restarts = 3L,
     if (!fix_noise) base <- c(base, log(y_sd^2 * 0.05)) else base
   }
 
-  # Grid of starting length scales: t_range, t_range/2, ..., t_range/2^(n_scales-1)
-  grid_lells <- log(t_range) - log(2) * seq(0, n_scales - 1L)
+  # Grid of starting length scales, log-spaced over [2*dt, t_range].
+  #
+  # This used to be the halving sequence t_range * 2^-(0:(n_scales-1)), whose
+  # smallest start is t_range/2^(n_scales-1) -- it cannot reach a short length
+  # scale at all. On Hindmarsh-Rose (t_range 10, true ell 0.11 / 0.20 / 1.32)
+  # the smallest start was 1.25, 6-11x above the two fast components, and the
+  # optimiser collapsed them to ell = 0 exactly. Seeding from 2*dt instead
+  # recovers 0.106 / 0.120 / 1.99.
+  #
+  # A fully observed fit tolerates a broken ell (the data term carries it), but
+  # a fully UNOBSERVED component lives entirely on this prior, and ell -> 0 makes
+  # it white noise -- so multi-timescale systems need the wider search.
+  dt_min     <- if (length(tt) > 1L) min(diff(sort(tt))) else t_range
+  lo_ell     <- max(2 * dt_min, t_range / 1e4)
+  grid_lells <- if (n_scales > 1L) seq(log(lo_ell), log(t_range), length.out = n_scales)
+                else log(t_range)
 
   inits <- lapply(grid_lells, make_init)
   for (i in seq_len(n_restarts))

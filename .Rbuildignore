@@ -5,6 +5,7 @@
 ^examples$
 ^Installation\.md$
 ^LICENSE\.md$
+^docs$
 benchmarks
 .github
 tmp
