@@ -11,8 +11,8 @@ solveWendyGP(
   p0 = NULL,
   noise_sd = NULL,
   control = NULL,
-  lower = NULL,
-  upper = NULL,
+  parameter_lower = NULL,
+  parameter_upper = NULL,
   formulation = c("auto", "observed", "latent"),
   solver = NULL,
   starts = 1,
@@ -21,7 +21,11 @@ solveWendyGP(
   maxit = NULL,
   gradient_tol = NULL,
   modes = NULL,
-  screen = FALSE
+  screen = FALSE,
+  state_lower = NULL,
+  state_upper = NULL,
+  lower = NULL,
+  upper = NULL
 )
 }
 \arguments{
@@ -41,8 +45,11 @@ NULL to estimate it by GP marginal likelihood.}
 
 \item{control}{Named overrides from [wendygp_control()].}
 
-\item{lower, upper}{Optional parameter bounds, scalar or parameter-length,
-for the observed formulation only.}
+\item{parameter_lower, parameter_upper}{Optional physical parameter bounds
+for both formulations. Supply vectors in parameter-index order (p[1],
+p[2], ...); names are labels, not used for matching. A scalar applies to
+every parameter. NULL means unbounded on that side. Each lower bound must
+be strictly smaller than its upper bound.}
 
 \item{formulation}{"auto" (default) selects "observed" for finite data or
 "latent" for exactly one entirely NA column with finite observed columns.
@@ -54,7 +61,9 @@ Observed fits also accept "nlminb" and "lbfgsb"; latent fits accept those
 two scalar optimizers. All use analytic derivatives of the same objective.}
 
 \item{starts}{Finite parameter multipliers for latent starts (default 1).
-Only stationary completed runs are eligible. latent_penalty=TRUE requires
+Stationary completed runs are preferred, followed by finite feasible
+stage-3 estimates, then stage-1 fallbacks. Runs in the preferred group are
+ranked by objective value. latent_penalty=TRUE requires
 one start because different fitted priors are different objectives.}
 
 \item{latent_initial}{Optional finite latent starting curve at observation
@@ -74,6 +83,15 @@ control$gtol. Defaults to 1e-6 for observed and 1e-4 for latent.}
 size. Truncation is unsupported.}
 
 \item{screen}{Latent compatibility argument; must be FALSE.}
+
+\item{state_lower, state_upper}{Optional physical state bounds, scalar or
+one value per column of U in column order, including the latent column.
+These constrain fitted grid states, not the entire continuous GP curve.
+NULL means unbounded on that side.}
+
+\item{lower, upper}{Compatibility aliases for parameter_lower and
+parameter_upper. Do not supply an alias and its corresponding explicit
+argument together.}
 }
 \value{
 A jointgp object with phat, U_hat, tt, gp fits, initial estimates,
@@ -87,11 +105,17 @@ problem$evaluate(theta) returns residual r, Jacobian J, scalar value and
 analytic gradient. With scalar=TRUE it avoids assembling the stacked
 Jacobian; jacobian=FALSE requests values only. Latent fits additionally include
 stage records in runs, observed/latent column indices, and class wendygp_latent.
-If no latent start reaches stationarity, a wendygp_latent_convergence_error
-carries all runs. solveWendyGPLatent is a compatibility wrapper.
+A finite feasible latent stage-3 estimate is returned even without
+stationarity, with a warning and converged=FALSE. Stage 1 is returned only
+if no usable stage-3 estimate exists. If neither stage has a finite feasible
+estimate, a wendygp_latent_numerical_error carries all runs.
+solveWendyGPLatent is a compatibility wrapper.
 diagnostics$stationarity includes a local joint Jacobian rank; neither that
 rank nor stationarity guarantees global identifiability. On the Gauss path,
-quadrature and grid resolution are checked separately at initial/final states.
+quadrature_passed and weak_grid_passed describe the returned estimate's
+residual, Jacobian and Gram integration checks. Initial checks are retained
+for inspection. extension and extension_passed report advisory GP conditional
+uncertainty relative to fitted-state RMS; they do not gate numerical accuracy.
 }
 \description{
 Joint weak-form GP estimation with observed or latent components
@@ -142,12 +166,13 @@ its radius_selection profile attached; no fallback radius is substituted.
 The latent formulation uses the same fixed-covariance objective engine,
 with likelihood rows only for observed components. Stage 1 optimizes physical
 latent values with no latent prior. Stage 2 fits a GP to that curve. Stage 3
-freezes this covariance, restarts from the smoothed curve and uses whitened
-latent coordinates; its optional quadratic is controlled by latent_penalty.
+freezes this covariance and changes optimization coordinates while keeping
+the stage-1 curve as its start. When latent_penalty=TRUE, it instead starts
+from the smoothed curve and adds the frozen latent quadratic.
 No stage jointly optimizes latent values and GP amplitude. With the quadratic
 off, stages 1 and 3 have the same physical objective.
 Latent fits require matern52, gp_gauss, observed GP priors, test_gram or
-identity weighting, full numerical test span, and no bounds. Their observed
+identity weighting, and full numerical test span. Their observed
 extension is Lagrange and latent extension is GP. Default latent ODE scales
 are initializer-based heuristics; use ode_component_scale for known units.
 This is a plug-in generalized MAP estimate, not full Bayesian inference.

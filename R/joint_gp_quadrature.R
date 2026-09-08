@@ -21,8 +21,13 @@
 # no user knob. The working grid is uniform, so h is exact.
 .jgp_lagrange_order <- function(fit, grid, tt) {
   h <- mean(diff(grid)); m <- length(grid)
-  r <- .jgp_radius((tt-fit$origin)/fit$span, fit$radius_coef, fit$radius_bounds)$r*fit$span
-  pmin(2L*pmax(2L, pmin(8L, as.integer(round(r/h/2)))), m)
+  # Each integration cell must carry one polynomial. Choosing the width at
+  # each quadrature node introduces stencil switches inside a cell, hence
+  # discontinuities that an unsplit Gauss rule resolves poorly.
+  mid <- (head(grid,-1L)+tail(grid,-1L))/2
+  r <- .jgp_radius((mid-fit$origin)/fit$span, fit$radius_coef, fit$radius_bounds)$r*fit$span
+  width <- pmin(2L*pmax(2L, pmin(8L, as.integer(round(r/h/2)))), m)
+  width[findInterval(tt,grid,rightmost.closed=TRUE,all.inside=TRUE)]
 }
 
 # Centered-stencil Lagrange rows. Weights sum to one, so the constant mean
@@ -67,7 +72,8 @@
 # Conditional sd of the state at the quadrature nodes given the grid, under the
 # fitted GP. This measures whether the GRID resolves the state between nodes --
 # a property of grid and kernel, not of whichever interpolant carries it there --
-# so it gates both extensions. k(t,t)=tau2 exactly for both kernels.
+# so it is useful context for both extensions. It is NOT an error bound for
+# the optimized curve or the Lagrange interpolant. k(t,t)=tau2 for both kernels.
 .jgp_gauss_resolution <- function(fits, state, grid, tt) {
   vapply(seq_along(fits), function(d) {
     C <- .jgp_gp_cross(fits[[d]], tt, grid)
@@ -157,7 +163,7 @@
   weak
 }
 
-.jgp_gauss_eval <- function(U,p,weak,model,jacobian=TRUE,whiten=FALSE) {
+.jgp_gauss_eval <- function(U,p,weak,model,jacobian=TRUE,whiten=FALSE,adjoint=FALSE) {
   m <- nrow(U); D <- model$D; J <- model$J; K <- weak$K; q <- length(weak$quad_tt)
   # whiten selects the coordinates of the STATE Jacobian only. U is physical
   # either way, so the residual always uses the physical extension.
@@ -173,27 +179,58 @@
   input <- rbind(matrix(p,J,q),t(uq),weak$quad_tt)
   F <- model$jet[[1]](input)
   r <- weak$V%*%F+weak$Vp%*%uq-weak$B%*%ub
-  Jp <- Ju <- NULL
+  Jp <- Ju <- pullback <- NULL
   if (jacobian) {
     df <- array(model$jet_jac[[1]](input),c(q,D,J+D))
-    Jp <- matrix(weak$V%*%matrix(df[,,seq_len(J),drop=FALSE],q,D*J),K*D,J)
-    Ju <- matrix(0,K*D,m*D)
-    # The dense case is V diag(w) E, scaling the K-by-q V rather than the q-by-m
-    # E: same product to the last bit, with a K*q temporary instead of q*m. But
-    # most blocks never need it. model$ju_zero blocks contribute nothing, and
-    # model$ju_const blocks carry one scalar, so they reduce to a multiple of
-    # the precomputed weak$VE. Only genuinely state- or time-varying blocks pay
-    # the full product. This loop is the hottest code in the solve.
-    for (a in seq_len(D)) for (b in seq_len(D)) {
-      if (model$ju_zero[a,b] && a!=b) next
-      ir <- (a-1L)*K+seq_len(K); ic <- (b-1L)*m+seq_len(m)
-      block <- if (model$ju_zero[a,b]) 0 else
-        if (model$ju_const[a,b]) df[1L,a,J+b]*gVE[[b]] else
-        sweep(weak$V,2,df[,a,J+b],"*")%*%gE[[b]]
-      Ju[ir,ic] <- if (a==b) block+gLin[[b]] else block
+    if (adjoint) {
+      # Apply the transposed weak Jacobian directly. For each state b this is
+      # E_b' sum_a(df_a/du_b * V' score_a) + linear_b' score_b.
+      # No K-by-m derivative blocks or V diag(df) E products are needed.
+      pullback <- function(score) {
+        score <- matrix(score,K,D)
+        force <- crossprod(weak$V,score)
+        gp <- as.vector(crossprod(matrix(df[,,seq_len(J),drop=FALSE],q*D,J),
+          as.vector(force)))
+        gu <- matrix(0,m,D)
+        for (b in seq_len(D)) {
+          force_b <- rowSums(matrix(df[,,J+b],q,D)*force)
+          gu[,b] <- crossprod(gE[[b]],force_b)+crossprod(gLin[[b]],score[,b])
+        }
+        list(p=gp,U=as.vector(gu))
+      }
+    } else {
+      Vt <- t(weak$V)
+      Jp <- matrix(weak$V%*%matrix(df[,,seq_len(J),drop=FALSE],q,D*J),K*D,J)
+      Ju <- matrix(0,K*D,m*D)
+      # The dense case is V diag(w) E. Scaling rows of V' uses R's column-major
+      # recycling directly, avoiding sweep's array permutations. Most blocks
+      # never need the dense product. model$ju_zero blocks contribute nothing, and
+      # model$ju_const blocks carry one scalar, so they reduce to a multiple of
+      # the precomputed weak$VE. Only genuinely state- or time-varying blocks pay
+      # the full product; scalar fits use the adjoint above instead.
+      for (a in seq_len(D)) for (b in seq_len(D)) {
+        if (model$ju_zero[a,b] && a!=b) next
+        ir <- (a-1L)*K+seq_len(K); ic <- (b-1L)*m+seq_len(m)
+        block <- if (model$ju_zero[a,b]) 0 else
+          if (model$ju_const[a,b]) df[1L,a,J+b]*gVE[[b]] else
+          crossprod(Vt*df[,a,J+b],gE[[b]])
+        Ju[ir,ic] <- if (a==b) block+gLin[[b]] else block
+      }
     }
   }
-  list(r=as.vector(r),Jp=Jp,Ju=Ju)
+  list(r=as.vector(r),Jp=Jp,Ju=Ju,pullback=pullback)
+}
+
+.jgp_quadrature_message <- function(check,control) {
+  values <- c(residual=max(check$weak),Jacobian=check$jacobian_relative,Gram=check$gram_error)
+  tolerances <- c(control$weak_grid_tol,control$weak_design_quad_tol,control$weak_quad_gram_tol)
+  failed <- !is.finite(values) | values>tolerances
+  details <- sprintf("%s discrepancy %.3g (tolerance %.3g)",names(values)[failed],
+    values[failed],tolerances[failed])
+  paste0("Final weak quadrature check failed: ",paste(details,collapse="; "),
+    ". Inspect fit$diagnostics$final_grid.",
+    if (control$weak_quad_order<32L)
+      " A higher control$weak_quad_order refines integration without adding state variables." else "")
 }
 
 .jgp_gauss_accuracy <- function(U,p,state,weak,model,fits,weights,H,control,
@@ -251,7 +288,8 @@
     quadrature_passed=quadrature_passed,
     extension=extension,extension_tol=control$weak_extension_tol,
     extension_passed=extension_passed,
-    weak_passed=quadrature_passed && extension_passed,
+    extension_interpretation="GP conditional uncertainty / fitted-state RMS; advisory, not an integration error",
+    weak_passed=quadrature_passed,
     passed=all(is.finite(interp)) && max(interp)<=control$grid_tol,
     quad_order=weak$quad_order,check_order=fine$quad_order,
     check_points=length(fine$quad_tt),
@@ -280,9 +318,9 @@
   interp <- vapply(fits,.jgp_interpolation_error,numeric(1),tt=grid,obs=tt,H=H)
   fit$weak_integration <- "gp_gauss"
   fit$diagnostics$weak_integration <- "gp_gauss"
-  fit$diagnostics$weak_grid_passed <- initial$weak_passed && fit$diagnostics$final_grid$weak_passed
-  fit$diagnostics$quadrature_passed <- initial$quadrature_passed && fit$diagnostics$final_grid$quadrature_passed
-  fit$diagnostics$extension_passed <- initial$extension_passed && fit$diagnostics$final_grid$extension_passed
+  fit$diagnostics$weak_grid_passed <- fit$diagnostics$final_grid$quadrature_passed
+  fit$diagnostics$quadrature_passed <- fit$diagnostics$final_grid$quadrature_passed
+  fit$diagnostics$extension_passed <- fit$diagnostics$final_grid$extension_passed
   fit$diagnostics$grid_passed <- max(interp)<=control$grid_tol && fit$diagnostics$grid_passed
   fit$diagnostics$initial_quadrature <- initial
   fit$diagnostics$initial_interpolation <- interp
@@ -294,15 +332,8 @@
     msg <- "Observation-operator error exceeds grid_tol on the fixed working grid."
     if(control$grid_action=="error")stop(msg) else warning(msg,call.=FALSE)
   }
-  if(!fit$diagnostics$weak_grid_passed) {
-    ext <- max(initial$extension,fit$diagnostics$final_grid$extension)
-    warning(if(ext>control$weak_extension_tol)
-      paste0("The working grid leaves the state underdetermined between quadrature nodes: conditional sd/rms = ",
-        signif(ext,3)," exceeds weak_extension_tol = ",signif(control$weak_extension_tol,3),
-        ". Inspect grid resolution separately from the reported quadrature errors.")
-      else "Continuous weak quadrature checks failed; inspect initial_quadrature and final_grid. No state-grid refinement or test reselection was performed.",
-      call.=FALSE)
-  }
+  if(!fit$diagnostics$quadrature_passed)
+    warning(.jgp_quadrature_message(fit$diagnostics$final_grid,control),call.=FALSE)
   if(!isTRUE(weak$selection$information_target_met))
     warning("Requested weak singular-value fraction was not reached; inspect radius_selection.",call.=FALSE)
   fit
