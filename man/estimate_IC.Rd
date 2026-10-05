@@ -20,13 +20,13 @@ estimate_IC(
   max_iter = 100L,
   tol = 1e-09,
   em_order = c(4L, 2L),
-  combine = c("gls", "ols"),
+  inverse = c("gls", "ols"),
   include_interior = TRUE,
   interior_stride = 1L,
   quad_cov = TRUE,
+  ridge = 1e-11,
   r_bl_grid = NULL,
   debias = TRUE,
-  return_em2_u0 = FALSE,
   hess_cache = NULL
 )
 }
@@ -40,202 +40,105 @@ evaluators built from the symbolic engine.}
 
 \item{p}{Numeric parameter vector \eqn{\hat\theta} (held fixed).}
 
-\item{J_u}{Callable state Jacobian \eqn{\partial f/\partial u}
-(\code{matrix(as.vector(J_u(c(p,u,t))), D, D)} with entry
-\eqn{[a,b] = \partial f_a/\partial u_b}). Used together with \code{sigma}
-to build the GLS weights and the noise-channel propagation
-\code{cov_u0} rather than the over-conservative LS-residual variance.}
+\item{J_u}{Callable state Jacobian, with entry \eqn{[a, b] = \partial f_a /
+\partial u_b}.}
 
-\item{sigma}{Data-noise standard deviation, scalar or length-\eqn{D} (per
-state), used to scale the noise-channel \code{cov_u0}.}
+\item{sigma}{Noise standard deviation, scalar or length D. If invalid, the
+GLS path and noise-propagated covariance are unavailable.}
 
-\item{param_cov}{Optional J x J covariance \eqn{\hat C} of \eqn{\hat p}
-(e.g. the Fisher form \eqn{(G^T S^{-1} G)^{-1}}). When supplied,
-\code{cov_u0} additionally includes the parameter-uncertainty channel
-\eqn{S_p \hat C S_p^T} with \eqn{S_p = \partial \hat u_0 / \partial p}
-(the explained part of the law of total variance); see Details in the
-covariance comments below.}
+\item{param_cov}{Optional J x J covariance of \code{p}. When given,
+\code{cov_u0} includes the parameter channel \eqn{S_p \hat C S_p^T}.}
 
-\item{n_bl}{Optional integer; number of left (peak-inside) BL test functions.
-When \code{NULL} (default) and \code{combine = "gls"}, the BL radius
-\code{r_bl} is selected from \code{r_bl_grid} by the a-priori MSE proxy and
-the count is maxed, \code{n_bl = r_bl} (one BL function per sample out to the
-radius; see Details). When \code{NULL} under \code{combine = "ols"} the
-legacy heuristic \code{max(3, ceiling(r_bl/8))} applies (small count, wide
-placement -- under the unweighted combine, clustered test functions inflate
-Var(u0hat) by ~7-19\%; see examples/validation/). An explicit value skips
-the selection and uses \code{r_bl}.}
+\item{n_bl}{Number of BL test functions. If \code{NULL}, the GLS path
+selects the radius from \code{r_bl_grid} with \code{n_bl = r_bl}, and the
+OLS path uses \code{max(3, ceiling(r_bl / 8))}.}
 
-\item{r_bl}{Optional integer; the boundary-layer radius for the paths that do
-NOT sweep -- an explicit \code{n_bl}, \code{combine = "ols"}, or a sweep
-that failed. Ignored when the a-priori selection runs, since that picks
-\code{r_bl} from \code{r_bl_grid}. Defaults to \code{min(16, (M-1)/2)}.}
+\item{r_bl}{BL radius used when no selection runs. Defaults to
+\code{min(16, floor((M - 1) / 2))}.}
 
-\item{max_iter, tol}{Fixed-point iteration controls. \code{tol} is compared
-against the step norm scaled by \code{max(1, ||u_0||)}, i.e. it is a
-relative tolerance for states of size \eqn{\ge 1}. The default \code{1e-10}
-is deliberately above the achievable roundoff floor so that
-\code{converged} is a usable health flag rather than always \code{FALSE}
-on large-amplitude states -- callers gate the divergence fallback on it
-(see the divergence guard in \code{solveWendy}).}
+\item{max_iter, tol}{Fixed-point iteration limit and relative step
+tolerance; converged when the step is below
+\code{tol * max(1, ||u0||)}.}
 
-\item{em_order}{Either 2 or 4.}
+\item{em_order}{Euler-Maclaurin order, 2 or 4.}
 
-\item{combine}{\code{"gls"} (default) for the minimum-variance GLS combine
-of the BL equations, or \code{"ols"} for the legacy unweighted combine.
-GLS requires a valid \code{sigma} (and \code{J_u}) to build
-\eqn{\Omega}; it degrades to \code{"ols"} otherwise.}
+\item{inverse}{\code{"gls"} (default) or \code{"ols"} combination of the BL
+equations. GLS falls back to OLS when its weights cannot be built.}
 
-\item{include_interior}{Logical (default \code{TRUE}). Append interior
-test-function rows (\eqn{\phi(t_1) = 0}, so they load nothing on
-\eqn{u_0}) to the boundary-layer system. They cannot identify
-\eqn{u_0}; they act as GLS control variates through the off-diagonal
-blocks of \eqn{\Omega}. GLS combine only -- ignored under
-\code{combine = "ols"}, which has no weights to exploit.}
+\item{include_interior}{Add interior test functions as GLS control
+variates. GLS only.}
 
-\item{interior_stride}{Integer (default \code{1}, i.e. keep every centre).
-Retains only every s-th interior control-variate centre. At one centre per
-sample the interior block can be over-complete enough for the GLS combine
-to claim cancellation that is not there, and thinning is the lever for
-that; the effect is confined to small radii and does not reach the radii
-the a-priori sweep selects, so it is offered as an option rather than
-imposed (measured in \code{examples/validation/ic_phat_design.R}; strides
-above 2 break down). See \code{build_ic_bl_system}.}
+\item{interior_stride}{Keep every s-th interior test function.}
 
-\item{quad_cov}{Logical (default \code{TRUE}). Include the
-\eqn{O(\sigma^4)} quadratic-noise block \eqn{\Omega_2} in the GLS weights
-and in \code{cov_u0} (see \code{build_ic_noise_quad} and Details). GLS path
-only.}
+\item{quad_cov}{Include the quadratic-noise term \eqn{\Omega_2} in the
+weights and \code{cov_u0}. GLS only.}
 
-\item{r_bl_grid}{Optional integer vector of candidate BL radii for the
-a-priori selection (default the absolute grid
-\code{c(4,6,8,10,12,16,20,24,32,40,50,80,100)} capped at
-\code{floor((M-1)/2)}, deduplicated); at each
-candidate the count is maxed (\code{n_bl = r_bl}). Only used when
-\code{combine = "gls"} and \code{n_bl} is \code{NULL}.}
+\item{ridge}{Relative ridge added to \eqn{\Omega} before factorizing,
+\code{ridge * mean(diag(Omega))}. \eqn{\Omega} is near-singular, so this
+sets the weight of its near-null directions and can shift \code{u0hat}
+by a fraction of its SE. GLS only.}
 
-\item{debias}{Logical (default \code{TRUE}). On the GLS path, subtract the
-analytic \eqn{O(\sigma^2)} bias (both channels; see Details). Ignored on
-the OLS path and on diverged solves.}
+\item{r_bl_grid}{Candidate radii for the selection. Defaults to
+\code{c(4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 50, 80, 100)}, capped at
+\code{floor((M - 1) / 2)}.}
 
-\item{return_em2_u0}{Logical (default \code{FALSE}, internal). When
-\code{TRUE} and \code{em_order == 4}, additionally solve the EM(2) fixed
-point on the same built system and return it as \code{u0hat_em2} (with
-\code{em2_diverged}). Used by the design sweep to form the EM-order-
-difference truncation estimate without a second \code{estimate_IC} call.}
+\item{debias}{Subtract the analytic \eqn{O(\sigma^2)} bias (see Details).
+GLS only.}
 
-\item{hess_cache}{Optional memoizing state-Hessian closure (internal, from
-\code{build_ic_hessian_cache}). The \eqn{f''} tensors the
-\eqn{O(\sigma^2)} debias needs depend on \code{U}, \code{p} and \code{tt}
-alone, not on the boundary-layer design, so one cache is built here and
-shared across every candidate of the a-priori sweep and the final solve.}
+\item{hess_cache}{Optional state-Hessian cache from
+\code{build_ic_hessian_cache}; built internally if \code{NULL}.}
 }
 \value{
-Named list with \code{U_hat} (U with row 1 replaced by
-  \code{u0hat}), \code{u0hat}, \code{cov_u0} (D x D covariance of
-  \eqn{\hat u_0}; the noise-channel propagation plus, when
-  \code{param_cov} is supplied, the parameter channel
-  \eqn{S_p \hat C S_p^T}, falling back to the
-  LS-residual variance \eqn{s_d^2/B^TB} only when \code{sigma} is
-  degenerate, and set to \code{NULL} when the iteration \code{diverged}
-  (the covariance is then meaningless, so callers should fall back to the
-  raw observation)),
-  \code{cov_u0_resid} (the LS-residual variance, always returned for
-  reference), \code{cov_u0_param} (the parameter channel alone, or
-  \code{NULL} when not computed), \code{cov_method}
-  (\code{"noise_propagation"}, \code{"ls_residual"}, either with a
-  \code{"+param"} suffix when the parameter channel is included, or
-  \code{"diverged"} / \code{"not_converged"}), plus \code{combine} (the combine actually used,
-  after any degradation), \code{design} (the design-selection table with
-  columns \code{r_bl}, \code{n_bl}, \code{obj} (the MSE proxy), and
-  \code{var_obj} (its variance part), or \code{NULL} when no selection ran),
-  \code{bias_o2} (the analytic
-  \eqn{O(\sigma^2)} bias estimate of the UNcorrected solve, length-D, or
-  \code{NULL} when not computed), \code{debias_applied} (whether
-  \code{bias_o2} was subtracted from \code{u0hat}), \code{fallback}
-  (\code{TRUE} only when the design was degenerate and \code{u0hat} is the
-  raw observation; the divergence guard is applied by the caller, see
-  \code{solveWendy}), \code{u0hat_em2} (the
-  EM(2) fixed point, or \code{NULL} unless \code{return_em2_u0} and
-  \code{em_order == 4}), \code{em2_diverged}, \code{iters},
-  \code{converged}, \code{diverged}, \code{u0_history},
-  \code{r_bl} (the BL radius actually used),
-  \code{n_bl}, \code{K_bl}, \code{em_order}.
+A list with:
+\describe{
+  \item{u0hat, U_hat}{The estimated \eqn{u_0}, and \code{U} with its first
+    row replaced by it.}
+  \item{cov_u0}{Covariance of \code{u0hat}: noise propagation (or the LS
+    residual variance when \code{sigma} is invalid), plus the parameter
+    channel when \code{param_cov} is given. \code{NULL} if the iteration
+    diverged.}
+  \item{cov_u0_resid, cov_u0_param}{The LS residual covariance and the
+    parameter-channel covariance on their own.}
+  \item{cov_method}{\code{"noise_propagation"} or \code{"ls_residual"},
+    with \code{"+param"} when the parameter channel is included, or
+    \code{"diverged"}.}
+  \item{inverse}{The combination actually used; \code{"gls"} falls back to
+    \code{"ols"} when the weights cannot be built.}
+  \item{design}{The radius-selection table (\code{r_bl}, \code{n_bl},
+    \code{obj}, \code{var_obj}), or \code{NULL} if no selection ran.}
+  \item{bias_o2, debias_applied}{The \eqn{O(\sigma^2)} bias estimate and
+    whether it was subtracted from \code{u0hat}.}
+  \item{fallback}{\code{TRUE} when the design was degenerate and
+    \code{u0hat} is \code{U[1, ]}.}
+  \item{iters, converged, diverged, u0_history}{Fixed-point diagnostics.}
+  \item{r_bl, n_bl, K_bl, K_int, em_order}{The design used: BL radius, BL
+    test-function count, total and interior equation counts, and EM order.}
+}
 }
 \description{
-Iterates the linear system
-\deqn{B \, u_0^{(n+1)} = r_{\text{trap}} - \Delta_{EM}(u_0^{(n)})}
-where \eqn{B} is the column vector of \eqn{\psi_k(0)} for K_bl left BL
-test functions, \eqn{r_{\text{trap}}} is the fixed trapezoidal residual
-\eqn{-T_h[f(u,\hat\theta)\psi] - T_h[u\,\psi']} (evaluated once on observed
-U), and \eqn{\Delta_{EM}} is the analytic Euler-Maclaurin defect using
-total time derivatives of f along the ODE. Contraction rate
-\eqn{\kappa = O(h^2)}; typically 3-5 iterations.
+Solves the boundary-layer weak-form equations for the initial condition by
+fixed-point iteration,
+\deqn{\Phi_0 u_0^{(n+1)} = r_{trap} - \Delta_{EM}(u_0^{(n)}),}
+where \eqn{r_{trap}} is the trapezoidal weak residual of the observed data
+and \eqn{\Delta_{EM}} is the Euler-Maclaurin correction (order 2 or 4) at
+the first time point.
 }
 \details{
-EM(2) keeps only the \eqn{h^2/12} correction (\eqn{O(h^4)} accuracy);
-EM(4) adds \eqn{h^4/720} (\eqn{O(h^6)}). The LEFT-BL boundary term is
-\eqn{B u_0}; right-side EM contributions vanish because left BL test
-functions and all their derivatives are zero at \eqn{t=T}.
+The equations share noisy samples, so their errors have covariance
+\eqn{\Omega = L \mathrm{diag}(\sigma^2) L^T + \Omega_2}, where \eqn{L} is the
+noise sensitivity and \eqn{\Omega_2} the \eqn{O(\sigma^4)} quadratic-noise
+term (\code{quad_cov}). With \code{inverse = "gls"} the equations are
+combined by GLS,
+\deqn{u_0 = (\Phi_0^T \Omega^{-1} \Phi_0)^{-1} \Phi_0^T \Omega^{-1} \mathrm{vec}(r),}
+and with \code{inverse = "ols"} by unweighted least squares.
 
-The K_bl equations share the same noisy samples, so their errors are
-correlated with covariance \eqn{\Omega = X \mathrm{diag}(\sigma^2) X^T}
-(\eqn{X} the equation/data sensitivity). With the default
-\code{combine = "gls"} the equations are combined by GLS (the BLUE),
-\deqn{u_0 = (\mathbf{B}^T \Omega^{-1} \mathbf{B})^{-1}
-      \mathbf{B}^T \Omega^{-1} \mathrm{vec}(r),}
-which is minimum-variance among all linear combinations of the equations
-(validated at ~1.05-1.2x the window Cramer-Rao bound, vs up to ~25x for the
-unweighted combine; examples/validation/). Additionally, when \code{n_bl}
-is \code{NULL}, the design \code{(r_bl, n_bl)} is selected a priori by
-sweeping a small grid and minimizing a calibrated \eqn{u_0}-MSE proxy
-\deqn{\textstyle\sum_d \mathrm{Var}_d/\sigma_d^2
-      + \sum_d ((u_0^{EM2} - u_0^{EM4})_d + b_d)^2/\sigma_d^2,}
-where \eqn{\mathrm{Var} = \mathrm{diag}(\mathrm{cov\_u0})} folds the EM
-Jacobian and the parameter channel \eqn{S_p \hat C S_p^T},
-\eqn{u_0^{EM2} - u_0^{EM4}} is the oracle-free Euler-Maclaurin order-
-difference estimate of the truncation defect, and \eqn{b} is the analytic
-\eqn{O(\sigma^2)} statistical bias. The selection is genuinely A PRIORI: no
-candidate is solved. Every term reaches the fixed point only through the
-point at which \eqn{\partial \mathrm{EM}/\partial u_0}, the IFT projection
-\eqn{P} and the \eqn{h^4} endpoint term are evaluated, so the raw first
-observation \code{U[1, ]} is plugged in there, and the order-difference term
-is linearised as \eqn{u_0^{EM2} - u_0^{EM4} = P\,\mathrm{vec}(\Delta)} with
-\eqn{\Delta = -c_4 \phi(t_1) g^{(3)}} (one evaluation, not two solves).
-Validated in \code{examples/validation/ic_apriori_proxy.R}: within-rep rank
-correlation 0.96-1.00 against the former solve-per-candidate objective, same
-median radius selected in every cell. This replaces the earlier
-noise-only variance objective, which was
-monotone in window/count and so pinned the corner; the MSE proxy turns up
-where the true MSE turns up (validated examples/validation/ic_mse_proxy.R,
-ic_calibrated_criterion.R, ic_realC_overshoot.R). \code{combine = "ols"}
-restores the legacy unweighted combine and its \code{max(3, ceiling(r_bl/8))}
-count heuristic.
+When \code{n_bl} is \code{NULL} on the GLS path, the BL radius is chosen
+from \code{r_bl_grid} without solving, by minimizing the \eqn{u_0} MSE proxy
+\deqn{\sum_d \left(\mathrm{Var}_d + (\delta_d + b_d)^2\right) / \sigma_d^2,}
+where \eqn{\delta} is the EM(2) minus EM(4) truncation estimate and \eqn{b}
+the \eqn{O(\sigma^2)} bias, both evaluated at \code{U[1, ]}.
 
-The feasible GLS estimator carries an \eqn{O(\sigma^2)} bias with two
-partially cancelling channels (noise nonlinearity through \eqn{f''}, and
-the feedback of the noise into the weights through \eqn{\Omega(U)}); at
-5\% noise on aggressive designs the net bias is ~0.3-0.5 of the (much
-smaller) SE. With \code{debias = TRUE} (default) both channels are computed
-analytically (see \code{build_ic_bias_o2}) and subtracted, restoring
-centering at the cost of an \eqn{O(\sigma^3)} plug-in error (validated:
-bias/SD 0.3-0.4 -> ~0.03 on logistic at 5\% noise with unchanged SD;
-examples/validation/tmp_bias_debias_race.R). The correction is skipped
-(with \code{debias_applied = FALSE}) when any component exceeds twice its
-SE — a correction that large signals a regime where the expansion itself
-is suspect.
-
-\eqn{\Omega} carries two pieces. The linear (delta-method) part
-\eqn{X \mathrm{diag}(\sigma^2) X^T} is the covariance of \eqn{X\eta}; the
-residual is also quadratic in the noise through \eqn{f''}, contributing an
-\eqn{O(\sigma^4)} block \eqn{\Omega_2} (see \code{build_ic_noise_quad}) that
-\code{quad_cov = TRUE} (default) adds to both the weights and
-\code{cov_u0}. \eqn{\Omega_2} is only 0.03-3\% of \eqn{\mathrm{tr}(\Omega)},
-but \eqn{\Omega_1} is near-singular and \eqn{\Omega_2} dominates in exactly
-the near-null directions the GLS combine loads, so omitting it makes the
-combine over-trust cancellation that is not there. Deployed effect at 20\%
-noise: \eqn{u_0} MSE \eqn{\times}0.38 on Lorenz (coverage 0.69 -> 0.99,
-RMS z 2.45 -> 0.97) and \eqn{\times}0.64 on Lotka-Volterra, neutral on
-logistic (examples/validation/ic_audit_omega2_check.R,
-ic_audit_combined.R).
+With \code{debias = TRUE}, the analytic \eqn{O(\sigma^2)} bias of the GLS
+estimate is subtracted unless any component exceeds twice its standard
+error.
 }

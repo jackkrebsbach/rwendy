@@ -54,9 +54,8 @@ U[, 3] <- NA_real_
 
 # stopifnot(all(is.na(U[, 3])), all(is.finite(U[, 1:2])))
 
-# Joint inference. Stage 1 carries the latent grid values with no prior penalty,
-# stage 2 fits its prior to the stage-1 curve, stage 3 refits with that prior
-# frozen as a preconditioner, starting from the stage-1 estimate.
+# Fit trajectories and ODE parameters, fit a GP to the inferred latent curve,
+# then repeat the trajectory solve with that GP fixed. No latent penalty by default.
 time <- system.time({
   fit <- solveWendyGP(f, U, tt, control = list(grid_min = 129L))
 })
@@ -66,18 +65,9 @@ cat(sprintf("\nobserved components: %s   latent: %s\n",
   paste(names3[fit$observed], collapse = ", "), names3[fit$latent]))
 cat(sprintf("extension per component: %s\n",
   paste(fit$diagnostics$weak_extension, collapse = " / ")))
-cat(sprintf("test modes %d of %d available, %d weak rows, %d state variables\n",
-  fit$diagnostics$modes, fit$diagnostics$available,
-  fit$diagnostics$weak_rows, fit$diagnostics$state_variables))
-
-# This advisory is the GP conditional sd at the quadrature nodes divided by the
-# component scale: how much the working grid leaves the state undetermined
-# BETWEEN grid points. It is advisory here -- it fails at grid_min = 129 while
-# the fit is still good -- and the remedy if you want it clear is a larger
-# grid_min. Quadrature errors are checked separately at twice weak_quad_order.
-
-cat(sprintf("GP between-grid uncertainty (advisory): %.2e (threshold %.0e) below=%s\n",
-  max(fit$diagnostics$extension), 5e-3, fit$diagnostics$extension_passed))
+cat(sprintf("test modes %d, %d weak rows, %d state variables\n",
+  fit$diagnostics$modes, fit$diagnostics$weak_rows, fit$diagnostics$state_variables))
+cat(sprintf("Quadrature checks passed: %s\n", fit$diagnostics$quadrature_passed))
 
 cat(sprintf("\np*   = [%s]\n", paste(sprintf("%8.4f", p_star), collapse = ", ")))
 cat(sprintf("phat = [%s]\n", paste(sprintf("%8.4f", fit$phat), collapse = ", ")))

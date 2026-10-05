@@ -12,12 +12,9 @@ solveWendyGPLatent(
   noise_sd = NULL,
   control = NULL,
   starts = 1,
-  modes = NULL,
-  screen = FALSE,
   latent_penalty = FALSE,
   maxit = 5000L,
   gradient_tol = 1e-04,
-  solver = c("nlminb", "lbfgsb"),
   latent_initial = NULL,
   parameter_lower = NULL,
   parameter_upper = NULL,
@@ -54,15 +51,10 @@ fallbacks. Runs in the preferred group are ranked by objective value;
 all runs are retained. With latent_penalty=TRUE
 only one start is supported, so different fitted priors are not compared.}
 
-\item{modes}{NULL for the full numerical span, or that span's size. Truncation
-is not supported for the unpenalized latent stage.}
-
-\item{screen}{Must be FALSE. The obsolete trapezoid pilot screen is not used;
-the actual Gauss residual, Jacobian and Gram are checked instead.}
-
 \item{latent_penalty}{Add a frozen latent GP quadratic in stage 3. FALSE uses
-its fitted covariance only as an invertible preconditioner and starts from
-the stage-1 estimate, preserving its physical stationarity. TRUE starts
+its fitted covariance only to change optimization coordinates for unbounded
+states and starts from the stage-1 estimate. Bounded states use component
+scaling. TRUE starts
 from the smoothed stage-1 curve for the new penalized objective.}
 
 \item{maxit}{Iteration cap per optimization phase, default 5000. An explicit
@@ -71,8 +63,6 @@ argument takes precedence over control$maxit; otherwise that override is used.}
 \item{gradient_tol}{Maximum Jacobian-column-scaled projected gradient in
 physical coordinates, for stages 1 and 3. Defaults to 1e-4; an explicit
 argument takes precedence over control$gtol. No objective normalization is used.}
-
-\item{solver}{Scalar analytic-gradient optimizer, nlminb or lbfgsb.}
 
 \item{latent_initial}{Optional finite latent starting curve at observation
 times. It does not change the frozen component scales. By default the row
@@ -96,12 +86,12 @@ argument together.}
 }
 \value{
 A jointgp object (also inheriting wendygp_latent) with parameter/state estimates, all start
-  records, native optimizer exits, physical stationarity, local Jacobian
+  records, optimizer exits, physical stationarity, local Jacobian
   rank, and separate grid-resolution and quadrature diagnostics. A finite
   feasible stage-3 estimate is returned even without stationarity, with a
   warning and converged=FALSE. Stage 1 is returned only if no usable stage-3
-  estimate exists. If neither stage has a finite feasible estimate, a
-  wendygp_latent_numerical_error carries all runs.
+  estimate exists. Numerical errors stop the solve.
+  latent_prior contains the separately fitted GP, including its nugget.
   Local stationarity and rank do not establish global identifiability.
 }
 \description{

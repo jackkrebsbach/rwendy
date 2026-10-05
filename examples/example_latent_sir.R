@@ -26,7 +26,7 @@ sol <- deSolve::ode(u0, tt, sir_full, p_star, rtol = 1e-11, atol = 1e-11)
 truth <- sol[, c("S", "I", "R")]
 stopifnot(abs(sum(u0) - population) < 1e-8)
 
-set.seed(8675309)
+# set.seed(8675309)
 nr <- 0.1
 noise_sd <- nr * sqrt(mean(truth[, "I"]^2))
 observations <- matrix(NA_real_, npoints, 3L,
@@ -35,25 +35,19 @@ observations[, "I"] <- truth[, "I"] + rnorm(npoints, sd = noise_sd)
 
 # Use i=I/N and v=S/(S+R), the susceptible share of noninfected people.
 # Then S/N=(1-i)*v and R/N=(1-i)*(1-v). Box bounds 0<i,v<1
-# enforce positivity of ALL THREE compartments and exact population conservation.
-# Bounding i and s separately would not prevent a negative reconstructed R.
 f <- function(u, p, t) {
   i <- u[1]; v <- u[2]
-  c(p[1]*i*(1-i)*v-p[2]*i,
-    -p[1]*i*v*(1-v)-p[2]*i*v/(1-i))
+  c(p[1]*i*(1-i)*v-p[2]*i, -p[1]*i*v*(1-v)-p[2]*i*v/(1-i))
 }
+
 U <- cbind(I = observations[, "I"] / population, susceptible_share = NA_real_)
 
-# elapsed <- system.time({
-#   fit <- solveWendyGP(f, U, tt,
-#     parameter_lower = c(0, 0),
-#     parameter_upper = c(Inf,Inf),
-#     state_lower = c(0, 0),
-#     state_upper = c(1, 1))
-# })
-
 elapsed <- system.time({
-  fit <- solveWendyGP(f, U, tt)
+  fit <- solveWendyGP(f, U, tt,
+    parameter_lower = c(0, 0),
+    parameter_upper = c(Inf,Inf),
+    state_lower = c(0, 0),
+    state_upper = c(1, 1))
 })
 
 i_hat <- fit$U_hat[, 1]
@@ -94,8 +88,7 @@ infection_information <- function(times, p, s0, i0, noise_fraction) {
     empty$rank <- rank; empty$singular_values <- spectrum$d
     return(empty)
   }
-  covariance <- sweep(sweep(spectrum$v %*% diag(1 / spectrum$d^2) %*% t(spectrum$v),
-                            1, scales, "/"), 2, scales, "/")
+  covariance <- sweep(sweep(spectrum$v %*% diag(1 / spectrum$d^2) %*% t(spectrum$v), 1, scales, "/"), 2, scales, "/")
   list(rank = rank, singular_values = spectrum$d,
        condition = max(spectrum$d) / min(spectrum$d),
        local_noise_sd = setNames(sqrt(diag(covariance)), colnames(J)),
@@ -104,20 +97,8 @@ infection_information <- function(times, p, s0, i0, noise_fraction) {
 info <- infection_information(tt, fit$phat, initial_hat["S"] / population, initial_hat["I"] / population, noise_sd / population)
 
 print(fit)
-cat(sprintf("\nElapsed: %.3f s; population conservation error: %.3e people\n",
-            elapsed[["elapsed"]], conservation_error))
-print(data.frame(parameter = names(p_star), truth = unname(p_star),
-                 estimate = unname(fit$phat),
-                 local_data_noise_sd = unname(info$local_noise_sd[1:2])))
-print(data.frame(initial_state = names(u0), truth = unname(u0),
-                 estimate = unname(initial_hat),
-                 local_data_noise_sd = population * c(info$local_noise_sd[3],
-                   info$local_noise_sd[4], info$r0_noise_sd)))
-cat(sprintf("Infected-only sensitivity rank: %d/4; scaled condition number: %.2f\n",
-            info$rank, info$condition))
-cat(sprintf("Physical scaled gradient: %.3e; quadrature passed: %s; resolution passed: %s\n",
-            fit$diagnostics$scaled_gradient, fit$diagnostics$quadrature_passed,
-            fit$diagnostics$extension_passed))
+cat(sprintf("\nElapsed: %.3f s", elapsed[["elapsed"]] ))
+print(data.frame(parameter = names(p_star), truth = unname(p_star), estimate = unname(fit$phat) ))
 
 ref <- deSolve::ode(u0, fit$tt, sir_full, p_star, rtol = 1e-11, atol = 1e-11)[, c("S", "I", "R")]
 component_colors <- c(S = "#0072B2", I = "#D55E00", R = "#009E73")
@@ -125,21 +106,21 @@ fig <- plot_ly()
 for (component in colnames(state_hat)) {
   color <- component_colors[[component]]
   fig <- fig |>
-    add_trace(x = fit$tt, y = ref[, component], type = "scatter", mode = "lines",
+    add_trace(x = fit$tt, y = ref[, component] / population, type = "scatter", mode = "lines",
               name = paste(component, "truth"), legendgroup = component,
               line = list(color = color, width = 1.5), opacity = 0.65) |>
-    add_trace(x = fit$tt, y = state_hat[, component], type = "scatter", mode = "lines",
+    add_trace(x = fit$tt, y = state_hat[, component] / population, type = "scatter", mode = "lines",
               name = paste(component, if (component == "I") "fitted" else "inferred"),
               legendgroup = component, line = list(color = color, width = 2.5, dash = "dash"))
 }
 fig <- fig |>
-  add_trace(x = tt, y = observations[, "I"], type = "scatter", mode = "markers",
+  add_trace(x = tt, y = observations[, "I"] / population, type = "scatter", mode = "markers",
             name = "I observations", legendgroup = "I",
             marker = list(color = component_colors[["I"]], size = 8), opacity = 0.6) |>
-  layout(title = list(text = paste0("SIR: only infected observed; population = ", population,
+  layout(title = list(text = paste0("SIR: infected observed",
     "<br><sup>Estimated beta = ", sprintf("%.3f", fit$phat[1]),
     ", gamma = ", sprintf("%.3f", fit$phat[2]),
     " · True: ", paste(sprintf("%.3f", p_star), collapse = ", "), "</sup>")),
-    xaxis = list(title = "Time"), yaxis = list(title = "People"),
+    xaxis = list(title = "Time"), yaxis = list(title = "Proportion of population"),
     hovermode = "x unified", legend = list(groupclick = "toggleitem"))
 print(fig)
