@@ -17,7 +17,7 @@ f <- function(u, p, t) {
 p_star <- c(10.0, 28.0, 8.0 / 3.0)
 p0 <- c(12.0, 21, 4.0)
 u0 <- c(-8, 10, 27)
-npoints <- 100
+npoints <- 256 
 t_span <- c(0, 5)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -25,7 +25,7 @@ modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, paramete
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-12)
 
-nr <- 0.2
+nr <- 0.05
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
 
@@ -49,7 +49,9 @@ print(time)
 
 cat(sprintf("\nIRLS p̂ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
 cat(sprintf("    rel error = %.4f", wendy::rel_err(res$phat, p_star)))
-# cat(sprintf("\nIC û₀=[%s]", paste(sprintf("%.3f", res$u0hat), collapse = ", ")))
+cat(sprintf("\nIC û₀=[%s]", paste(sprintf("%.3f", res$u0hat), collapse = ", ")))
+cat("\n", sol[,-1][1,])
+cat("\n", U[1,])
 # cat("\n\nSeeded   û₀: ", res$u0hat)
 # cat("\nUnseeded û₀: ",res1$state$U_star[1,] )
 # cat(sprintf("\nIC u₀=[%s]", paste(sprintf("%.3f", sol[,-1][1,]), collapse = ", ")))
