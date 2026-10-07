@@ -14,14 +14,11 @@ solveWendyGP(
   parameter_lower = NULL,
   parameter_upper = NULL,
   formulation = c("auto", "observed", "latent"),
-  solver = NULL,
   starts = 1,
   latent_initial = NULL,
   latent_penalty = FALSE,
   maxit = NULL,
   gradient_tol = NULL,
-  modes = NULL,
-  screen = FALSE,
   state_lower = NULL,
   state_upper = NULL,
   lower = NULL,
@@ -56,10 +53,6 @@ be strictly smaller than its upper bound.}
 Partial missingness and multiple latent columns are unsupported. Set
 "observed" or "latent" to require a particular formulation.}
 
-\item{solver}{Optimizer: NULL selects LM for observed and nlminb for latent.
-Observed fits also accept "nlminb" and "lbfgsb"; latent fits accept those
-two scalar optimizers. All use analytic derivatives of the same objective.}
-
 \item{starts}{Finite parameter multipliers for latent starts (default 1).
 Stationary completed runs are preferred, followed by finite feasible
 stage-3 estimates, then stage-1 fallbacks. Runs in the preferred group are
@@ -71,18 +64,14 @@ times. Default: row mean of observations, falling back to their largest-RMS
 column if it cancels. Changing this curve does not change frozen ODE scales.}
 
 \item{latent_penalty}{Add a frozen latent GP quadratic in stage 3 (default
-FALSE). Otherwise the fitted covariance is only a preconditioner.}
+FALSE). Otherwise the fitted covariance only changes optimization coordinates
+for unbounded states; bounded states use component scaling.}
 
 \item{maxit}{Optional iteration cap, overriding control$maxit. Defaults to
 500 for observed and 5000 per latent optimization phase.}
 
 \item{gradient_tol}{Optional physical stationarity tolerance, overriding
 control$gtol. Defaults to 1e-6 for observed and 1e-4 for latent.}
-
-\item{modes}{Latent compatibility argument: NULL or the full numerical span's
-size. Truncation is unsupported.}
-
-\item{screen}{Latent compatibility argument; must be FALSE.}
 
 \item{state_lower, state_upper}{Optional physical state bounds, scalar or
 one value per column of U in column order, including the latent column.
@@ -99,29 +88,30 @@ objective contributions, convergence diagnostics, and a reusable problem
 object for derivative checks and controlled ablations. GP covariance
 stabilization and projected weak-covariance ranks are reported explicitly.
 formulation records the resolved formulation. converged reports
-physical-coordinate stationarity. optimizer separately records the native
+physical-coordinate stationarity. optimizer separately records the solver's
 exit reason, convergence flag, iterations, and evaluation counts.
 problem$evaluate(theta) returns residual r, Jacobian J, scalar value and
-analytic gradient. With scalar=TRUE it avoids assembling the stacked
-Jacobian; jacobian=FALSE requests values only. Latent fits additionally include
-stage records in runs, observed/latent column indices, and class wendygp_latent.
+analytic gradient. jacobian=FALSE requests values only. Latent fits additionally include
+stage records in runs, the separately fitted GP in latent_prior,
+observed/latent column indices, and class wendygp_latent.
 A finite feasible latent stage-3 estimate is returned even without
 stationarity, with a warning and converged=FALSE. Stage 1 is returned only
 if no usable stage-3 estimate exists. If neither stage has a finite feasible
-estimate, a wendygp_latent_numerical_error carries all runs.
+estimate, or another numerical error occurs, the solve stops.
 solveWendyGPLatent is a compatibility wrapper.
 diagnostics$stationarity includes a local joint Jacobian rank; neither that
 rank nor stationarity guarantees global identifiability. On the Gauss path,
 quadrature_passed and weak_grid_passed describe the returned estimate's
 residual, Jacobian and Gram integration checks. Initial checks are retained
-for inspection. extension and extension_passed report advisory GP conditional
-uncertainty relative to fitted-state RMS; they do not gate numerical accuracy.
+for inspection.
 }
 \description{
 Joint weak-form GP estimation with observed or latent components
 }
 \details{
-Fits nonstationary Matern 5/2 GPs by default, with profiled constant
+Trajectory and ODE parameter fits use projected Levenberg-Marquardt
+with analytic Jacobians and physical bounds. GP marginal likelihood uses
+stats::nlminb with analytic gradients. Fits nonstationary Matern 5/2 GPs by default, with profiled constant
 means and signal variances, then freezes the hyperparameters. A bounded smooth
 radius function supplies nonstationarity. Set control=list(kernel="bump")
 for normalized bump-convolution covariance. Both kernels use bump weak tests.
@@ -165,9 +155,13 @@ An inadmissible automatic pool raises a wendygp_radius_error condition with
 its radius_selection profile attached; no fallback radius is substituted.
 The latent formulation uses the same fixed-covariance objective engine,
 with likelihood rows only for observed components. Stage 1 optimizes physical
-latent values with no latent prior. Stage 2 fits a GP to that curve. Stage 3
-freezes this covariance and changes optimization coordinates while keeping
-the stage-1 curve as its start. When latent_penalty=TRUE, it instead starts
+latent values with no latent prior. Stage 2 fits the latent GP mean, variance,
+radius coefficients, and nugget to that curve. The nugget absorbs roughness
+in the fitted curve and is excluded from the latent process covariance.
+Stage 3 freezes the GP and changes optimization coordinates for unbounded
+states while keeping the stage-1 curve as its start. Bounded states continue
+to use component scaling. The weak interpolation and ODE weights stay fixed
+across stages. When latent_penalty=TRUE, stage 3 instead starts
 from the smoothed curve and adds the frozen latent quadratic.
 No stage jointly optimizes latent values and GP amplitude. With the quadratic
 off, stages 1 and 3 have the same physical objective.
@@ -182,8 +176,10 @@ This is a plug-in generalized MAP estimate, not full Bayesian inference.
 tt <- seq(0, 8, length.out = 41)
 set.seed(12)
 U <- matrix(1 / (1 + 9 * exp(-tt)) + rnorm(length(tt), sd = 0.03))
-fit <- solveWendyGP(function(u,p,t) c(p[1]*u[1]*(1-u[1])),
-                    U, tt, p0 = 0.8)
+fit <- solveWendyGP(function(u, p, t) c(p[1] * u[1] * (1 - u[1])),
+  U, tt,
+  p0 = 0.8
+)
 fit$phat
 }
 }
