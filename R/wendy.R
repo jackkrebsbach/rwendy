@@ -370,7 +370,7 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
   boundary_state <- if (control$estimate_IC && method != "OE") {
     ic <- estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat,
                 J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat,
-                debias = TRUE, quad_cov = TRUE,  include_interior = TRUE, combine = "gls")
+                debias = TRUE, quad_cov = TRUE,  include_interior = TRUE, inverse = "gls")
 
     # Divergence guard: the Picard map contracts only while the grid resolves f.
     if (isTRUE(ic$diverged) || !isTRUE(ic$converged)) {

@@ -462,7 +462,7 @@ plot_IC_radius_selection <- function(object, log = "y", show_terms = FALSE, ...)
 
   if (is.null(design) || is.null(selected)) {
     stop("No IC design-selection table found. estimate_IC only sweeps r_bl when ",
-         "combine = \"gls\" and n_bl is NULL.")
+         "inverse = \"gls\" and n_bl is NULL.")
   }
 
   d   <- design[is.finite(design$obj), , drop = FALSE]
