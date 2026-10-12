@@ -45,7 +45,7 @@ g_deriv_at_endpoint <- function(phi_derivs, f_derivs, u, order) {
 
 block_indices <- function(i, size) ((i - 1L) * size + 1L):(i * size)
 
-# Phi0 = I_D ⊗ φ(t_0), filled block-wise (cheaper than kronecker).
+# Phi0 = I_D ⊗ φ(t_0)
 build_Phi0 <- function(B, D) {
   K <- length(B)
   Phi0 <- matrix(0, K * D, D)

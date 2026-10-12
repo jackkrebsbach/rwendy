@@ -59,8 +59,8 @@ band_lo <- U_star[, 1] - 2 * se_post
 band_hi <- U_star[, 1] + 2 * se_post
 
 u0_estimates <- c(u0_smooth, u0hat)
-u0_se        <- c(se_post[1], sqrt(res$boundary_state$cov_u0[1, 1]))
-u0_colors    <- c("#ff7f0e", "#9467bd")
+u0_se <- c(se_post[1], sqrt(res$boundary_state$cov_u0[1, 1]))
+u0_colors <- c("#ff7f0e", "#9467bd")
 
 plot_trajectory <- function(xlim, ylim) {
   plot(NA, xlim = xlim, ylim = ylim, xlab = "Time", ylab = "u₁")

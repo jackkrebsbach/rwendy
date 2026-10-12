@@ -1,11 +1,5 @@
 # ODE integration backend.
 #
-# WENDy's weak-form estimation never integrates an ODE; a numerical solver is
-# only needed for the forward-simulation paths (the Output-Error method and
-# simulating example data). We prefer deSolve when it is installed because its
-# lsoda auto-switching is the most robust choice (especially on stiff systems),
-# but deSolve ships compiled Fortran and so cannot run under webR. To keep the
-# package installable everywhere including webR 
 .wendy_state <- new.env(parent = emptyenv())
 
 .warn_pracma_fallback <- function() {
@@ -69,8 +63,6 @@ wendy_ode <- function(func, times, y0, parms) {
 }
 
 # Startup recommendation to install deSolve
-# Skipped on webR (R.version$os == "emscripten"), deSolve does not work
-# the pracma fallback is the expected path.
 .onAttach <- function(libname, pkgname) {
   if (!identical(R.version$os, "emscripten") &&
       !requireNamespace("deSolve", quietly = TRUE)) {

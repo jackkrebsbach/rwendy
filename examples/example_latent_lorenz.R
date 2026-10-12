@@ -30,9 +30,9 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star,
 truth <- sol[, -1]
 tt <- sol[, 1]
   
-# set.seed(8675309)
+set.seed(8675309)
 
-nr <- 0.15
+nr <- 0.1
 
 U_vec <- as.array(sol[-1])
 noise_sd <- nr * sqrt(mean(U_vec^2))
@@ -54,8 +54,8 @@ U[, 3] <- NA_real_
 
 # stopifnot(all(is.na(U[, 3])), all(is.finite(U[, 1:2])))
 
-# Fit trajectories and ODE parameters, fit a GP to the inferred latent curve,
-# then repeat the trajectory solve with that GP fixed. No latent penalty by default.
+# Fit trajectories and ODE parameters with a fixed latent interpolation GP.
+# No latent GP penalty or second joint solve is used by default.
 time <- system.time({
   fit <- solveWendyGP(f, U, tt, control = list(grid_min = 129L))
 })
@@ -63,11 +63,6 @@ print(time)
 
 cat(sprintf("\nobserved components: %s   latent: %s\n",
   paste(names3[fit$observed], collapse = ", "), names3[fit$latent]))
-cat(sprintf("extension per component: %s\n",
-  paste(fit$diagnostics$weak_extension, collapse = " / ")))
-cat(sprintf("test modes %d, %d weak rows, %d state variables\n",
-  fit$diagnostics$modes, fit$diagnostics$weak_rows, fit$diagnostics$state_variables))
-cat(sprintf("Quadrature checks passed: %s\n", fit$diagnostics$quadrature_passed))
 
 cat(sprintf("\np*   = [%s]\n", paste(sprintf("%8.4f", p_star), collapse = ", ")))
 cat(sprintf("phat = [%s]\n", paste(sprintf("%8.4f", fit$phat), collapse = ", ")))
