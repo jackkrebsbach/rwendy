@@ -1,10 +1,6 @@
 # %%
-# Three-state SIR with known population and only infected prevalence measured.
-# S(0) and R(0) are NOT supplied to the fit. The three-state truth below is used
-# only to simulate infected measurements and to score/plot the reconstruction.
-# Closed population, constant positive rates, absolute prevalence (not incidence
-# or an unknown reporting fraction), and a window covering growth and decline.
-# See examples/example_latent_sir.md for the identifiability derivation.
+# SIR with known population and only infected prevalence measured
+
 library(deSolve)
 library(plotly)
 invisible(devtools::load_all())
@@ -16,7 +12,6 @@ npoints <- 20L
 t_span <- c(0, 40)
 tt <- seq(t_span[1], t_span[2], length.out = npoints)
 
-# Begin with all three physical compartments, in people.
 sir_full <- function(t, state, p) {
   infection <- p[1] * state[1] * state[2] / population
   recovery <- p[2] * state[2]
@@ -29,15 +24,14 @@ stopifnot(abs(sum(u0) - population) < 1e-8)
 # set.seed(8675309)
 nr <- 0.1
 noise_sd <- nr * sqrt(mean(truth[, "I"]^2))
-observations <- matrix(NA_real_, npoints, 3L,
-                       dimnames = list(NULL, c("S", "I", "R")))
+observations <- matrix(NA_real_, npoints, 3L, dimnames = list(NULL, c("S", "I", "R")))
 observations[, "I"] <- truth[, "I"] + rnorm(npoints, sd = noise_sd)
 
 # Use i=I/N and v=S/(S+R), the susceptible share of noninfected people.
 # Then S/N=(1-i)*v and R/N=(1-i)*(1-v). Box bounds 0<i,v<1
 f <- function(u, p, t) {
   i <- u[1]; v <- u[2]
-  c(p[1]*i*(1-i)*v-p[2]*i, -p[1]*i*v*(1-v)-p[2]*i*v/(1-i))
+  c(p[1] * i * (1 - i) * v - p[2] * i, -p[1] * i * v * (1 - v) - p[2] * i * v / (1 - i) )
 }
 
 U <- cbind(I = observations[, "I"] / population, susceptible_share = NA_real_)
@@ -53,8 +47,7 @@ elapsed <- system.time({
 i_hat <- fit$U_hat[, 1]
 v_hat <- fit$U_hat[, 2]
 
-state_hat <- population * cbind(S = (1-i_hat)*v_hat, I = i_hat,
-                                R = (1-i_hat)*(1-v_hat))
+state_hat <- population * cbind(S = (1 - i_hat) * v_hat, I = i_hat, R = (1 - i_hat) * (1 - v_hat))
 initial_hat <- state_hat[1, ]
 conservation_error <- max(abs(rowSums(state_hat) - population))
 
@@ -94,9 +87,9 @@ infection_information <- function(times, p, s0, i0, noise_fraction) {
        local_noise_sd = setNames(sqrt(diag(covariance)), colnames(J)),
        r0_noise_sd = sqrt(sum(covariance[3:4, 3:4])), jacobian = J)
 }
+
 info <- infection_information(tt, fit$phat, initial_hat["S"] / population, initial_hat["I"] / population, noise_sd / population)
 
-print(fit)
 cat(sprintf("\nElapsed: %.3f s", elapsed[["elapsed"]] ))
 print(data.frame(parameter = names(p_star), truth = unname(p_star), estimate = unname(fit$phat) ))
 
