@@ -14,15 +14,11 @@ solveWendyGP(
   parameter_lower = NULL,
   parameter_upper = NULL,
   formulation = c("auto", "observed", "latent"),
-  starts = 1,
   latent_initial = NULL,
-  latent_penalty = FALSE,
   maxit = NULL,
   gradient_tol = NULL,
   state_lower = NULL,
-  state_upper = NULL,
-  lower = NULL,
-  upper = NULL
+  state_upper = NULL
 )
 }
 \arguments{
@@ -34,142 +30,62 @@ requires exactly one entirely NA column and finite observed columns.}
 
 \item{tt}{Strictly increasing finite observation times.}
 
-\item{p0}{Optional initial parameter vector. Required if parameter indices
-cannot be inferred from f. Observed fits refine it by interior-only GLS.}
+\item{p0}{Optional initial parameter vector. Required if the parameter count
+cannot be inferred from f.}
 
-\item{noise_sd}{Known positive scalar or per-observed-component measurement SD, or
-NULL to estimate it by GP marginal likelihood.}
+\item{noise_sd}{Known positive scalar or per-observed-component measurement
+SD, or NULL to estimate it by GP marginal likelihood.}
 
 \item{control}{Named overrides from [wendygp_control()].}
 
-\item{parameter_lower, parameter_upper}{Optional physical parameter bounds
-for both formulations. Supply vectors in parameter-index order (p[1],
-p[2], ...); names are labels, not used for matching. A scalar applies to
-every parameter. NULL means unbounded on that side. Each lower bound must
-be strictly smaller than its upper bound.}
+\item{parameter_lower, parameter_upper}{Optional parameter bounds in
+parameter-index order; a scalar applies to every parameter. NULL means
+unbounded on that side.}
 
-\item{formulation}{"auto" (default) selects "observed" for finite data or
-"latent" for exactly one entirely NA column with finite observed columns.
-Partial missingness and multiple latent columns are unsupported. Set
-"observed" or "latent" to require a particular formulation.}
-
-\item{starts}{Finite parameter multipliers for latent starts (default 1).
-Stationary completed runs are preferred, followed by finite feasible
-stage-3 estimates, then stage-1 fallbacks. Runs in the preferred group are
-ranked by objective value. latent_penalty=TRUE requires
-one start because different fitted priors are different objectives.}
+\item{formulation}{"auto" (default) selects "latent" when U has NA values
+and "observed" otherwise.}
 
 \item{latent_initial}{Optional finite latent starting curve at observation
-times. Default: row mean of observations, falling back to their largest-RMS
-column if it cancels. Changing this curve does not change frozen ODE scales.}
-
-\item{latent_penalty}{Add a frozen latent GP quadratic in stage 3 (default
-FALSE). Otherwise the fitted covariance only changes optimization coordinates
-for unbounded states; bounded states use component scaling.}
+times. Default: row mean of the observed columns (largest-RMS column if it
+cancels). It does not change the frozen ODE scales or latent GP.}
 
 \item{maxit}{Optional iteration cap, overriding control$maxit. Defaults to
-500 for observed and 5000 per latent optimization phase.}
+500 for observed and 5000 per latent optimization.}
 
-\item{gradient_tol}{Optional physical stationarity tolerance, overriding
+\item{gradient_tol}{Optional optimizer gradient tolerance, overriding
 control$gtol. Defaults to 1e-6 for observed and 1e-4 for latent.}
 
-\item{state_lower, state_upper}{Optional physical state bounds, scalar or
-one value per column of U in column order, including the latent column.
-These constrain fitted grid states, not the entire continuous GP curve.
-NULL means unbounded on that side.}
-
-\item{lower, upper}{Compatibility aliases for parameter_lower and
-parameter_upper. Do not supply an alias and its corresponding explicit
-argument together.}
+\item{state_lower, state_upper}{Optional state bounds, scalar or one value
+per column of U (including the latent column). They constrain the fitted
+grid states.}
 }
 \value{
-A jointgp object with phat, U_hat, tt, gp fits, initial estimates,
-objective contributions, convergence diagnostics, and a reusable problem
-object for derivative checks and controlled ablations. GP covariance
-stabilization and projected weak-covariance ranks are reported explicitly.
-formulation records the resolved formulation. converged reports
-physical-coordinate stationarity. optimizer separately records the solver's
-exit reason, convergence flag, iterations, and evaluation counts.
-problem$evaluate(theta) returns residual r, Jacobian J, scalar value and
-analytic gradient. jacobian=FALSE requests values only. Latent fits additionally include
-stage records in runs, the separately fitted GP in latent_prior,
-observed/latent column indices, and class wendygp_latent.
-A finite feasible latent stage-3 estimate is returned even without
-stationarity, with a warning and converged=FALSE. Stage 1 is returned only
-if no usable stage-3 estimate exists. If neither stage has a finite feasible
-estimate, or another numerical error occurs, the solve stops.
-solveWendyGPLatent is a compatibility wrapper.
-diagnostics$stationarity includes a local joint Jacobian rank; neither that
-rank nor stationarity guarantees global identifiability. On the Gauss path,
-quadrature_passed and weak_grid_passed describe the returned estimate's
-residual, Jacobian and Gram integration checks. Initial checks are retained
-for inspection.
+A jointgp object: phat; U_hat on the grid tt; tt_obs and Y; the
+  observed and latent column indices; the observed GP fits gp and noise_sd;
+  objective and contributions; converged (the optimizer met a tolerance) and
+  convergence_reason; optimizer; bounds; formulation; and problem, whose
+  evaluate(theta, jacobian = TRUE) returns the residual, Jacobian, value and
+  gradient. Latent fits add class wendygp_latent. A nonconverged fit warns.
 }
 \description{
 Joint weak-form GP estimation with observed or latent components
 }
 \details{
-Trajectory and ODE parameter fits use projected Levenberg-Marquardt
-with analytic Jacobians and physical bounds. GP marginal likelihood uses
-stats::nlminb with analytic gradients. Fits nonstationary Matern 5/2 GPs by default, with profiled constant
-means and signal variances, then freezes the hyperparameters. A bounded smooth
-radius function supplies nonstationarity. Set control=list(kernel="bump")
-for normalized bump-convolution covariance. Both kernels use bump weak tests.
-By default, interior tests come
-from a geometric multiscale pool independent of GP radii, with a test at every
-admissible working-grid center per radius. Integration-accuracy screening
-precedes adaptive SVD truncation at weak_design_info=0.95 (cumulative singular
-values, not squares). The working grid and pool are constructed once; nested
-quadrature checks never enlarge the optimization grid or restart the solve. Set
-control=list(weak_radius_method="gp") for the legacy radius-transfer method.
-Grid acceptance checks only observation-operator error. Weak quadrature
-diagnostics are returned separately and never reject the fitted grid.
-The default control=list(weak_integration="gp_gauss") evaluates continuous
-GP weak integrals, their Jacobians and the full Gram consistently, with exact
-endpoints and no Euler-Maclaurin substitution. The optimized grid is unchanged.
-This path requires the GP prior and SVD or explicit weak tests;
-its selected-space quadrature checks do not automatically change that space.
-With control=list(include_gp_prior=FALSE), the objective contains only data
-and lambda-weighted weak penalties. Optimization is directly over U;
-gp_delta covariance stays frozen and sensitivity scores use no GP prior.
-Free-state grid diagnostics use H's piecewise-linear representation, not a
-GP-conditioned extension. A finite weak space need not identify every state
-direction, so this option is not necessarily a proper posterior.
-An interior-only frozen-state fit
-initializes p. The default test-Gram ODE penalty uses RMS/span normalization
-(ode_units="rms_span"); use ode_units="raw" for physical-unit Gram weighting.
-control=list(ode_weighting="gp_delta") instead propagates the frozen posterior
-grid-state covariance, including endpoint/EM channels. Interior and boundary
-cross terms are retained by conditional whitening. ode_weighting="identity"
-uses unweighted retained weak rows. The default does not propagate GP
-covariance into the ODE penalty; the data likelihood and GP prior are unchanged.
-problem$Omega holds the selected metric (a covariance only in gp_delta mode).
-rho_initial and rho_final are mean squared metric-weighted interior residuals;
-only gp_delta expresses them in GP-standardized units. The selected metric
-and basis remain fixed during joint optimization. The likelihood and GP prior are
-untempered; only the ODE penalty receives lambda, which defaults to 100.
-Set control=list(weak_radius_method="posterior") to use the experimental
-posterior/noise-floor weak-radius selector instead of the multiscale SVD pool.
-Its profile and assumptions are returned in diagnostics$radius_selection.
-An inadmissible automatic pool raises a wendygp_radius_error condition with
-its radius_selection profile attached; no fallback radius is substituted.
-The latent formulation uses the same fixed-covariance objective engine,
-with likelihood rows only for observed components. Stage 1 optimizes physical
-latent values with no latent prior. Stage 2 fits the latent GP mean, variance,
-radius coefficients, and nugget to that curve. The nugget absorbs roughness
-in the fitted curve and is excluded from the latent process covariance.
-Stage 3 freezes the GP and changes optimization coordinates for unbounded
-states while keeping the stage-1 curve as its start. Bounded states continue
-to use component scaling. The weak interpolation and ODE weights stay fixed
-across stages. When latent_penalty=TRUE, stage 3 instead starts
-from the smoothed curve and adds the frozen latent quadratic.
-No stage jointly optimizes latent values and GP amplitude. With the quadratic
-off, stages 1 and 3 have the same physical objective.
-Latent fits require matern52, gp_gauss, observed GP priors, test_gram or
-identity weighting, and full numerical test span. Their observed
-extension is Lagrange and latent extension is GP. Default latent ODE scales
-are initializer-based heuristics; use ode_component_scale for known units.
-This is a plug-in generalized MAP estimate, not full Bayesian inference.
+Observed components get nonstationary Matern 5/2 GPs whose
+hyperparameters are then frozen. The objective is the observation
+likelihood, plus the GP prior on the working grid, plus lambda times the
+test-Gram-weighted weak ODE residual. Tests are multiscale bumps
+orthonormalized on the grid. The residual is integrated by Gauss-Legendre
+quadrature on each grid interval, with observed states extended to the nodes
+by Lagrange interpolation. Parameters start from a frozen-state fit; states
+and parameters are then fitted jointly by projected Levenberg-Marquardt.
+
+In the latent formulation the hidden component has no data or prior rows. It
+is interpolated by a fixed stationary Matern 5/2 with length scale
+1/gamma_t, where gamma_t = max|phi'| / (largest test radius) is the WSINDy
+scale (arXiv:2007.02848, eq. 4.7). Default latent units assume comparable
+component units; set ode_component_scale for known units. The estimate is a
+plug-in MAP, not full Bayesian inference.
 }
 \examples{
 \dontrun{
