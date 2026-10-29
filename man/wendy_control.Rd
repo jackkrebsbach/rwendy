@@ -7,6 +7,7 @@
 wendy_control(
   optimize = TRUE,
   estimate_IC = FALSE,
+  ic_method = "weak",
   estimate_trajectory = FALSE,
   noise_sd = NA,
   compute_svd = TRUE,
@@ -47,7 +48,15 @@ wendy_control(
 \arguments{
 \item{optimize}{Logical. Run IRLS or MLE optimization to estimate parameters.}
 
-\item{estimate_IC}{Logical. Estimate the initial condition.}
+\item{estimate_IC}{Logical. Estimate the initial condition after parameter
+fitting, using \code{ic_method}. Defaults to \code{FALSE}; ignored when
+\code{solveWendy(method = "OE")} fits the initial condition jointly.}
+
+\item{ic_method}{Character. \code{"weak"} (default) keeps the weak-form
+estimate of the initial condition. \code{"hybrid"} refines it by a joint output-error fit
+of the initial condition and parameters (forward solves), started from the
+weak-form estimates. The joint parameters replace \code{phat}; the
+weak-form estimate is kept in \code{phat_weak}.}
 
 \item{estimate_trajectory}{Logical. Estimate the state trajectory using RTS.}
 

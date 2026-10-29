@@ -13,9 +13,8 @@ returned by \code{\link{estimate_IC}}.}
 \item{log}{Character passed to \code{\link[graphics]{plot}}; dropped if any
 plotted value is non-positive.}
 
-\item{show_terms}{Logical; overlay the variance and bias parts. Off by
-default: the bias part runs orders of magnitude below the objective, so
-including it in the y-range flattens the minimum out of view.}
+\item{show_terms}{Logical. Overlay the variance and bias parts. Defaults
+to \code{FALSE} so only the total score determines the plotted range.}
 
 \item{...}{Additional graphical parameters forwarded to
 \code{\link[graphics]{plot}}.}
@@ -25,8 +24,10 @@ Invisibly, a list with the \code{design} table, the selected
   \code{r_bl}, and its index \code{ix}.
 }
 \description{
-Draws the a-priori \eqn{u_0} MSE proxy over the swept \code{r_bl} grid and
+Draws the a priori \eqn{u_0} MSE proxy over the candidate \code{r_bl} grid and
 marks the selected radius. With \code{show_terms}, the variance part
 \eqn{\sum_d \mathrm{Var}_d/\sigma_d^2} and the bias part
-\eqn{\sum_d (\Delta^{EM}_d + b_d)^2/\sigma_d^2} are overlaid.
+\eqn{\sum_d (\Delta^{EM}_d + b_d)^2/\sigma_d^2} are overlaid, where
+\eqn{\Delta^{EM}} is the quadrature indicator and \eqn{b} the estimated
+statistical bias. These are the scores computed before the IC solve.
 }

@@ -77,13 +77,15 @@ get_test_function_support_indices <- function(radius, len_tt) {
   diameter <- 2 * radius + 1
   len_interior <- len_tt - 2
 
-  n <- len_interior - diameter + 2 # Number of test functions to build dense sweep
+  # The test function vanishes at ±radius, so supports may touch t_1 and t_M:
+  # centers radius+1, ..., len_tt-radius all give rows that are zero at the endpoints.
+  n <- len_tt - diameter + 1 # Number of test functions to build dense sweep
 
   if (diameter > len_interior) {
     stop("diameter must be less than len_interior")
   }
 
-  indices <- lapply(2:n, function(i) {
+  indices <- lapply(1:n, function(i) {
     end <- i + diameter - 1
     i:end
   })
@@ -678,7 +680,7 @@ compute_r_c_hat <- function(U, tt, S, p){
           choose(2*p, k) * (-1)^(k) / (2*k +1)
     }))) * (dt * radius)^(2 * p) * sqrt(2 * dt * radius))
 
-    psi_hat_eval <- psi_hat(freqs, radius, dt, T, C, p = 16) # 𝚿̂̂
+    psi_hat_eval <- psi_hat(freqs, radius, dt, T, C, p = p) # 𝚿̂̂
     
     e_int_hat <- t(sapply(seq(D), function(d){
        fft(psi_hat_eval * Is[[d]])[centers] / sqrt(T)

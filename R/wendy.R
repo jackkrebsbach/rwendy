@@ -26,8 +26,12 @@ NULL
 #'   surrounding observed values (with a warning); \code{NA} beyond the observed
 #'   range is filled by constant extension of the nearest observed value.
 #' @param tt Numeric vector. Time points corresponding to rows of \code{U};
-#'   must be complete (no \code{NA}).
+#'   must be complete (no \code{NA}). Unevenly spaced times are resampled onto a
+#'   uniform grid by \code{control$interpolation_method} (linear by default).
 #' @param noise_dist One of \code{"addgaussian"} (default) or \code{"lognormal"}.
+#'   With \code{"lognormal"} the IC is estimated in \eqn{\log u}; \code{u0hat} and
+#'   \code{boundary_state$cov_u0} are back-transformed (median, delta method), and
+#'   the log-scale values are kept in \code{boundary_state$log_scale}.
 #' @param method One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 #'   \code{"OE"}, or \code{"HYBRID"}.
 #' @param control Named list of control parameters, as produced by
@@ -213,6 +217,11 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
       }
     }
 
+    # The test functions assume a uniform grid: resample uneven data onto one.
+    if (is.null(control$interpolation_method) && !is_uniform_grid(tt)) {
+      control$interpolation_method <- "linear"
+    }
+
     if (is.null(control$interpolation_method) && nrow(U) >= control$max_points_interp) {
       wendy_data <- list(U = U, tt = tt, var = NULL)
     } else {
@@ -242,6 +251,7 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     res$f       <- f_
     res$J_p     <- J_p
     res$J_u     <- J_u
+    res$J_uu    <- J_uu
     res$J_upp   <- J_upp
     res$S       <- system$S
     res$Jp_S    <- system$Jp_S
@@ -337,18 +347,15 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
     res$data <- result$data
   }
   
-  # Robust (MAD) UQ noise scale
+  # Use the supplied noise scale for uncertainty calculations, or estimate
+  # it with MAD when the sample count supports the finite-difference filter.
   estimated_sd_uq <- if (!is.na(control$noise_sd)) estimated_sd
                      else if (nrow(U) >= 20) estimate_std(U, k = 6, robust = TRUE)
                      else estimated_sd
 
-  # Fisher parameter covariance (Gᵀ S⁻¹ G)⁻¹: feeds the parameter channel of
-  # cov_u0 in estimate_IC (law of total variance) and the ERTS parameter-
-  # uncertainty fold. Built with the MAD UQ sigma: sigma enters L only as a
-  # per-state column-block scalar (build_L0/build_L: state b's column block is
-  # scaled by sig[b]), so L(sig_uq) is exactly L(sig) with its columns rescaled
-  # by sig_uq[b]/sig[b] -- no rebuild of the test-function machinery, and reusing
-  # build_S keeps W / diag_reg identical.
+  # Approximate parameter covariance for IC estimation and trajectory smoothing.
+  # Rescale L's state blocks to the uncertainty noise scale, preserving the
+  # test basis and covariance regularization through build_S.
   C_hat <- if (method != "OE" && !is.null(res$phat) &&
                (control$estimate_IC ||
                 (control$estimate_trajectory &&
@@ -369,19 +376,35 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
 
   boundary_state <- if (control$estimate_IC && method != "OE") {
     ic <- estimate_IC(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, res$phat,
-                J_u = J_u, sigma = estimated_sd_uq, param_cov = C_hat,
-                debias = TRUE, quad_cov = TRUE,  include_interior = TRUE, inverse = "gls")
+                J_u = J_u, J_uu = J_uu, sigma = estimated_sd_uq, param_cov = C_hat,
+                debias = TRUE, quad_cov = TRUE, include_interior = TRUE, inverse = "gls")
 
-    # Divergence guard: the Picard map contracts only while the grid resolves f.
+    # Use the first observation when the weak IC iteration fails to converge.
     if (isTRUE(ic$diverged) || !isTRUE(ic$converged)) {
       ic$u0hat      <- as.numeric(U[1, ])
       ic$U_hat[1, ] <- ic$u0hat
-      # `[<- list(NULL)` keeps the names; dropping them lets `$cov_u0`
-      # partial-match `cov_u0_resid` and read as usable.
+      # Preserve NULL entries so $cov_u0 cannot partially match cov_u0_resid.
       ic[c("cov_u0", "cov_u0_param", "bias_o2")] <- list(NULL)
       ic$cov_method     <- if (isTRUE(ic$diverged)) "diverged" else "not_converged"
       ic$debias_applied <- FALSE
       ic$fallback       <- TRUE
+    }
+
+    # Hybrid mode refines parameters and the IC together by output-error fitting.
+    # Retain the weak estimates and pass the fitted covariance to the smoother.
+    if (match.arg(control$ic_method, c("weak", "hybrid")) == "hybrid") {
+      oe <- output_error(.f_for_oe(opt_ctx), U, tt, res$phat, u0 = ic$u0hat)
+      u0_index <- J + seq_len(ncol(U))
+      ic$u0hat_weak   <- ic$u0hat
+      ic$u0hat        <- oe$u0
+      ic$U_hat[1, ]   <- oe$u0
+      ic$cov_u0       <- oe$cov[u0_index, u0_index, drop = FALSE]
+      ic$cov_u0_param <- NULL
+      ic$cov_method   <- "output_error"
+      ic$output_error <- oe[c("converged", "iterations", "ssr", "cov")]
+      res$phat_weak   <- res$phat
+      res$phat        <- oe$p
+      C_hat           <- oe$cov[seq_len(J), seq_len(J), drop = FALSE]
     }
     ic
   } else NULL
@@ -403,6 +426,11 @@ solveWendy <- function(f = NULL, U, tt, p0 = NULL, noise_dist = c("addgaussian",
       gp_smooth(U, tt, sigma2_n = as.numeric(sig)^2)
     }
   } else NULL
+
+  # After the smoother, which consumes the log-scale û₀ and cov_u0.
+  if (noise_dist == "lognormal" && !is.null(boundary_state)) {
+    boundary_state <- back_transform_ic(boundary_state)
+  }
 
   res$boundary_state <- boundary_state
   res$u0hat <- boundary_state$u0hat

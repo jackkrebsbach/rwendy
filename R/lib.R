@@ -62,14 +62,17 @@ summary.wendy <- function(object, ...) {
     phat <- object$phat
     param_cov_ols <- NULL   # only the GLS branch has a weak-form G to sandwich
 
-    if (method %in% c("OE", "HYBRID")) {
+    ic_output_error <- object$boundary_state$output_error
+    if (method %in% c("OE", "HYBRID") || !is.null(ic_output_error)) {
       # OE / HYBRID: the final estimate comes from output_error, so use the
       # scaled nonlinear-LS covariance, restricted to the parameter block
       # (excluding fitted initial conditions).  For HYBRID, WENDy only
       # provides the starting point; the OE estimator's curvature is reported.
+      # ic_method = "hybrid" refits p the same way after the weak-form solve.
       J <- attr(object, "n_params")
-      param_cov <- if (!is.null(object$data$cov)) {
-        object$data$cov[1:J, 1:J]
+      oe_cov <- if (!is.null(ic_output_error)) ic_output_error$cov else object$data$cov
+      param_cov <- if (!is.null(oe_cov)) {
+        oe_cov[1:J, 1:J]
       } else {
         NULL
       }
@@ -86,9 +89,13 @@ summary.wendy <- function(object, ...) {
       inner <- crossprod(G, Sp %*% G) # GᵀSG, J×J
       Ainv <- chol2inv(chol(A)) # SPD
       param_cov_ols <- Ainv %*% inner %*% Ainv
+
+      # The Fisher form is the covariance of the GLS estimate only; an OLS
+      # estimate gets the sandwich (Bortz et al. 2023, eq. 15).
+      if (method == "OLS") param_cov <- param_cov_ols
     }
 
-    std_errors <- if (!is.null(param_cov)) sqrt(diag(param_cov)) else rep(NA, length(phat))
+    std_errors <- if (!is.null(param_cov)) unname(sqrt(diag(param_cov))) else rep(NA, length(phat))
 
     summ$param_cov <- param_cov
     summ$param_cov_ols <- param_cov_ols
@@ -116,8 +123,8 @@ summary.wendy <- function(object, ...) {
         max    = max(as.numeric(r))
       )
 
-      if (!is.null(object$data$convergence)) {
-        summ$convergence <- object$data$convergence
+      if (!is.null(object$data$converged)) {
+        summ$convergence <- object$data$converged
       }
       if (!is.null(object$data$iterations)) {
         summ$iterations <- object$data$iterations
@@ -438,18 +445,19 @@ plot_radius_selection <- function(object, log = "y", ...) {
 
 #' Plot the boundary-layer radius selection from estimate_IC
 #'
-#' Draws the a-priori \eqn{u_0} MSE proxy over the swept \code{r_bl} grid and
+#' Draws the a priori \eqn{u_0} MSE proxy over the candidate \code{r_bl} grid and
 #' marks the selected radius. With \code{show_terms}, the variance part
 #' \eqn{\sum_d \mathrm{Var}_d/\sigma_d^2} and the bias part
-#' \eqn{\sum_d (\Delta^{EM}_d + b_d)^2/\sigma_d^2} are overlaid.
+#' \eqn{\sum_d (\Delta^{EM}_d + b_d)^2/\sigma_d^2} are overlaid, where
+#' \eqn{\Delta^{EM}} is the quadrature indicator and \eqn{b} the estimated
+#' statistical bias. These are the scores computed before the IC solve.
 #'
 #' @param object A \code{wendy} object from \code{\link{solveWendy}}, or the list
 #'   returned by \code{\link{estimate_IC}}.
 #' @param log Character passed to \code{\link[graphics]{plot}}; dropped if any
 #'   plotted value is non-positive.
-#' @param show_terms Logical; overlay the variance and bias parts. Off by
-#'   default: the bias part runs orders of magnitude below the objective, so
-#'   including it in the y-range flattens the minimum out of view.
+#' @param show_terms Logical. Overlay the variance and bias parts. Defaults
+#'   to \code{FALSE} so only the total score determines the plotted range.
 #' @param ... Additional graphical parameters forwarded to
 #'   \code{\link[graphics]{plot}}.
 #' @return Invisibly, a list with the \code{design} table, the selected
@@ -475,8 +483,7 @@ plot_IC_radius_selection <- function(object, log = "y", show_terms = FALSE, ...)
     list(y = bia, label = "bias part",     col = "#9467bd", pch = 2, lty = 3)
   ) else list()
 
-  # headroom: the objective is U-shaped in r_bl, so both upper corners are
-  # occupied and the legend would otherwise land on the curve.
+  # Reserve space above the score curves for the legend.
   .plot_radius_curve(
     d$r_bl, d$obj, selected, ix, log,
     defaults = list(xlab = "Boundary-layer radius",
