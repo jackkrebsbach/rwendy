@@ -2,7 +2,7 @@
 % Please edit documentation in R/wendy_filter.R
 \name{estimate_IC}
 \alias{estimate_IC}
-\title{Estimate u(0) via iterative defect-correction on left BL test functions}
+\title{Estimate the initial condition via boundary-layer fixed-point iteration}
 \usage{
 estimate_IC(
   U,
@@ -13,6 +13,7 @@ estimate_IC(
   tt,
   p,
   J_u,
+  J_uu,
   sigma,
   param_cov = NULL,
   n_bl = NULL,
@@ -27,7 +28,8 @@ estimate_IC(
   ridge = 1e-11,
   r_bl_grid = NULL,
   debias = TRUE,
-  hess_cache = NULL
+  hess_cache = NULL,
+  interior_rows = NULL
 )
 }
 \arguments{
@@ -36,109 +38,93 @@ estimate_IC(
 \item{f_, dF_dt_, d2F_dt2_, d3F_dt3_}{Callable RHS and total time-derivative
 evaluators built from the symbolic engine.}
 
-\item{tt}{Numeric vector (length M) of time points.}
+\item{tt}{Numeric vector (length M) of equally spaced, increasing times.}
 
 \item{p}{Numeric parameter vector \eqn{\hat\theta} (held fixed).}
 
 \item{J_u}{Callable state Jacobian, with entry \eqn{[a, b] = \partial f_a /
 \partial u_b}.}
 
+\item{J_uu}{Callable state Hessian, with entry \eqn{[a, b, c] = \partial^2 f_a /
+\partial u_b \partial u_c}.}
+
 \item{sigma}{Noise standard deviation, scalar or length D. If invalid, the
 GLS path and noise-propagated covariance are unavailable.}
 
-\item{param_cov}{Optional J x J covariance of \code{p}. When given,
-\code{cov_u0} includes the parameter channel \eqn{S_p \hat C S_p^T}.}
+\item{param_cov}{Optional J x J covariance of \code{p}, where J is the
+number of parameters. Adds \eqn{S_p \hat C S_p^T} to \code{cov_u0} when
+the parameter sensitivity can be computed.}
 
 \item{n_bl}{Number of BL test functions. If \code{NULL}, the GLS path
 selects the radius from \code{r_bl_grid} with \code{n_bl = r_bl}, and the
 OLS path uses \code{max(3, ceiling(r_bl / 8))}.}
 
-\item{r_bl}{BL radius used when no selection runs. Defaults to
-\code{min(16, floor((M - 1) / 2))}.}
+\item{r_bl}{BL radius in grid intervals, used when automatic selection
+does not supply a design. Defaults to \code{min(16, floor((M - 1) / 2))}.
+Supply \code{n_bl} as well to fix the design on the GLS path.}
 
 \item{max_iter, tol}{Fixed-point iteration limit and relative step
 tolerance; converged when the step is below
-\code{tol * max(1, ||u0||)}.}
+\code{tol * max(1, ||u||)}.}
 
-\item{em_order}{Euler-Maclaurin order, 2 or 4.}
+\item{em_order}{Euler-Maclaurin correction order, 2 or 4 (default).}
 
 \item{inverse}{\code{"gls"} (default) or \code{"ols"} combination of the BL
 equations. GLS falls back to OLS when its weights cannot be built.}
 
-\item{include_interior}{Add interior test functions as GLS control
-variates. GLS only.}
+\item{include_interior}{Add interior weak equations to the GLS system.
+Their endpoint values are zero, but their noise correlations with the
+boundary equations can affect the estimate. Ignored for OLS.}
 
-\item{interior_stride}{Keep every s-th interior test function.}
+\item{interior_stride}{Keep every s-th automatically generated interior
+test function.}
 
 \item{quad_cov}{Include the quadratic-noise term \eqn{\Omega_2} in the
-weights and \code{cov_u0}. GLS only.}
+weights and \code{cov_u0}. This is measurement-noise variance, not
+numerical-quadrature error. GLS only.}
 
-\item{ridge}{Relative ridge added to \eqn{\Omega} before factorizing,
-\code{ridge * mean(diag(Omega))}. \eqn{\Omega} is near-singular, so this
-sets the weight of its near-null directions and can shift \code{u0hat}
-by a fraction of its SE. GLS only.}
+\item{ridge}{Relative diagonal regularization for the GLS weights. Adds
+\code{ridge * mean(diag(Omega))} to each diagonal entry before
+factorization. GLS only.}
 
 \item{r_bl_grid}{Candidate radii for the selection. Defaults to
 \code{c(4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 50, 80, 100)}, capped at
 \code{floor((M - 1) / 2)}.}
 
-\item{debias}{Subtract the analytic \eqn{O(\sigma^2)} bias (see Details).
-GLS only.}
+\item{debias}{Apply the estimated \eqn{O(\sigma^2)} statistical bias
+correction when its safeguard passes (see Details). GLS only.}
 
 \item{hess_cache}{Optional state-Hessian cache from
 \code{build_ic_hessian_cache}; built internally if \code{NULL}.}
+
+\item{interior_rows}{Optional \code{list(V, Vp)} of interior test functions
+(K x M) and their derivatives, replacing the automatically generated
+interior equations when \code{include_interior = TRUE}. Rows must vanish
+at both endpoints. Supplied rows bypass \code{interior_stride};
+boundary-layer test functions are unchanged.}
 }
 \value{
-A list with:
-\describe{
-  \item{u0hat, U_hat}{The estimated \eqn{u_0}, and \code{U} with its first
-    row replaced by it.}
-  \item{cov_u0}{Covariance of \code{u0hat}: noise propagation (or the LS
-    residual variance when \code{sigma} is invalid), plus the parameter
-    channel when \code{param_cov} is given. \code{NULL} if the iteration
-    diverged.}
-  \item{cov_u0_resid, cov_u0_param}{The LS residual covariance and the
-    parameter-channel covariance on their own.}
-  \item{cov_method}{\code{"noise_propagation"} or \code{"ls_residual"},
-    with \code{"+param"} when the parameter channel is included, or
-    \code{"diverged"}.}
-  \item{inverse}{The combination actually used; \code{"gls"} falls back to
-    \code{"ols"} when the weights cannot be built.}
-  \item{design}{The radius-selection table (\code{r_bl}, \code{n_bl},
-    \code{obj}, \code{var_obj}), or \code{NULL} if no selection ran.}
-  \item{bias_o2, debias_applied}{The \eqn{O(\sigma^2)} bias estimate and
-    whether it was subtracted from \code{u0hat}.}
-  \item{fallback}{\code{TRUE} when the design was degenerate and
-    \code{u0hat} is \code{U[1, ]}.}
-  \item{iters, converged, diverged, u0_history}{Fixed-point diagnostics.}
-  \item{r_bl, n_bl, K_bl, K_int, em_order}{The design used: BL radius, BL
-    test-function count, total and interior equation counts, and EM order.}
-}
+The result of \code{estimate_endpoint}, with \code{u_hat},
+  \code{cov_u}, \code{cov_u_resid}, \code{cov_u_param}, and
+  \code{u_history} named \code{u0hat}, \code{cov_u0},
+  \code{cov_u0_resid}, \code{cov_u0_param}, and \code{u0_history},
+  respectively. The endpoint metadata is omitted. \code{U_hat} replaces
+  only the first row of \code{U}. The covariance describes the estimate
+  before the statistical bias correction and does not include uncertainty
+  in that correction.
 }
 \description{
-Solves the boundary-layer weak-form equations for the initial condition by
-fixed-point iteration,
-\deqn{\Phi_0 u_0^{(n+1)} = r_{trap} - \Delta_{EM}(u_0^{(n)}),}
-where \eqn{r_{trap}} is the trapezoidal weak residual of the observed data
-and \eqn{\Delta_{EM}} is the Euler-Maclaurin correction (order 2 or 4) at
-the first time point.
+Calls \code{\link{estimate_endpoint}} with \code{endpoint = "initial"},
+using left boundary-layer weak equations to estimate the first state.
+Parameters and the observed trajectory are held fixed during iteration.
 }
 \details{
-The equations share noisy samples, so their errors have covariance
-\eqn{\Omega = L \mathrm{diag}(\sigma^2) L^T + \Omega_2}, where \eqn{L} is the
-noise sensitivity and \eqn{\Omega_2} the \eqn{O(\sigma^4)} quadratic-noise
-term (\code{quad_cov}). With \code{inverse = "gls"} the equations are
-combined by GLS,
-\deqn{u_0 = (\Phi_0^T \Omega^{-1} \Phi_0)^{-1} \Phi_0^T \Omega^{-1} \mathrm{vec}(r),}
-and with \code{inverse = "ols"} by unweighted least squares.
-
-When \code{n_bl} is \code{NULL} on the GLS path, the BL radius is chosen
-from \code{r_bl_grid} without solving, by minimizing the \eqn{u_0} MSE proxy
-\deqn{\sum_d \left(\mathrm{Var}_d + (\delta_d + b_d)^2\right) / \sigma_d^2,}
-where \eqn{\delta} is the EM(2) minus EM(4) truncation estimate and \eqn{b}
-the \eqn{O(\sigma^2)} bias, both evaluated at \code{U[1, ]}.
-
-With \code{debias = TRUE}, the analytic \eqn{O(\sigma^2)} bias of the GLS
-estimate is subtracted unless any component exceeds twice its standard
-error.
+The default GLS path selects a radius before solving when \code{n_bl}
+is \code{NULL}. Supply both \code{r_bl} and \code{n_bl} to fix the design.
+See \code{\link{estimate_endpoint}} for the radius score, convergence
+diagnostics, bias-correction safeguard, and covariance approximations.
+}
+\seealso{
+\code{\link{estimate_endpoint}} for the formulation and for
+  estimating the final observed state.
 }

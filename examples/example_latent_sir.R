@@ -8,7 +8,7 @@ invisible(devtools::load_all())
 population <- 10000
 p_star <- c(beta = 0.4, gamma = 0.12)
 u0 <- c(S = 8500, I = 500, R = 1000)
-npoints <- 20L
+npoints <- 40L
 t_span <- c(0, 40)
 tt <- seq(t_span[1], t_span[2], length.out = npoints)
 
@@ -22,7 +22,7 @@ truth <- sol[, c("S", "I", "R")]
 stopifnot(abs(sum(u0) - population) < 1e-8)
 
 # set.seed(8675309)
-nr <- 0.1
+nr <- 0.05
 noise_sd <- nr * sqrt(mean(truth[, "I"]^2))
 observations <- matrix(NA_real_, npoints, 3L, dimnames = list(NULL, c("S", "I", "R")))
 observations[, "I"] <- truth[, "I"] + rnorm(npoints, sd = noise_sd)

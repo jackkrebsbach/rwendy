@@ -72,15 +72,18 @@ Joint weak-form GP estimation with observed or latent components
 }
 \details{
 Observed components get nonstationary Matern 5/2 GPs whose
-hyperparameters are then frozen. The objective is the observation
-likelihood, plus the GP prior on the working grid, plus lambda times the
-test-Gram-weighted weak ODE residual. Tests are multiscale bumps
+hyperparameters are then frozen; they set the noise level, starting state
+and optimizer coordinates. The objective is the observation likelihood plus
+lambda times the test-Gram-weighted weak ODE residual, with the ODE weight
+scaled by n times the mean squared signal-to-noise ratio so it keeps pace
+with the data. There is no GP prior term. Tests are multiscale bumps
 orthonormalized on the grid. The residual is integrated by Gauss-Legendre
 quadrature on each grid interval, with observed states extended to the nodes
 by Lagrange interpolation. Parameters start from a frozen-state fit; states
 and parameters are then fitted jointly by projected Levenberg-Marquardt.
 
-In the latent formulation the hidden component has no data or prior rows. It
+In the latent formulation the observed components keep GP prior rows, lambda
+is not scaled by the data, and the hidden component has no data or prior rows. It
 is interpolated by a fixed stationary Matern 5/2 with length scale
 1/gamma_t, where gamma_t = max|phi'| / (largest test radius) is the WSINDy
 scale (arXiv:2007.02848, eq. 4.7). Default latent units assume comparable

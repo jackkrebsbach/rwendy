@@ -43,15 +43,22 @@ time <- system.time({
   res <- solveWendy(f = f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE, estimate_trajectory = FALSE))
 })
 
+timej <- system.time({
+  resj <- solveWendyGP(f = f, U, tt)
+})
+
 print(time)
+print(timej)
 
 # res <- solveWendy(f=f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE))
 
 cat(sprintf("\nIRLS p̂ = [%s]", paste(sprintf("%.3f", res$phat), collapse = ", ")))
 cat(sprintf("    rel error = %.4f", wendy::rel_err(res$phat, p_star)))
+cat(sprintf("\nIRLS p̂_gp = [%s]", paste(sprintf("%.3f", resj$phat), collapse = ", ")))
+cat(sprintf("    rel error = %.4f", wendy::rel_err(resj$phat, p_star)))
 cat(sprintf("\nIC û₀=[%s]", paste(sprintf("%.3f", res$u0hat), collapse = ", ")))
-cat("\n", sol[,-1][1,])
-cat("\n", U[1,])
+# cat("\n", sol[,-1][1,])
+# cat("\n", U[1,])
 # cat("\n\nSeeded   û₀: ", res$u0hat)
 # cat("\nUnseeded û₀: ",res1$state$U_star[1,] )
 # cat(sprintf("\nIC u₀=[%s]", paste(sprintf("%.3f", sol[,-1][1,]), collapse = ", ")))

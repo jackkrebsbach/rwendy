@@ -27,6 +27,7 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rto
 
 # set.seed(8675309 + 16)
 
+
 nr <- 0.3
 U_vec <- as.vector(sol[,-1])
 

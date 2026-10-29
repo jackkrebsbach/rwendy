@@ -63,7 +63,7 @@ fdcoeffF <- function(k, xbar, x) {
 #' @param robust Logical; \code{TRUE} uses the MAD (robust) scale instead of the
 #'   RMS. Default \code{FALSE}.
 #' @return Numeric vector of length \code{ncol(U)}: per-state noise SD estimates.
-#' @keywords internal
+#' @export
 estimate_std <- function(U, k = 6, robust = FALSE) {
   D <- ncol(U)
   std_vec <- numeric(D)
@@ -93,5 +93,20 @@ preprocess_data <- function(U, tt){
     indices[i] <- all(U[i,] > 0)
   }
   return(list(U = log(U[indices,  ,drop = FALSE]), tt = tt[indices, drop = FALSE]))
+}
+
+# The IC is estimated in z = log u. Report û₀ = exp(ẑ₀), the median of u₀, with
+# delta-method covariances diag(û₀) Σ diag(û₀); log-scale values go to ic$log_scale.
+back_transform_ic <- function(ic) {
+  fields <- intersect(c("u0hat", "u0hat_weak", "U_hat", "cov_u0", "cov_u0_resid", "cov_u0_param"), names(ic))
+  ic$log_scale <- ic[fields]
+  ic$u0hat <- exp(ic$u0hat)
+  ic$U_hat <- exp(ic$U_hat)
+  if (!is.null(ic$u0hat_weak)) ic$u0hat_weak <- exp(ic$u0hat_weak)
+  jacobian_outer <- outer(ic$u0hat, ic$u0hat)
+  for (field in c("cov_u0", "cov_u0_resid", "cov_u0_param")) {
+    if (!is.null(ic[[field]])) ic[[field]] <- ic[[field]] * jacobian_outer
+  }
+  ic
 }
 

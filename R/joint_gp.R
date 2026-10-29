@@ -30,15 +30,18 @@
 #'   per column of U (including the latent column). They constrain the fitted
 #'   grid states.
 #' @details Observed components get nonstationary Matern 5/2 GPs whose
-#' hyperparameters are then frozen. The objective is the observation
-#' likelihood, plus the GP prior on the working grid, plus lambda times the
-#' test-Gram-weighted weak ODE residual. Tests are multiscale bumps
+#' hyperparameters are then frozen; they set the noise level, starting state
+#' and optimizer coordinates. The objective is the observation likelihood plus
+#' lambda times the test-Gram-weighted weak ODE residual, with the ODE weight
+#' scaled by n times the mean squared signal-to-noise ratio so it keeps pace
+#' with the data. There is no GP prior term. Tests are multiscale bumps
 #' orthonormalized on the grid. The residual is integrated by Gauss-Legendre
 #' quadrature on each grid interval, with observed states extended to the nodes
 #' by Lagrange interpolation. Parameters start from a frozen-state fit; states
 #' and parameters are then fitted jointly by projected Levenberg-Marquardt.
 #'
-#' In the latent formulation the hidden component has no data or prior rows. It
+#' In the latent formulation the observed components keep GP prior rows, lambda
+#' is not scaled by the data, and the hidden component has no data or prior rows. It
 #' is interpolated by a fixed stationary Matern 5/2 with length scale
 #' 1/gamma_t, where gamma_t = max|phi'| / (largest test radius) is the WSINDy
 #' scale (arXiv:2007.02848, eq. 4.7). Default latent units assume comparable
@@ -97,6 +100,7 @@ solveWendyGP <- function(f, U, tt, p0 = NULL, noise_sd = NULL, control = NULL,
   if (latent_fit) {
     if (is.null(control$maxit)) control$maxit <- 5000L
     if (is.null(control$gtol)) control$gtol <- 1e-4
+    if (is.null(control$lambda)) control$lambda <- 100
   }
   control <- do.call(wendygp_control, control)
   n_components <- ncol(U)
@@ -164,8 +168,10 @@ solveWendyGP <- function(f, U, tt, p0 = NULL, noise_sd = NULL, control = NULL,
 #' abs(p0), 1 for zeros).
 #'
 #' ODE penalty: test Gram metric with component d scaled by T / a_d^2 (time
-#' span over squared RMS, or ode_component_scale). lambda (default 100)
-#' weights only this term.
+#' span over squared RMS, or ode_component_scale). In the observed formulation
+#' it is further multiplied by n * mean(rms^2 / noise^2), so lambda (default
+#' 0.3) is relative to the data likelihood. The latent formulation uses lambda
+#' unscaled (default 100).
 #'
 #' Optimization: projected Levenberg-Marquardt, capped at maxit iterations. It
 #' converges when the column-scaled projected gradient is below gtol or the
@@ -193,7 +199,7 @@ wendygp_control <- function(...) {
     quad_order = 8L,
     parameter_scale = NULL,
     ode_component_scale = NULL,
-    lambda = 100,
+    lambda = 0.3,
     init_gls = 5L,
     maxit = 500L,
     ftol = 1e-9,

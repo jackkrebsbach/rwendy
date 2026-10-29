@@ -33,4 +33,3 @@ two diverge only when curvature leaks (coarse + low noise). See
 examples/validation/noise_mad_phat_regression.R for the \eqn{\hat p} trade-off
 that motivates keeping RMS for estimation and MAD only for UQ.
 }
-\keyword{internal}
