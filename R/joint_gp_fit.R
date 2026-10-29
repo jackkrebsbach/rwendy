@@ -74,13 +74,11 @@ clip_state_to_bounds <- function(U, bounds) {
 
 # ---- Objective and optimizer -----------------------------------------------
 # Stacked residual [data; GP prior; sqrt(lambda) W R] and its Jacobian in
-# optimizer coordinates. With prior_whitened the prior rows are the
-# coordinates themselves.
+# optimizer coordinates. Only prior_components get GP prior rows.
 make_joint_gp_objective <- function(Y, H, weak, model, weights, noise, lambda,
                                     coordinates, prior_state = NULL,
                                     prior_components = integer(),
-                                    observed = seq_len(model$D),
-                                    prior_whitened = FALSE) {
+                                    observed = seq_len(model$D)) {
   n_grid <- nrow(coordinates$mu)
   n_components <- model$D
   n_parameters <- model$J
@@ -102,12 +100,8 @@ make_joint_gp_objective <- function(Y, H, weak, model, weights, noise, lambda,
   for (k in seq_along(prior_components)) {
     component <- prior_components[k]
     rows <- data_rows + (k - 1L) * n_grid + seq_len(n_grid)
-    block <- if (prior_whitened) {
-      diag(n_grid)
-    } else {
+    linear_jacobian[rows, state_columns[[component]]] <-
       forwardsolve(prior_state$L[[component]], transform_state_jacobian(diag(n_grid), component))
-    }
-    linear_jacobian[rows, state_columns[[component]]] <- block
   }
 
   function(theta, jacobian = TRUE) {
@@ -118,11 +112,7 @@ make_joint_gp_objective <- function(Y, H, weak, model, weights, noise, lambda,
     prior_residual <- matrix(0, n_grid, length(prior_components))
     for (k in seq_along(prior_components)) {
       component <- prior_components[k]
-      prior_residual[, k] <- if (prior_whitened) {
-        theta[state_columns[[component]]]
-      } else {
-        forwardsolve(prior_state$L[[component]], U[, component] - prior_state$mu[, component])
-      }
+      prior_residual[, k] <- forwardsolve(prior_state$L[[component]], U[, component] - prior_state$mu[, component])
     }
     weak_value <- evaluate_weak_residual(U, p, weak, model, jacobian)
     ode_residual <- as.vector(sqrt(lambda) * weights$W %*% weak_value$r)
@@ -269,6 +259,10 @@ initialize_ode_parameters <- function(U, p0, weak, model, control, lower, upper)
 }
 
 # ---- Observed formulation --------------------------------------------------
+# The ODE precision is multiplied by n * mean(rms^2 / noise^2) so it keeps
+# pace with the likelihood as data grow. There are no GP prior rows: with the
+# ODE enforced they act as a parameter prior that is biased when the GP
+# misfits the trajectory.
 fit_observed_joint_gp <- function(f, Y, tt, p0, noise_sd, control, lower, upper) {
   n_components <- ncol(Y)
   if (control$verbose) message("Fitting ", n_components, " component GP(s).")
@@ -285,15 +279,13 @@ fit_observed_joint_gp <- function(f, Y, tt, p0, noise_sd, control, lower, upper)
 
   pilot <- initialize_ode_parameters(state$mean, p0, weak, model, control, lower, upper)
   metric <- build_ode_metric(weak, n_components)
-  precision <- calculate_ode_scaling(Y, tt, control)$precision
+  signal_to_noise <- mean(colMeans(Y^2) / noise^2)
+  precision <- calculate_ode_scaling(Y, tt, control)$precision * length(tt) * signal_to_noise
   weights <- build_ode_weights(metric, weak, n_components, control, precision)
 
   coordinates <- state$coordinates
   coordinates$pscale <- rep(1, model$J)
-  objective <- make_joint_gp_objective(Y, H, weak, model, weights, noise, control$lambda,
-    coordinates, state, seq_len(n_components),
-    prior_whitened = state$prior_whitened
-  )
+  objective <- make_joint_gp_objective(Y, H, weak, model, weights, noise, control$lambda, coordinates)
   bounds <- build_optimizer_bounds(coordinates, lower, upper, state$bounds)
   start <- pack_joint_gp_coordinates(pilot, state$mean, coordinates)
   result <- optimize_joint_gp(start, objective, control, bounds$lower, bounds$upper)
