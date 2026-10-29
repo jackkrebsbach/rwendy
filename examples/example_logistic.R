@@ -25,7 +25,8 @@ t_eval <- seq(t_span[1], t_span[2], length.out = npoints)
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star, rtol = 1e-12, atol = 1e-14)
 
-set.seed(8675309 + 16)
+# set.seed(8675309 + 16)
+
 
 nr <- 0.3
 U_vec <- as.vector(sol[,-1])
