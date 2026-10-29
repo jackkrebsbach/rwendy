@@ -114,11 +114,10 @@ build_wendy_problem <- function(wendy_data, f_, J_u, J_up, J_p, J_pp, J_upp, J, 
 
   L0 <- build_L0(K, D, mp1, Vp, sig)
 
-  L <- if (!lip) build_L(       U, tt, J_u, K, V, L0, sig, J)
-       else      build_L_linear(U, tt, J_u, K, V, L0, sig, J)
+  L <- build_L(U, tt, J_u, K, V, L0, sig, J)
 
   Jp_L <- if (!lip) build_Jp_L(       U, tt, J_up, K, J, D, V, sig)
-          else      build_Jp_L_linear(U, tt, J_u,  K, V, L0, sig, J)
+          else      build_Jp_L_linear(U, tt, J_up, K, J, D, V, sig)
 
   Hp_L <- build_Hp_L(U, tt, J_upp, K, J, D, V, sig)
 

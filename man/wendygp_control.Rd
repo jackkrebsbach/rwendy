@@ -39,8 +39,10 @@ parameter_scale fixes the latent optimizer's parameter scales (default
 abs(p0), 1 for zeros).
 
 ODE penalty: test Gram metric with component d scaled by T / a_d^2 (time
-span over squared RMS, or ode_component_scale). lambda (default 100)
-weights only this term.
+span over squared RMS, or ode_component_scale). In the observed formulation
+it is further multiplied by n * mean(rms^2 / noise^2), so lambda (default
+0.3) is relative to the data likelihood. The latent formulation uses lambda
+unscaled (default 100).
 
 Optimization: projected Levenberg-Marquardt, capped at maxit iterations. It
 converges when the column-scaled projected gradient is below gtol or the

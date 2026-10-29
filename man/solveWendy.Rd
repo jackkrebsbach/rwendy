@@ -29,12 +29,16 @@ surrounding observed values (with a warning); \code{NA} beyond the observed
 range is filled by constant extension of the nearest observed value.}
 
 \item{tt}{Numeric vector. Time points corresponding to rows of \code{U};
-must be complete (no \code{NA}).}
+must be complete (no \code{NA}). Unevenly spaced times are resampled onto a
+uniform grid by \code{control$interpolation_method} (linear by default).}
 
 \item{p0}{Numeric vector or matrix. Initial parameter guess. Used by MLE,
 nonlinear least squares, and OE solvers; computed automatically when \code{NULL}.}
 
-\item{noise_dist}{One of \code{"addgaussian"} (default) or \code{"lognormal"}.}
+\item{noise_dist}{One of \code{"addgaussian"} (default) or \code{"lognormal"}.
+With \code{"lognormal"} the IC is estimated in \eqn{\log u}; \code{u0hat} and
+\code{boundary_state$cov_u0} are back-transformed (median, delta method), and
+the log-scale values are kept in \code{boundary_state$log_scale}.}
 
 \item{method}{One of \code{"IRLS"}, \code{"OLS"}, \code{"MLE"},
 \code{"OE"}, or \code{"HYBRID"}.}

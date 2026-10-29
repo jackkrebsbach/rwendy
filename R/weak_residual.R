@@ -89,42 +89,6 @@ build_L <- function(U, tt, J_u, K, V, L0, sig, J){
   }
 }
 
-# L(p) when f is linear in p: L(p) = sum_j p_j L1_j + L_affine + L0.
-build_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
-
-  D   <- ncol(U)
-  mp1 <- length(tt)
-  tU  <- t(U)
-  ttt <- matrix(tt, nrow = 1L)
-
-  if (length(sig) == 1L) sig <- rep(sig, D)
-
-  build_L1_at <- function(p_val){
-    p_mat <- matrix(rep(p_val, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, tU, ttt)
-    J_F   <- array(J_u(input), c(mp1, D, D))
-    out   <- matrix(0, K * D, mp1 * D)
-    for (a in seq_len(D)) for (b in seq_len(D)) {
-      rs <- (a - 1L) * K + seq_len(K)
-      cs <- (b - 1L) * mp1 + seq_len(mp1)
-      out[rs, cs] <- sig[b] * sweep(V, 2, J_F[, a, b], "*")
-    }
-    out
-  }
-
-  L1_affine <- build_L1_at(rep(0, J))
-  L1_basis  <- array(0, c(K * D, mp1 * D, J))
-  for (j in seq_len(J)) {
-    e_j <- rep(0, J); e_j[j] <- 1
-    L1_basis[, , j] <- build_L1_at(e_j) - L1_affine
-  }
-
-  function(p) {
-    L1 <- matrix(L1_basis, K * D * mp1 * D, J) %*% p
-    matrix(L1, K * D, mp1 * D) + L1_affine + L0
-  }
-}
-
 # ∇ₚ L(p) ∈ ℝ^{K*D × mp1*D × J}
 build_Jp_L <- function(U, tt, J_up, K, J, D, V, sig){
   mp1 <- length(tt)
@@ -144,32 +108,15 @@ build_Jp_L <- function(U, tt, J_up, K, J, D, V, sig){
   }
 }
 
-# ∇ₚ L(p) = L1_basis (a constant tensor) when f is linear in p.
-build_Jp_L_linear <- function(U, tt, J_u, K, V, L0, sig, J){
-  D   <- ncol(U); mp1 <- length(tt)
-  tU  <- t(U); ttt <- matrix(tt, nrow = 1L)
-  if (length(sig) == 1L) sig <- rep(sig, D)
-
-  build_L1_at <- function(p_val){
-    p_mat <- matrix(rep(p_val, mp1), ncol = mp1, nrow = J)
-    input <- rbind(p_mat, tU, ttt)
-    J_F   <- array(J_u(input), c(mp1, D, D))
-    out   <- matrix(0, K * D, mp1 * D)
-    for (a in seq_len(D)) for (b in seq_len(D)) {
-      rs <- (a - 1L) * K + seq_len(K)
-      cs <- (b - 1L) * mp1 + seq_len(mp1)
-      out[rs, cs] <- sig[b] * sweep(V, 2, J_F[, a, b], "*")
-    }
-    out
+# ∇ₚ L(p) is a constant tensor when f is linear in p: build it on first use
+# (only the MLE needs it) and reuse it.
+build_Jp_L_linear <- function(U, tt, J_up, K, J, D, V, sig){
+  Jp_L  <- build_Jp_L(U, tt, J_up, K, J, D, V, sig)
+  basis <- NULL
+  function(p) {
+    if (is.null(basis)) basis <<- Jp_L(p)
+    basis
   }
-
-  L1_affine <- build_L1_at(rep(0, J))
-  L1_basis  <- array(0, c(K * D, mp1 * D, J))
-  for (j in seq_len(J)) {
-    e_j <- rep(0, J); e_j[j] <- 1
-    L1_basis[, , j] <- build_L1_at(e_j) - L1_affine
-  }
-  function(p) L1_basis
 }
 
 # ∇ₚ∇ₚ L(p) ∈ ℝ^{K*D × mp1*D × J × J}
