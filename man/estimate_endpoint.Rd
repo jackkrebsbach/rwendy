@@ -223,6 +223,5 @@ estimation through \code{\link{solveWendy}}, a nonconverged or diverged weak
 estimate is replaced by the first observation before any optional hybrid fit.
 }
 \seealso{
-\code{\link{estimate_IC}} for the initial-condition interface;
-  \code{\link{predict_next}} for an unobserved next point.
+\code{\link{estimate_IC}} for the initial-condition interface.
 }
