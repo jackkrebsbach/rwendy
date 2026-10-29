@@ -16,11 +16,9 @@ f <- function(u, p, t) {
 p_star <- c(3, -1, -6, 1)
 u0 <- c(1, 1)
 
-p_star <- c(1, -0.1, -1.5, 0.075)
-u0 <- c(10,5)
 p0 <- c(2, -0.1, -1, 0.25)
-npoints <- 256
-t_span <- c(0, 30)
+npoints <- 128
+t_span <- c(0, 5)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
@@ -50,26 +48,26 @@ res  <- solveWendy(f, U, p0 = p0, tt, method = "IRLS",
 
 print(time)
 
-# plot(tt, U[,1], col = adjustcolor("brown", alpha.f = 0.3), cex = 0.5,
-#    ylab = "State u₁ & u₂",
-#   main = "Lokta Volterra")
-# points(tt, U[,2], col = adjustcolor("blue", alpha.f = 0.3), cex = 0.5)
+plot(tt, U[,1], col = adjustcolor("brown", alpha.f = 0.3), cex = 0.5,
+   ylab = "State u₁ & u₂",
+  main = "Lokta Volterra")
+points(tt, U[,2], col = adjustcolor("blue", alpha.f = 0.3), cex = 0.5)
 
-# lines(tt, sol[,-1][,1], cex = 0.5, col = "black")
-# lines(tt, sol[,-1][,2], cex = 0.5, col = "black")
+lines(tt, sol[,-1][,1], cex = 0.5, col = "black")
+lines(tt, sol[,-1][,2], cex = 0.5, col = "black")
 
-# # lines(res$tt, res$U[,1], cex = 0.5, col = "black")
-# # lines(res$tt, res$U[,2], cex = 0.5, col = "black")
+# lines(res$tt, res$U[,1], cex = 0.5, col = "black")
+# lines(res$tt, res$U[,2], cex = 0.5, col = "black")
 
 # cat(sprintf("\np̂_IRLS  = [%s]  rel_err = %.4f",
 #             paste(sprintf("%.4f", res$phat), collapse = ", "),
 #             rel_err(res$phat, p_star)))
 
-# # cat(sprintf("\np̂_MLE   = [%s]  rel_err = %.4f\n",
-# #             paste(sprintf("%.4f", res2$phat), collapse = ", "),
-# #             rel_err(res2$phat, p_star)))
+# cat(sprintf("\np̂_MLE   = [%s]  rel_err = %.4f\n",
+#             paste(sprintf("%.4f", res2$phat), collapse = ", "),
+#             rel_err(res2$phat, p_star)))
 
 # plot_radius_selection(res)
-plot_IC_radius_selection(res)
+# plot_IC_radius_selection(res)
 cat("\n\nestimate_IC û₀: ", res$u0hat)
 cat("\n           u*₀: ", as.numeric(sol[,-1][1,]))

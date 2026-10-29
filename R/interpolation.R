@@ -174,17 +174,21 @@ fill_na_gaps <- function(U, tt) {
   U
 }
 
+# TRUE when tt is evenly spaced up to a relative tolerance on the step.
+# @keywords internal
+is_uniform_grid <- function(tt, tol = 1e-6) {
+  h <- diff(as.vector(tt))
+  max(abs(h - mean(h))) <= tol * mean(h)
+}
+
 interpolate_data <- function(U, tt, method, control, sigma = NULL) {
   tt_obs  <- as.vector(tt)
   U_obs   <- U
 
-  diff_dt <- diff(tt_obs)
-  dt      <- mean(diff_dt, na.rm = TRUE)
-
   # Non uniform spacing
-  if (max(abs(diff(tt_obs) - dt)) > sqrt(.Machine$double.eps)) {
+  if (!is_uniform_grid(tt_obs)) {
     cat("Non uniform spacing detected, interpolating data using", method, "...\n")
-    n      <- max(floor((max(tt) - min(tt)) / dt), control$min_number_points)
+    n      <- max(length(tt_obs), control$min_number_points)
     tt_new <- seq(min(tt), max(tt), length.out = n)
     U      <- interpolate_to_grid(U, tt_obs, tt_new, method, sigma = sigma, control = control)$U
     tt     <- matrix(tt_new, ncol = 1)
