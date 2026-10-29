@@ -4,7 +4,14 @@
 #' Defaults shown in the usage are used for any argument not supplied.
 #'
 #' @param optimize Logical. Run IRLS or MLE optimization to estimate parameters.
-#' @param estimate_IC Logical. Estimate the initial condition.
+#' @param estimate_IC Logical. Estimate the initial condition after parameter
+#'   fitting, using \code{ic_method}. Defaults to \code{FALSE}; ignored when
+#'   \code{solveWendy(method = "OE")} fits the initial condition jointly.
+#' @param ic_method Character. \code{"weak"} (default) keeps the weak-form
+#'   estimate of the initial condition. \code{"hybrid"} refines it by a joint output-error fit
+#'   of the initial condition and parameters (forward solves), started from the
+#'   weak-form estimates. The joint parameters replace \code{phat}; the
+#'   weak-form estimate is kept in \code{phat_weak}.
 #' @param estimate_trajectory Logical. Estimate the state trajectory using RTS.
 #' @param noise_sd Numeric. Standard deviation of the noise, if known;
 #'   \code{NA} to estimate it from the data.
@@ -118,6 +125,7 @@
 wendy_control <- function(
   optimize = TRUE,
   estimate_IC = FALSE,
+  ic_method = "weak",
   estimate_trajectory = FALSE,
   noise_sd = NA,
   compute_svd = TRUE,
@@ -157,6 +165,7 @@ wendy_control <- function(
   list(
     optimize = optimize,
     estimate_IC = estimate_IC,
+    ic_method = ic_method,
     estimate_trajectory = estimate_trajectory,
     noise_sd = noise_sd,
     compute_svd = compute_svd,

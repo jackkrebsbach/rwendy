@@ -8,7 +8,7 @@
 }
 
 # Iterative (weak) re-weighted least squares
-irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+irls <- function(G, b, S, p0 = NULL, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   p <- if(is.null(p0)) lm.fit(G, b)$coefficients else p0
   n <- 0
   SW <- Inf
@@ -22,11 +22,7 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
     # Weighted least squares via Cholesky: with S = R^T R upper-triangular R,
     # solve R^{-T} G p = R^{-T} b in unweighted form.
     # https://en.wikipedia.org/wiki/Weighted_least_squares
-    Ln <- L(p)
-    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln))
-          else             (1 - reg) * tcrossprod(Ln)
-    diag(Sn) <- diag(Sn) + reg            # + reg * I, without a dense dm×dm allocation
-    RT <- t(chol(Sn)) # S = R^T R, R upper triangular
+    RT <- t(chol(S(p))) # S = R^T R, R upper triangular
     Gb_ <- forwardsolve(RT, cbind(G, b))  # single triangular solve for [G | b]
     G_  <- Gb_[, seq_len(ncol(G)), drop = FALSE]
     b_  <- Gb_[, ncol(G) + 1L]
@@ -66,7 +62,7 @@ irls <- function(G, b, L, p0 = NULL, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
 }
 
 # Nonlinear iterative (weak) re-weighted least squares
-nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
+nirls <- function(g, b, S, Jp_r, p0, tau_FP = 1e-6, tau_SW = 1e-4, n0 = 10, max_its = 100){
   p <- p0
   n <- 0
   SW <- Inf
@@ -85,11 +81,7 @@ nirls <- function(g, b, L, Jp_r, p0, W = NULL, reg = 10e-10, tau_FP = 1e-6, tau_
       forwardsolve(RT, Jp_r(p))
     }
 
-    Ln <- L(p)
-    Sn <- if (!is.null(W)) (1 - reg) * Ln %*% (W * t(Ln))
-          else             (1 - reg) * tcrossprod(Ln)
-    diag(Sn) <- diag(Sn) + reg            # + reg * I, without a dense dm×dm allocation
-    RT <- t(chol(Sn)) # S = R^T R, R upper triangular
+    RT <- t(chol(S(p))) # S = R^T R, R upper triangular
 
     p <- nls.lm(p, lower = NULL, upper = NULL, function(p){weighted_residual(p, RT)}, function(p){weighted_residual_jacobian(p, RT)})$par
 
@@ -160,10 +152,10 @@ mle <- function(p0, wnll, J_wnll, H_wnll, S, Jp_r, control){
 }
 
 # Output Error forward based nonlinear least squares (NLS)
-output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL) {
-  D  <- ncol(U) 
+output_error <- function(f, U, tt, p0, lower = NULL, upper = NULL, u0 = U[1, ]) {
+  D  <- ncol(U)
   J  <- length(p0)
-  u0_init <- as.vector(U[1, ])
+  u0_init <- as.vector(u0)
 
   p_lower <- if (!is.null(lower)) lower else rep(-Inf, J)
   p_upper <- if (!is.null(upper)) upper else rep(Inf, J)
@@ -344,10 +336,10 @@ ee_nonlinear <- function(U, tt, f_, J_p, J, D, sigma = NULL, max_points = 256, p
   sys <- ctx$system
   if (.use_linear_solver(ctx)) {
     if (is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
-    irls(G_cont, b_cont, sys$L, p0 = p0, W = sys$W, max_its = ctx$control$max_iterates)
+    irls(G_cont, b_cont, sys$S, p0 = p0, max_its = ctx$control$max_iterates)
   } else {
     if (is.null(p0)) p0 <- .ols_warmstart(ctx, G_cont, b_cont)
-    nirls(sys$g, b_cont, sys$L, sys$Jp_r, p0 = p0, W = sys$W, max_its = ctx$control$max_iterates)
+    nirls(sys$g, b_cont, sys$S, sys$Jp_r, p0 = p0, max_its = ctx$control$max_iterates)
   }
 }
 

@@ -171,7 +171,7 @@ gp_cross_covariance <- function(fit, t1, t2) {
 }
 
 # GP prior (mu, L) and posterior mean on the grid. Unbounded components are
-# optimized in whitened prior coordinates.
+# optimized in prior coordinates U = mu + L z.
 prepare_gp_state <- function(fits, tt, control) {
   predictions <- lapply(fits, predict_component_gp, tt = tt)
   prior_factors <- lapply(predictions, function(x) factor_gp_covariance(x$K, control$gp_jitter))
@@ -185,6 +185,5 @@ prepare_gp_state <- function(fits, tt, control) {
   state$coordinates <- apply_state_bounds_to_coordinates(
     list(mu = state$mu, L = state$L, order = seq_len(ncol(state$mu))), state$bounds
   )
-  state$prior_whitened <- !any(state$bounds$bounded)
   state
 }
