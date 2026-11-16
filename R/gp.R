@@ -113,24 +113,19 @@ gp_optimize_hyperparams <- function(tt, y, sigma2_n = NULL, n_restarts = 3L,
 
   # Grid of starting length scales, log-spaced over [2*dt, t_range].
   #
-  # This used to be the halving sequence t_range * 2^-(0:(n_scales-1)), whose
-  # smallest start is t_range/2^(n_scales-1) -- it cannot reach a short length
-  # scale at all. On Hindmarsh-Rose (t_range 10, true ell 0.11 / 0.20 / 1.32)
-  # the smallest start was 1.25, 6-11x above the two fast components, and the
-  # optimiser collapsed them to ell = 0 exactly. Seeding from 2*dt instead
-  # recovers 0.106 / 0.120 / 1.99.
-  #
-  # A fully observed fit tolerates a broken ell (the data term carries it), but
-  # a fully UNOBSERVED component lives entirely on this prior, and ell -> 0 makes
-  # it white noise -- so multi-timescale systems need the wider search.
   dt_min     <- if (length(tt) > 1L) min(diff(sort(tt))) else t_range
   lo_ell     <- max(2 * dt_min, t_range / 1e4)
-  grid_lells <- if (n_scales > 1L) seq(log(lo_ell), log(t_range), length.out = n_scales)
-                else log(t_range)
+
+  grid_lells <- if (n_scales > 1L) {
+    seq(log(lo_ell), log(t_range), length.out = n_scales)
+  } else {
+    log(t_range)
+  }
 
   inits <- lapply(grid_lells, make_init)
-  for (i in seq_len(n_restarts))
+  for (i in seq_len(n_restarts)) {
     inits <- c(inits, list(make_init(log(t_range) + rnorm(1) - 1)))
+  }
 
   best <- list(val = Inf, par = NULL)
   for (init in inits) {

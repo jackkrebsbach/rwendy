@@ -208,7 +208,14 @@ trajectory and endpoint. This score targets the raw estimate and includes
 the statistical bias penalty regardless of \code{debias}.
 
 With \code{debias = TRUE}, the GLS bias estimate includes vector-field
-curvature and feedback from data-dependent weights. It is subtracted only
+curvature, feedback from data-dependent weights, and curvature of the
+implicit endpoint correction. The endpoint term is
+\eqn{-P (D_u^2 \Delta_e : C_{lin})/2}, with
+\eqn{C_{lin} = P L \Sigma L^T P^T}; the colon contracts both state indices.
+It uses finite differences of the signed endpoint correction and excludes
+quadratic-noise and parameter covariance. This term is also included in
+the radius-selection bias score, with either setting of \code{quad_cov}.
+The total bias is subtracted only
 when the iteration has not diverged, the required covariance calculations
 are available, and every component has magnitude at most twice its
 measurement-noise standard error. This safeguard applies to the whole

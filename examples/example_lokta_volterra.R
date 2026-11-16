@@ -17,7 +17,7 @@ p_star <- c(3, -1, -6, 1)
 u0 <- c(1, 1)
 
 p0 <- c(2, -0.1, -1, 0.25)
-npoints <- 128
+npoints <- 64
 t_span <- c(0, 5)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
@@ -69,5 +69,6 @@ lines(tt, sol[,-1][,2], cex = 0.5, col = "black")
 
 # plot_radius_selection(res)
 # plot_IC_radius_selection(res)
-cat("\n\nestimate_IC û₀: ", res$u0hat)
+cat("\n     Noisy  u₀: ",U[1,])
+cat("\nestimate_IC û₀: ", res$u0hat)
 cat("\n           u*₀: ", as.numeric(sol[,-1][1,]))

@@ -285,10 +285,36 @@ build_ic_hessian_cache <- function(U, tt, p, J_uu, D) {
   function(m) array(hessians[m, , , ], c(D, D, D))
 }
 
-# Approximate O(sigma^2) bias from vector-field curvature and data-dependent
-# GLS weights. This local calculation holds p and noise_sd fixed and omits
-# endpoint-correction curvature and derivatives of the covariance ridge.
-build_ic_bias_o2 <- function(bl_system, sensitivity, gls, P, EM_jacobian, U, tt, p, J_uu, noise_sd, dt, hess_cache = NULL) {
+# Curvature of the implicit endpoint correction: -P (D_u^2 EM : C_linear) / 2.
+# Contract through the eigendirections of the scaled endpoint covariance so
+# cross-component covariances are included without building a Hessian tensor.
+# The finite-difference step is independent of the noise scale. Only the linear
+# measurement-noise covariance belongs here, not Omega2 or parameter variance.
+build_ic_em_bias <- function(em_correction, u, P, cov_u_linear) {
+  u <- as.numeric(u)
+  scales <- pmax(1, abs(u))
+  covariance <- cov_u_linear / outer(scales, scales)
+  eig <- eigen((covariance + t(covariance)) / 2, symmetric = TRUE)
+  active <- which(eig$values > 0)
+  if (!length(active)) return(numeric(nrow(P)))
+
+  step <- .Machine$double.eps^(1 / 4)
+  center <- as.vector(em_correction(u))
+  contraction <- numeric(length(center))
+  for (i in active) {
+    direction <- step * scales * eig$vectors[, i]
+    second <- ((as.vector(em_correction(u + direction)) - center) +
+                 (as.vector(em_correction(u - direction)) - center)) / step^2
+    contraction <- contraction + eig$values[i] * second
+  }
+  as.numeric(-0.5 * P %*% contraction)
+}
+
+# Approximate O(sigma^2) bias from vector-field curvature, data-dependent GLS
+# weights, and the implicit endpoint correction. This local calculation holds
+# p and noise_sd fixed and omits derivatives of the covariance ridge.
+build_ic_bias_o2 <- function(bl_system, sensitivity, gls, P, EM_jacobian, U, tt, p, J_uu, noise_sd, dt,
+                             hess_cache = NULL, em_correction = NULL, u_endpoint = NULL) {
   D <- length(noise_sd)
   K <- bl_system$n_equations
   support <- bl_system$support
@@ -297,7 +323,8 @@ build_ic_bias_o2 <- function(bl_system, sensitivity, gls, P, EM_jacobian, U, tt,
   column_variance <- sensitivity$column_variance
   noise_var <- noise_sd^2
   residual_jacobian <- sensitivity$Phi + EM_jacobian
-  A <- gls$Omega_solve(L - residual_jacobian %*% (P %*% L))
+  G <- P %*% L
+  A <- gls$Omega_solve(L - residual_jacobian %*% G)
   state_hessian <- if (!is.null(hess_cache)) hess_cache else build_ic_hessian_cache(U, tt, p, J_uu, D)
 
   V_support <- bl_system$V[, support, drop = FALSE]
@@ -348,7 +375,15 @@ build_ic_bias_o2 <- function(bl_system, sensitivity, gls, P, EM_jacobian, U, tt,
 
   nonlinearity_bias <- as.numeric(P %*% as.vector(V_support %*% curvature))
   feedback_bias <- -as.numeric(P %*% feedback)
-  list(nonlinearity = nonlinearity_bias, feedback = feedback_bias, total = nonlinearity_bias + feedback_bias)
+  endpoint_bias <- numeric(D)
+  if (!is.null(em_correction)) {
+    if (is.null(u_endpoint)) stop("u_endpoint is required with em_correction", call. = FALSE)
+    cov_u_linear <- G %*% (column_variance * t(G))
+    endpoint_bias <- build_ic_em_bias(em_correction, u_endpoint, P, cov_u_linear)
+  }
+  list(nonlinearity = nonlinearity_bias, feedback = feedback_bias,
+       endpoint_curvature = endpoint_bias,
+       total = nonlinearity_bias + feedback_bias + endpoint_bias)
 }
 
 # Score candidate radii before any endpoint solve, using U and its observed
@@ -460,7 +495,9 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, J_uu
       statistical_bias <- if (isTRUE(include_bias_o2)) {
         bias <- tryCatch(
           build_ic_bias_o2(bl_system, sensitivity, gls, P, EM_jacobian, U, tt, p, J_uu,
-                           noise_sd, dt, hess_cache = hess_cache)$total,
+                           noise_sd, dt, hess_cache = hess_cache,
+                           em_correction = function(u) em_parts(bl_system, u)$EM,
+                           u_endpoint = u_endpoint_observed)$total,
           error = function(err) NULL)
         if (is.null(bias) || !all(is.finite(bias))) rep(0, D) else bias
       } else {
@@ -589,7 +626,14 @@ select_ic_design <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, J_uu
 #' the statistical bias penalty regardless of \code{debias}.
 #'
 #' With \code{debias = TRUE}, the GLS bias estimate includes vector-field
-#' curvature and feedback from data-dependent weights. It is subtracted only
+#' curvature, feedback from data-dependent weights, and curvature of the
+#' implicit endpoint correction. The endpoint term is
+#' \eqn{-P (D_u^2 \Delta_e : C_{lin})/2}, with
+#' \eqn{C_{lin} = P L \Sigma L^T P^T}; the colon contracts both state indices.
+#' It uses finite differences of the signed endpoint correction and excludes
+#' quadratic-noise and parameter covariance. This term is also included in
+#' the radius-selection bias score, with either setting of \code{quad_cov}.
+#' The total bias is subtracted only
 #' when the iteration has not diverged, the required covariance calculations
 #' are available, and every component has magnitude at most twice its
 #' measurement-noise standard error. This safeguard applies to the whole
@@ -1004,7 +1048,8 @@ estimate_endpoint <- function(U, f_, dF_dt_, d2F_dt2_, d3F_dt3_, tt, p, J_u, J_u
       !is.null(P) && !is.null(EM_jacobian) && !is.null(cov_u_noise)) {
     bias_o2 <- tryCatch(
       build_ic_bias_o2(bl_system, sensitivity, gls, P, EM_jacobian, U, tt, p, J_uu,
-                       noise_sd, dt, hess_cache = hess_cache)$total,
+                       noise_sd, dt, hess_cache = hess_cache,
+                       em_correction = em_correction, u_endpoint = u)$total,
       error = function(err) NULL)
     if (!is.null(bias_o2) && all(is.finite(bias_o2))) {
       # Apply the whole correction only if every component is within two

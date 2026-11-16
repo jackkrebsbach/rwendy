@@ -15,15 +15,16 @@ p_star <- c(3, -3, 3, -1/3, 17/150, 1/15);
 u0 <- c(0,0.1);
 u0 <- c(-1,1)
 p0 <- c(1,-1, 1, -0.2, 0.01, 0.01);
-npoints <- 128
+npoints <- 256
 t_span <- c(0.001, 25);
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
+u0_star <- sol[,-1][1,]
 
 # Additive Gaussian Noise
-nr <- 0.05
+nr <- 0.1
 noise_sd <- sqrt(nr * norm(as.array(sol[,-1]), type = "2") / npoints)
 noise <- matrix(
   rnorm(nrow(sol) * (ncol(sol) - 1), mean = 0, sd = noise_sd),
@@ -33,7 +34,7 @@ noise <- matrix(
 U <- sol[, -1] + noise
 tt <- matrix(sol[, 1], ncol = 1)
 
-res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_trajectory = FALSE))
+res <- solveWendy(f, U, tt, method = "IRLS", control = list(estimate_IC = TRUE))
 # time_j <- system.time({ resj <- solveWendyGP(f, U, tt) })
 
 # cat("\nJoint GP Wall Time:", time_j[1], "seconds")
@@ -45,6 +46,10 @@ plot(tt, U[,1], cex = 0.5)
 points(tt, U[,2], cex = 0.5)
 lines(tt, sol[,2], col = "blue")
 lines(tt, sol[,3], col = "green")
-points(tt, sol_hat[,2], cex = 0.5, col = "red")
+# points(tt, sol_hat[,2], cex = 0.5, col = "red")
 
 cat("RCE:", norm(res$phat - p_star, type = "2") / norm(p_star, type = "2"))
+cat("\nRCE u0:", norm(res$u0hat - u0_star, type = "2") / norm(u0_star, type = "2"))
+cat("\n", res$u0hat)
+cat("\n", u0_star, "\n")
+cat(U[1,])

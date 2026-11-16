@@ -12,15 +12,17 @@ f <- function(u, p, t) {
   c(du1, du2, du3)
 }
 
-npoints <- 256
+npoints <- 128
 p_star = c(0.2, 1.5, 0.074, 0.113, 0.0024)
 p0 <- c(0.1, 2.5, 0.1, 0.1, 0.001)
-u0 <- c(1, 0, 0)
+u0 <- c(0.8, 0.1, 0.1)
 t_span <- c(0, 50)
 t_eval <- seq(t_span[1], t_span[2], length.out = npoints);
 
 modelODE <- function(tvec, state, parameters) { list(as.vector(f(state, parameters, tvec))) }
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
+
+u0_star <- sol[,-1][1,]
 
 # Additive Gaussian Noise
 # nr <- 0.05
@@ -37,7 +39,8 @@ sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = p_star)
 # Log Normal Noise
 nr <- 0.25
 noise_sd <- nr
-U <- sol[, -1] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
+# U <- sol[, -1] * exp(rnorm(npoints, mean = 0, sd = noise_sd))
+U <- sol[, -1] + rnorm(npoints, mean = 0, sd = noise_sd)
 tt <- matrix(sol[, 1], ncol = 1)
 
 tt <- sol[, 1]
@@ -51,7 +54,7 @@ points(tt, u3, pch = 16, cex = 1, col = adjustcolor("blue", alpha.f = 0.5))
 
 legend("topright", legend = c("Susceptible", "Infected", "Recovered"), col = c("black", "red", "blue"), lwd = 1)
 
-res <- solveWendy(f, U, tt, p0 = p0, method = "IRLS", noise_dist = "lognormal")
+res <- solveWendy(f, U, tt, p0 = p0, method = "IRLS", noise_dist = "addgaussian", control = list(estimate_IC = TRUE))
 
 sol <- deSolve::ode(y = u0, times = t_eval, func = modelODE, parms = res$phat)
 
